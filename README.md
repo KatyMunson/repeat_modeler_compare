@@ -48,6 +48,36 @@ Always put targets *before* `--configfile`, or use a `--` separator —
 `./runsnake 8 --configfile config.yaml all` (configfile before the `all`
 target) is correct; `./runsnake 8 all --configfile config.yaml` is not.
 
+## Cluster gotcha: `snakemake/9.3.0` module vs. `--use-conda`
+
+On liger, the `snakemake/9.3.0` modulefile **hard-conflicts with any
+`miniconda` module** (`module show snakemake/9.3.0` lists `conflict
+miniconda`) and, separately, unconditionally prepends its own bundled
+conda (4.12.0, i.e. `conda 22.9.0`) onto `$PATH` itself — confirmed via
+`which conda` after `module load snakemake/9.3.0` with no miniconda module
+loaded at all. That conda is too old for Snakemake 9.x's `--use-conda`,
+which requires **conda ≥24.7.1**, and since the module's own PATH prepend
+happens at load time, it wins over any newer conda you put on `$PATH`
+*before* `./runsnake` runs `module load snakemake/9.3.0` internally.
+`module swap` doesn't help either, since there's no miniconda module
+actually loaded to swap out.
+
+The fix: install a personal, newer conda (or mamba/miniforge) anywhere in
+your home directory, then point `runsnake` at its `bin/` directory via the
+`CONDA_OVERRIDE_BIN` env var — `runsnake` re-prepends it onto `$PATH`
+*after* the module load, so it actually takes priority:
+
+```bash
+curl -L -o ~/miniforge3.sh https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+bash ~/miniforge3.sh -b -p ~/miniforge3
+export CONDA_OVERRIDE_BIN="$HOME/miniforge3/bin"
+./runsnake 60 -n
+```
+
+This doesn't touch the shared/module conda install; `CONDA_OVERRIDE_BIN`
+is unset by default and `runsnake` behaves exactly as before if you never
+set it.
+
 ## Environment / module policy
 
 RepeatMasker, RepeatModeler2, cd-hit, and R all run via **conda or

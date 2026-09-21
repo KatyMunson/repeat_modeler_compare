@@ -32,6 +32,22 @@ SUBMIT_TIME=$(printf '%(%Y-%m-%d_%H.%M.%S)T\n' -1)
 DRMAA_ARGS=" -V  -cwd -j y -o ./log/${SUBMIT_TIME}/ -e ./log/${SUBMIT_TIME}/ -l h_rt={resources.hrs}:00:00 -l mfree={resources.mem}G -pe serial {threads} -w n -S /bin/bash"
 
 module load snakemake/9.3.0
+
+# The snakemake/9.3.0 modulefile hard-conflicts with any `miniconda` module
+# (confirmed via `module show snakemake/9.3.0`) AND unconditionally
+# prepends its own bundled conda (4.12.0 / conda 22.9.0) onto $PATH itself
+# -- not via loading a miniconda module, so `module swap` can't touch it.
+# That conda is too old for Snakemake 9.x's --use-conda (needs >=24.7.1),
+# and it wins over anything you put on $PATH *before* this module load,
+# since the module's own prepend-path runs after and lands in front.
+# If you have a newer conda/mamba installed for this purpose, point
+# CONDA_OVERRIDE_BIN at its bin/ directory and it'll be re-prepended here,
+# after the module load, so it actually takes priority:
+#   export CONDA_OVERRIDE_BIN="$HOME/miniforge3/bin"
+if [ -n "${CONDA_OVERRIDE_BIN:-}" ]; then
+    export PATH="${CONDA_OVERRIDE_BIN}:${PATH}"
+fi
+
 mkdir -p log
 
 snakemake \

@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# runsnake -- submit repeat_compare to the SGE cluster via Snakemake's DRMAA
+# executor. Built from the cluster's own confirmed-working template
+# (envmodules-drmaa-cluster skill), adapted for this pipeline: conda +
+# Singularity only, no envmodules (RepeatMasker/RepeatModeler/R all stay on
+# conda/Singularity here — see README's "Modules" section for why).
+#
+# Usage: ./runsnake <job_count> [extra snakemake args]
+#   e.g. ./runsnake 40 --configfile config.yaml -n        (dry run)
+#        ./runsnake 40 --configfile config.yaml all        (real run)
+#        ./runsnake 40 --configfile config.yaml library_only
+#
+# Remember the --configfile-before-targets caveat (README/§3.4): pass
+# --configfile before any target name, or Snakemake treats the target as a
+# second configfile.
+
+set -euo pipefail
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SOURCE_DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+
+JOB_COUNT=$1
+shift
+
+SUBMIT_TIME=$(printf '%(%Y-%m-%d_%H.%M.%S)T\n' -1)
+
+DRMAA_ARGS=" -V  -cwd -j y -o ./log/${SUBMIT_TIME}/ -e ./log/${SUBMIT_TIME}/ -l h_rt={resources.hrs}:00:00 -l mfree={resources.mem}G -pe serial {threads} -w n -S /bin/bash"
+
+module load snakemake/9.3.0
+mkdir -p log
+
+snakemake \
+    --jobname "{rulename}.{jobid}" \
+    --executor drmaa \
+    --drmaa-args "${DRMAA_ARGS}" \
+    -s "${SOURCE_DIR}/Snakefile" \
+    --printshellcmds \
+    --latency-wait 5 \
+    --restart-times 3 \
+    -j "${JOB_COUNT}" \
+    --use-conda \
+    --use-singularity --singularity-args '--bind /net/:/net/' \
+    --jobscript /net/eichler/vol28/eee_shared/nobackups/sge/jobscript.sh \
+    "$@"

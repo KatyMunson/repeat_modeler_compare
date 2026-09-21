@@ -1,0 +1,69 @@
+# =============================================================================
+# repeat_compare — config.yaml
+#
+# All tunable values live here; nothing is hard-coded in the Snakefile or
+# scripts. Starting values below are a first guess (per the spec this repo
+# was built from) — tune after the first real cluster run. Check the target
+# SGE queue's maximum `h_rt` before relying on the `hrs` values below,
+# especially for `repeatmodeler`.
+# =============================================================================
+
+manifest: manifest.tsv
+outdir: results
+
+genome_prep:
+  min_contig_len: 0            # 0 = keep everything
+  max_header_len: 50           # RepeatMasker rejects long sequence names
+  test_subsample_bp: 0         # >0 = keep only first N bp per species, for wiring tests
+
+repeatmodeler:
+  # docker://dfam/tetools:latest, run via Singularity. Pin to a specific tag
+  # once a real run has validated this image's bundled RepeatClassifier/Dfam
+  # partition content (see provenance output of the `repeatmodeler` rule).
+  container: "docker://dfam/tetools:latest"
+  ltrstruct: true
+  extra_args: ""
+
+library:
+  species_prefix_sep: "_"
+  cdhit:
+    identity: 0.8              # -c
+    coverage_short: 0.8        # -aS
+    word_size: 5               # -n
+  protein_filter:              # optional, off by default
+    enabled: false
+    protein_fasta: ""
+  include_dfam: true
+  dfam_taxon: "Vertebrata"     # exported via famdb.py, see README §FamDB
+  famdb_dir: ""                # dir holding famdb.conf/famdb.py setup (see setup_repeatmasker_famdb)
+  famdb_local_dir: ""          # existing local dir of *.h5 FamDB partitions, if you have one
+  famdb_fallback_urls: []      # else, URL(s) to download FamDB partitions from
+  curated_override: ""         # path to a curated shared-library FASTA; if set, replaces clustering (§8)
+
+repeatmasker:
+  sensitive: true              # -s ; must be identical across all arms/species (asserted at parse time)
+  cores_per_pa: 4              # rmblast uses ~4 cores per -pa slot
+  extra_args: ""
+
+summary:
+  denominator: "non_n"         # non_n | total ; both are always written, this picks the headline
+  landscape_max_div: 50
+
+resources:
+  prep_genome:      {threads: 1,  mem: 8,  hrs: 4}
+  assembly_stats:   {threads: 1,  mem: 8,  hrs: 4}
+  build_db:         {threads: 1,  mem: 16, hrs: 4}
+  repeatmodeler:    {threads: 24, mem: 4,  hrs: 96}
+  prefix_library:   {threads: 1,  mem: 4,  hrs: 1}
+  cluster_library:  {threads: 16, mem: 2,  hrs: 4}
+  export_dfam:      {threads: 1,  mem: 8,  hrs: 2}
+  setup_famdb:      {threads: 1,  mem: 8,  hrs: 2}
+  library_membership: {threads: 1, mem: 4, hrs: 1}
+  own_library:      {threads: 1,  mem: 4,  hrs: 1}
+  assemble_shared_library: {threads: 1, mem: 4, hrs: 1}
+  repeatmasker:     {threads: 32, mem: 2,  hrs: 48}
+  divergence:       {threads: 1,  mem: 16, hrs: 8}
+  summarize:        {threads: 1,  mem: 8,  hrs: 2}
+  combine_summaries: {threads: 1, mem: 8,  hrs: 1}
+  provenance:       {threads: 1,  mem: 2,  hrs: 1}
+  plot:             {threads: 1,  mem: 8,  hrs: 1}

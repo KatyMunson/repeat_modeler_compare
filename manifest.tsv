@@ -1,0 +1,15 @@
+# repeat_compare manifest — tab-separated, "#"-prefixed lines and blank lines ignored.
+# Columns: species_id  species_name  fasta  tissue  accession
+#   species_id  short code, [A-Za-z0-9]+, unique. Used as a wildcard and as the
+#               library-name prefix (e.g. Esto, Mlim).
+#   species_name  free text, for reports.
+#   fasta       absolute path to the assembly FASTA (may be gzipped).
+#   tissue      germline | soma | unknown.
+#   accession   optional; metadata only, never downloaded.
+#
+# This file is an EXAMPLE with placeholders — replace with real absolute
+# paths and confirmed tissue values before running for real.
+#
+#species_id	species_name	fasta	tissue	accession
+Esto	Eptatretus stoutii	/path/to/eptatretus_stoutii.fasta.gz	unknown	unknown
+Mlim	Myxine limosa	/path/to/myxine_limosa.fasta.gz	unknown	unknown

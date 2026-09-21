@@ -244,19 +244,29 @@ CONF
             echo "bundled" > {output.verified}
             exit 0
         fi
+        echo "[INFO] Bundled 'famdb.py info' failed (expected on a fresh install):"
+        cat {output.famdb_release}
 
         local_dir="{params.local_dir}"
-        if [ -n "$local_dir" ] && famdb.py -i "$local_dir" info > {output.famdb_release} 2>&1; then
-            write_famdb_conf "$local_dir"
-            echo "local_dir" > {output.verified}
-            exit 0
+        if [ -n "$local_dir" ]; then
+            if famdb.py -i "$local_dir" info > {output.famdb_release} 2>&1; then
+                write_famdb_conf "$local_dir"
+                echo "local_dir" > {output.verified}
+                exit 0
+            fi
+            echo "[WARN] 'famdb.py -i \"$local_dir\" info' failed — real reason from famdb.py:"
+            cat {output.famdb_release}
         fi
 
+        # NOTE: {output.famdb_release} is intentionally left holding whichever
+        # attempt above actually ran (local_dir's failure, if one was
+        # configured) — it's a diagnostic artifact, not just a release-info
+        # cache, so a later failure branch must never blank it.
         fallback_urls="{params.fallback_urls}"
         if [ -z "$fallback_urls" ]; then
             echo "[ERROR] Neither famdb_local_dir nor famdb_fallback_urls is usable." >&2
+            echo "[ERROR] See the diagnostic output above (also saved in {output.famdb_release}) for the real reason the local_dir check failed." >&2
             echo "[ERROR] See README.md FamDB section." >&2
-            : > {output.famdb_release}
             exit 1
         fi
 

@@ -35,7 +35,6 @@ library:
     protein_fasta: ""
   include_dfam: true
   dfam_taxon: "Vertebrata"     # exported via famdb.py, see README §FamDB
-  famdb_dir: ""                # dir holding famdb.conf/famdb.py setup (see setup_repeatmasker_famdb)
   famdb_local_dir: ""          # existing local dir of *.h5 FamDB partitions, if you have one
   famdb_fallback_urls: []      # else, URL(s) to download FamDB partitions from
   curated_override: ""         # path to a curated shared-library FASTA; if set, replaces clustering (§8)

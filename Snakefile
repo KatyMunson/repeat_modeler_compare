@@ -311,7 +311,11 @@ rule build_db:
         f"{OUTDIR}/logs/{{species}}/build_db.log",
     shell:
         "mkdir -p {params.workdir} && "
-        "BuildDatabase -name {params.workdir}/{wildcards.species} -engine ncbi {input.fa} "
+        # This container's RepeatModeler 2.0.9 BuildDatabase rejects -engine
+        # outright ("Unknown option: engine") -- WU-BLAST support was
+        # dropped upstream and NCBI/RMBlast is the only engine now, so the
+        # flag is no longer accepted at all, not just unnecessary.
+        "BuildDatabase -name {params.workdir}/{wildcards.species} {input.fa} "
         "> {log} 2>&1"
 
 

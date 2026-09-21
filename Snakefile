@@ -415,13 +415,15 @@ if INCLUDE_DFAM:
         params:
             taxon=DFAM_TAXON,
         shell:
-            # NOTE: verify these flags against `famdb.py families -h` for the
-            # installed FamDB version before the first real run (spec §6.6) —
-            # this ancestors+descendants FASTA export with Class/Family names
-            # is the intended shape but the exact flag spelling has changed
-            # across FamDB schema versions.
-            "famdb.py families -f fasta -a -d --add-reverse-complement "
-            "'{params.taxon}' > {output} 2> {log}"
+            # -f fasta is not a valid --format choice on this installed
+            # famdb.py (confirmed via the actual usage error: choices are
+            # summary/hmm/hmm_species/fasta_name/fasta_acc/embl*) --
+            # fasta_name gives human-readable family-name headers matching
+            # the rest of this pipeline's library naming, and
+            # --include-class-in-name (a separate flag from --format) is
+            # what actually appends the #Class/Family suffix (spec §6.6).
+            "famdb.py families -f fasta_name --include-class-in-name -a -d "
+            "--add-reverse-complement '{params.taxon}' > {output} 2> {log}"
 
 
 # -----------------------------------------------------------------------------

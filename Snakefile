@@ -430,7 +430,15 @@ if INCLUDE_DFAM:
             # the rest of this pipeline's library naming, and
             # --include-class-in-name (a separate flag from --format) is
             # what actually appends the #Class/Family suffix (spec §6.6).
-            "famdb.py families -f fasta_name --include-class-in-name -a -d "
+            #
+            # -c/--curated (confirmed via `famdb.py families -h`): without
+            # it, -a -d on a broad taxon like Vertebrata returns EVERY
+            # uncurated per-genome RepeatModeler-derived family Dfam has
+            # ever ingested for that clade -- 4.4M entries in practice, not
+            # a "supplement" (spec §6.6) by any reading. -c restricts to
+            # the curated cross-species reference set that section actually
+            # describes.
+            "famdb.py families -f fasta_name --include-class-in-name -c -a -d "
             "--add-reverse-complement '{params.taxon}' > {output} 2> {log}"
 
 

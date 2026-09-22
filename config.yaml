@@ -43,6 +43,7 @@ repeatmasker:
   sensitive: true              # -s ; must be identical across all arms/species (asserted at parse time)
   cores_per_pa: 4              # rmblast uses ~4 cores per -pa slot
   extra_args: ""
+  scatter_count: 10            # genome chunks per species for the repeatmasker scatter/gather
 
 summary:
   denominator: "non_n"         # non_n | total ; both are always written, this picks the headline
@@ -60,7 +61,13 @@ resources:
   library_membership: {threads: 1, mem: 4, hrs: 1}
   own_library:      {threads: 1,  mem: 4,  hrs: 1}
   assemble_shared_library: {threads: 1, mem: 4, hrs: 1}
-  repeatmasker:     {threads: 32, mem: 2,  hrs: 48}
+  split_genome:     {threads: 1,  mem: 4,  hrs: 2}
+  # NOTE: sized PER CHUNK now (repeatmasker.scatter_count chunks run
+  # concurrently per species/arm), not per whole genome as before this
+  # rule became scatter/gather -- untuned placeholder, adjust from real
+  # wiring-test chunk runtimes.
+  repeatmasker:     {threads: 4,  mem: 4,  hrs: 12}
+  gather_repeatmasker: {threads: 1, mem: 4, hrs: 2}
   divergence:       {threads: 1,  mem: 16, hrs: 8}
   summarize:        {threads: 1,  mem: 8,  hrs: 2}
   combine_summaries: {threads: 1, mem: 8,  hrs: 1}

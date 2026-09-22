@@ -115,6 +115,14 @@ wildcard_constraints:
     species="|".join(re.escape(s) for s in SPECIES_IDS),
     arm="shared|own",
 
+# Chunk count for the repeatmasker scatter/gather split (split_genome /
+# repeatmasker_chunk / gather_repeatmasker below) -- reused pattern from
+# compare_assemblies_satellites' stage 03 (its -lib-mode RepeatMasker
+# scatter/gather), adapted here since our own repeatmasker rule originally
+# ran each species' whole genome as one unchunked job.
+scattergather:
+    genome_chunks=config["repeatmasker"]["scatter_count"],
+
 
 # -----------------------------------------------------------------------------
 # rule all / library_only — §6.11
@@ -556,7 +564,16 @@ rule own_library:
 
 
 # -----------------------------------------------------------------------------
-# 6.8 repeatmasker (both arms)
+# 6.8 repeatmasker (both arms) -- scatter/gather over genome chunks
+#
+# Adapted from compare_assemblies_satellites' stage 03 -lib-mode RepeatMasker
+# scatter/gather (split_genome_fasta / run_repeatmasker_genome_lib /
+# gather_repeatmasker_genome_lib), rather than running each species' whole
+# genome as one unchunked job: real multi-Gb assemblies schedule much better
+# on SGE as N independently-restartable chunk jobs. Deliberately NOT copying
+# that stage's -nolow flag -- it suppresses RepeatMasker's built-in
+# low-complexity/simple-repeat screen, which we need (Simple_repeat and
+# Low_complexity are both required canonical output classes here).
 # -----------------------------------------------------------------------------
 def rm_library(wildcards):
     if wildcards.arm == "shared":
@@ -564,15 +581,39 @@ def rm_library(wildcards):
     return f"{OUTDIR}/own/{wildcards.species}/library/{wildcards.species}.own_library.fa"
 
 
-rule repeatmasker:
+rule split_genome:
+    # Scatters one species' genome into config["repeatmasker"]["scatter_count"]
+    # chunks (workflow/scripts/split_fasta.py, copied verbatim from the
+    # sibling repo's common/scripts/split_fasta.py -- snake/boustrophedon by
+    # contig count). Per-species, not per-arm: the genome being split is
+    # identical regardless of which library later masks it.
     input:
-        fa=f"{OUTDIR}/{{species}}/genome/{{species}}.fa",
+        fasta=f"{OUTDIR}/{{species}}/genome/{{species}}.fa",
+    output:
+        fasta=temp(scatter.genome_chunks(
+            f"{OUTDIR}/{{{{species}}}}/genome/chunks/{{scatteritem}}/{{scatteritem}}.fa"
+        )),
+    threads: config["resources"]["split_genome"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["split_genome"]["mem"] * attempt,
+        hrs=config["resources"]["split_genome"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/{{species}}/split_genome.log",
+    shell:
+        "python3 workflow/scripts/split_fasta.py --infile {input.fasta} "
+        "--outputs {output.fasta} > {log} 2>&1"
+
+
+rule repeatmasker_chunk:
+    input:
+        fasta=f"{OUTDIR}/{{species}}/genome/chunks/{{scatteritem}}/{{scatteritem}}.fa",
         lib=rm_library,
         famdb_verified=f"{OUTDIR}/library/famdb_verified.txt",
     output:
-        out_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.out",
-        tbl_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.tbl",
-        align_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.align",
+        out_file=temp(f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.out"),
+        tbl_file=temp(f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.tbl"),
+        align_file=temp(f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.align"),
     threads: config["resources"]["repeatmasker"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["repeatmasker"]["mem"] * attempt,
@@ -581,7 +622,7 @@ rule repeatmasker:
     conda:
         "workflow/envs/repeatmasker.yaml"
     params:
-        outdir=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker",
+        outdir=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/chunks/{{scatteritem}}",
         pa=config["resources"]["repeatmasker"]["threads"] // config["repeatmasker"]["cores_per_pa"],
         sensitive_flag="-s" if config["repeatmasker"]["sensitive"] else "",
         extra_args=config["repeatmasker"]["extra_args"],
@@ -591,10 +632,10 @@ rule repeatmasker:
         # relative paths against the wrong directory, silently expanding to
         # nothing (readlink -f fails when the leading path components don't
         # exist, and a failed command substitution doesn't trip `set -e`).
-        fa_abs=lambda wc, input: os.path.abspath(input.fa),
+        fa_abs=lambda wc, input: os.path.abspath(input.fasta),
         lib_abs=lambda wc, input: os.path.abspath(input.lib),
     log:
-        f"{OUTDIR}/logs/{{arm}}/{{species}}/repeatmasker.log",
+        f"{OUTDIR}/logs/{{arm}}/{{species}}/repeatmasker_chunk/{{scatteritem}}.log",
     shell:
         "mkdir -p {params.outdir} && "
         "(cd {params.outdir} && trap 'rm -rf RM_*' EXIT && "
@@ -602,6 +643,56 @@ rule repeatmasker:
         "{params.sensitive_flag} {params.extra_args} -dir . {params.fa_abs}) "
         "> {log} 2>&1 && "
         "touch {output.out_file} {output.tbl_file} {output.align_file}"
+
+
+rule gather_repeatmasker:
+    # .out: workflow/scripts/gather_rm_out.sh, copied verbatim from the
+    # sibling repo's common/scripts/gather_rm_out.sh -- keeps one chunk's
+    # 3-line header, appends every chunk's data rows, strips the
+    # "There were no repetitive sequences detected" zero-hit sentinel line
+    # per chunk (not just once), so it merges cleanly regardless of which
+    # chunks had zero hits.
+    # .tbl: the sibling repo never needed this (stage 03 only merges .out).
+    # Chunks are disjoint contig sets, so "total length"/"bases masked" are
+    # additive -- sum them across chunks into a minimal synthetic .tbl
+    # (summarize_rm.py's parse_tbl_masked_bp() only greps "bases masked"
+    # out of it anyway, so a two-line file is sufficient).
+    # .align: also new -- straight concatenation (no shared header block
+    # like .out has). Verify this against real wiring-test output before
+    # trusting it for the full run.
+    input:
+        out_chunks=gather.genome_chunks(
+            f"{OUTDIR}/{{{{arm}}}}/{{{{species}}}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.out"
+        ),
+        tbl_chunks=gather.genome_chunks(
+            f"{OUTDIR}/{{{{arm}}}}/{{{{species}}}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.tbl"
+        ),
+        align_chunks=gather.genome_chunks(
+            f"{OUTDIR}/{{{{arm}}}}/{{{{species}}}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.align"
+        ),
+    output:
+        out_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.out",
+        tbl_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.tbl",
+        align_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.align",
+    threads: config["resources"]["gather_repeatmasker"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["gather_repeatmasker"]["mem"] * attempt,
+        hrs=config["resources"]["gather_repeatmasker"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/{{arm}}/{{species}}/gather_repeatmasker.log",
+    shell:
+        """
+        exec > {log} 2>&1
+        bash workflow/scripts/gather_rm_out.sh {output.out_file} {input.out_chunks}
+        cat {input.align_chunks} > {output.align_file}
+        total_len=$(awk -F'[ :]+' '/total length/{{sum+=$3}} END{{print sum+0}}' {input.tbl_chunks})
+        masked_bp=$(awk -F'[ :]+' '/bases masked/{{sum+=$3}} END{{print sum+0}}' {input.tbl_chunks})
+        {{
+            echo "total length: ${{total_len}} bp"
+            echo "bases masked: ${{masked_bp}} bp"
+        }} > {output.tbl_file}
+        """
 
 
 # -----------------------------------------------------------------------------

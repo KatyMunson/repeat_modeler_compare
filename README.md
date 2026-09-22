@@ -163,6 +163,37 @@ content; treat it as a supplement, not a foundation, for this lineage.
 See Quickstart above — this is the same gotcha documented in
 `compare_assemblies_satellites`'s README.
 
+## RepeatMasker scatter/gather
+
+Each species' genome is masked via a 3-rule scatter/gather
+(`split_genome` → `repeatmasker_chunk` × `repeatmasker.scatter_count` →
+`gather_repeatmasker`), not as one unchunked whole-genome job — adapted
+from `compare_assemblies_satellites`'s stage 03 `-lib`-mode RepeatMasker
+scatter/gather, which solves the identical scheduling problem: many
+small, independently-restartable SGE jobs schedule and recover from
+failure much better than one large reservation for the whole genome.
+`workflow/scripts/split_fasta.py` and `workflow/scripts/gather_rm_out.sh`
+are copied verbatim from that repo's `common/scripts/`. One thing
+deliberately **not** carried over: that stage's `-nolow` flag (it
+suppresses RepeatMasker's built-in low-complexity/simple-repeat screen) —
+we need that screen to run, since `Simple_repeat` and `Low_complexity`
+are both required canonical output classes here.
+
+`gather_repeatmasker` merges three file types per (arm, species):
+`.out` via `gather_rm_out.sh` (keeps one header, strips the zero-hit
+sentinel line per chunk); `.tbl` by summing each chunk's "total
+length"/"bases masked" numbers into a minimal synthetic file (chunks are
+disjoint contig sets, so these are additive, and `summarize_rm.py`'s
+`.tbl` cross-check only ever greps for "bases masked" anyway); `.align`
+by straight concatenation. The `.align` concatenation has no proven
+precedent in the sibling repo (it never needed to merge that file type) —
+verify it produces valid `calcDivergenceFromAlign.pl` input during the
+wiring test before trusting it for the full run.
+
+`repeatmasker.scatter_count` (default 10) and the `repeatmasker` resource
+block are **per chunk now**, not per whole genome — untuned placeholders,
+adjust both from real per-chunk runtimes observed in the wiring test.
+
 ## Threading summary
 
 | step | parallelism |

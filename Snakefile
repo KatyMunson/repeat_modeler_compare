@@ -718,6 +718,21 @@ rule divergence:
         """
         exec > {log} 2>&1
         mkdir -p $(dirname {output.divsum})
+
+        # bioconda's RepeatMasker util scripts (calcDivergenceFromAlign.pl,
+        # createRepeatLandscape.pl) ship with @INC missing the actual
+        # RepeatMaskerConfig.pm directory (share/RepeatMasker itself, not
+        # its util/ subdir) -- a known packaging gap, not a broken install.
+        # Same defensive approach as setup_famdb's famdb.py search: find it
+        # rather than guess a path that can vary by build/version.
+        rm_config_path=$(find "$CONDA_PREFIX" -iname 'RepeatMaskerConfig.pm' 2>/dev/null | head -n1)
+        if [ -z "$rm_config_path" ]; then
+            echo "[ERROR] RepeatMaskerConfig.pm not found anywhere under \$CONDA_PREFIX ($CONDA_PREFIX)." >&2
+            echo "[ERROR] This conda RepeatMasker install may need (re)configuration -- see README's FamDB/RepeatMasker sections, or reinstall the env." >&2
+            exit 1
+        fi
+        export PERL5LIB="$(dirname "$rm_config_path"):${{PERL5LIB:-}}"
+
         GENOME_BP=$(awk -F'\\t' 'NR==2{{print $3}}' {input.assembly_stats})
         calcDivergenceFromAlign.pl -s {output.divsum} -noCpGMod {input.align}
         createRepeatLandscape.pl -div {output.divsum} -g "$GENOME_BP" > {output.landscape}

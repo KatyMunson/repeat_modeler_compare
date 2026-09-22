@@ -1,7 +1,16 @@
 #!/bin/bash
-# Copied verbatim from KatyMunson/compare_assemblies_satellites
+# Adapted from KatyMunson/compare_assemblies_satellites
 # (common/scripts/gather_rm_out.sh, commit 27ce4ee) for repeat_compare's
-# repeatmasker scatter/gather. Not modified.
+# repeatmasker scatter/gather. One real bug fixed (see the `|| true` below):
+# the original's `set +o pipefail` only protects the header-seed line
+# (its pipe ends in `head`, immune to grep's exit code); the for-loop's
+# pipe ends in `grep -v "^There"` itself, whose "no lines matched" exit
+# code (1) still trips `set -e` when a chunk has genuinely zero hits
+# (exactly what a touch()-only chunk .out produces) -- reproduced locally
+# against a fixture, confirmed this aborts the whole script mid-merge.
+# Never surfaced upstream since their real-genome chunks apparently never
+# came up fully empty; a heavily subsampled wiring-test genome split into
+# many small chunks hits this routinely. Otherwise unmodified.
 #
 # gather_rm_out.sh -- merge N per-chunk RepeatMasker .out files into one.
 #
@@ -25,6 +34,6 @@ set +o pipefail  # grep -v legitimately returns nonzero when a chunk has nothing
 first="$1"
 grep -v "^There" "$first" | head -n 3 > "$out"
 for f in "$@"; do
-    tail -n +4 "$f" | grep -v "^There"
+    tail -n +4 "$f" | grep -v "^There" || true
 done >> "$out"
 set -o pipefail

@@ -585,13 +585,21 @@ rule repeatmasker:
         pa=config["resources"]["repeatmasker"]["threads"] // config["repeatmasker"]["cores_per_pa"],
         sensitive_flag="-s" if config["repeatmasker"]["sensitive"] else "",
         extra_args=config["repeatmasker"]["extra_args"],
+        # Resolved here (DAG-build time, original invocation directory) --
+        # NOT via a shell-level `readlink -f` inside the rule body, which
+        # would run after the `cd {params.outdir}` below and resolve these
+        # relative paths against the wrong directory, silently expanding to
+        # nothing (readlink -f fails when the leading path components don't
+        # exist, and a failed command substitution doesn't trip `set -e`).
+        fa_abs=lambda wc, input: os.path.abspath(input.fa),
+        lib_abs=lambda wc, input: os.path.abspath(input.lib),
     log:
         f"{OUTDIR}/logs/{{arm}}/{{species}}/repeatmasker.log",
     shell:
         "mkdir -p {params.outdir} && "
         "(cd {params.outdir} && trap 'rm -rf RM_*' EXIT && "
-        "RepeatMasker -pa {params.pa} -lib $(readlink -f {input.lib}) -xsmall -gff -a "
-        "{params.sensitive_flag} {params.extra_args} -dir . $(readlink -f {input.fa})) "
+        "RepeatMasker -pa {params.pa} -lib {params.lib_abs} -xsmall -gff -a "
+        "{params.sensitive_flag} {params.extra_args} -dir . {params.fa_abs}) "
         "> {log} 2>&1 && "
         "touch {output.out_file} {output.tbl_file} {output.align_file}"
 

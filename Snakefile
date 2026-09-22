@@ -735,7 +735,7 @@ rule divergence:
         # rather than guess a path that can vary by build/version.
         rm_config_path=$(find "$CONDA_PREFIX" -iname 'RepeatMaskerConfig.pm' 2>/dev/null | head -n1)
         if [ -z "$rm_config_path" ]; then
-            echo "[ERROR] RepeatMaskerConfig.pm not found anywhere under \$CONDA_PREFIX ($CONDA_PREFIX)." >&2
+            echo "[ERROR] RepeatMaskerConfig.pm not found anywhere under \\$CONDA_PREFIX ($CONDA_PREFIX)." >&2
             echo "[ERROR] This conda RepeatMasker install may need (re)configuration -- see README's FamDB/RepeatMasker sections, or reinstall the env." >&2
             exit 1
         fi

@@ -226,6 +226,20 @@ This doesn't touch the shared/module conda install; `CONDA_OVERRIDE_BIN`
 is unset by default and `runsnake` behaves exactly as before if you never
 set it.
 
+**Jobs inherit the launching shell's `PATH`.** `runsnake` submits with
+`-V`, so every job gets the `PATH` of the shell that started Snakemake,
+including whether you were in `(base)` or had run `conda deactivate`.
+From a `(base)` shell, Miniforge's base `python3` can come before a rule
+env's, so `famdb.py` (`#!/usr/bin/env python3`) fails with
+`No module named 'h5py'` even though the rule's env has it.
+
+The rules that use `workflow/envs/repeatmasker.yaml` (`setup_famdb`,
+`export_dfam`, `repeatmasker_chunk`, `divergence`) now put their own env
+first (`ENV_PATH_GUARD` in the Snakefile) and log which `python3`,
+`famdb.py` and `RepeatMasker` they resolved. Either shell state is safe for
+them. `CONDA_OVERRIDE_BIN` passes through to jobs unchanged; it only
+chooses which conda builds and activates the envs.
+
 ## Environment / module policy
 
 RepeatMasker, RepeatModeler2, cd-hit, and R all run via **conda or

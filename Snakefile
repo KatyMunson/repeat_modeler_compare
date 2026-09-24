@@ -132,6 +132,21 @@ INCLUDE_DFAM = bool(config["library"]["include_dfam"])
 DFAM_TAXON = config["library"]["dfam_taxon"]
 DFAM_EXPORT_FASTA = f"{OUTDIR}/library/dfam_{DFAM_TAXON}.fa"
 TETOOLS = config["repeatmodeler"]["container"]
+
+# Prepended to every rule that runs in workflow/envs/repeatmasker.yaml.
+# runsnake submits with -V, so a job inherits the PATH of whatever shell
+# launched Snakemake -- from a `(base)` shell, miniforge's base python3 can
+# come before the rule env's, and famdb.py (`#!/usr/bin/env python3`) then
+# dies with "No module named 'h5py'" even though the env has it. Putting the
+# rule's own env first also covers everything RepeatMasker calls internally.
+# Interpolated via {ENV_PATH_GUARD}; Snakemake doesn't re-format the value,
+# so its braces are plain shell.
+ENV_PATH_GUARD = """if [ -z "${CONDA_PREFIX:-}" ] || [ ! -x "$CONDA_PREFIX/bin/python" ]; then
+    echo "[ERROR] rule conda env not active (CONDA_PREFIX='${CONDA_PREFIX:-}') -- run with --use-conda" >&2
+    exit 1
+fi
+export PATH="$CONDA_PREFIX/bin:$PATH"
+echo "[env] CONDA_PREFIX=$CONDA_PREFIX python3=$(command -v python3) famdb.py=$(command -v famdb.py || echo none) RepeatMasker=$(command -v RepeatMasker || echo none)" >&2"""
 SCRIPTS = "workflow/scripts"
 VENDOR = "workflow/vendor"
 
@@ -293,6 +308,7 @@ rule setup_famdb:
     shell:
         """
         exec > {log} 2>&1
+        {ENV_PATH_GUARD}
 
         RepeatMasker -v > {output.rm_version} 2>&1 || echo "RepeatMasker -v failed" > {output.rm_version}
 
@@ -833,8 +849,12 @@ if INCLUDE_DFAM:
             # a "supplement" (spec §6.6) by any reading. -c restricts to
             # the curated cross-species reference set that section actually
             # describes.
-            "famdb.py families -f fasta_name --include-class-in-name -c -a -d "
-            "--add-reverse-complement '{params.taxon}' > {output} 2> {log}"
+            """
+            exec 2> {log}
+            {ENV_PATH_GUARD}
+            famdb.py families -f fasta_name --include-class-in-name -c -a -d \
+                --add-reverse-complement '{params.taxon}' > {output}
+            """
 
 
 # -----------------------------------------------------------------------------
@@ -1031,12 +1051,15 @@ rule repeatmasker_chunk:
     log:
         f"{OUTDIR}/logs/{{arm}}/{{species}}/repeatmasker_chunk/{{scatteritem}}.log",
     shell:
-        "mkdir -p {params.outdir} && "
-        "(cd {params.outdir} && trap 'rm -rf RM_*' EXIT && "
-        "RepeatMasker -pa {params.pa} -lib {params.lib_abs} -xsmall -gff -a "
-        "{params.sensitive_flag} {params.extra_args} -dir . {params.fa_abs}) "
-        "> {log} 2>&1 && "
-        "touch {output.out_file} {output.tbl_file} {output.align_file}"
+        """
+        exec > {log} 2>&1
+        {ENV_PATH_GUARD}
+        mkdir -p {params.outdir}
+        (cd {params.outdir} && trap 'rm -rf RM_*' EXIT && \
+            RepeatMasker -pa {params.pa} -lib {params.lib_abs} -xsmall -gff -a \
+                {params.sensitive_flag} {params.extra_args} -dir . {params.fa_abs})
+        touch {output.out_file} {output.tbl_file} {output.align_file}
+        """
 
 
 rule gather_repeatmasker:
@@ -1111,6 +1134,7 @@ rule divergence:
     shell:
         """
         exec > {log} 2>&1
+        {ENV_PATH_GUARD}
         mkdir -p $(dirname {output.divsum})
 
         # bioconda's RepeatMasker util scripts (calcDivergenceFromAlign.pl,

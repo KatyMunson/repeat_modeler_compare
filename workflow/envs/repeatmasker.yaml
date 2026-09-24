@@ -5,3 +5,8 @@ channels:
   - defaults
 dependencies:
   - repeatmasker>=4.2.4
+  # famdb.py (bundled with RepeatMasker) imports h5py, but the bioconda
+  # repeatmasker package doesn't always pull it in -- without it every
+  # famdb.py call (setup_famdb, export_dfam) dies with
+  # "ModuleNotFoundError: No module named 'h5py'".
+  - h5py

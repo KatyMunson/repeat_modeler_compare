@@ -23,6 +23,19 @@
 #*                                                                            *
 #******************************************************************************
 #
+# repeat_compare local patch (KM, 2026-09; see workflow/vendor/README.md).
+# Copied from RepeatModeler 2.0.9's LTRPipeline. Two changes, nothing else:
+#  1. The LtrHarvest step (whole-genome gt suffixerator + gt ltrharvest,
+#     one single-threaded process -- the step that stalled for days on a
+#     satellite-rich hagfish assembly) is replaced by -inscn <file>: a
+#     precomputed LTRharvest-format .scn built upstream in parallel
+#     windows. It gets the same line filtering runLtrHarvest applies to
+#     real ltrharvest output. Everything after it (LTR_retriever, MAFFT,
+#     NINJA, Refiner) runs exactly as in RepeatModeler.
+#  2. RepeatModeler's own modules and Refiner are found through RM_DIR (env)
+#     or the directory of the RepeatModeler on PATH, instead of FindBin,
+#     since this copy doesn't live inside the RepeatModeler install.
+#
 # To Do:
 #
 
@@ -32,7 +45,10 @@ LTRPipeline - Run a structural LTR finder on the genome and polish the results
 
 =head1 SYNOPSIS
 
-  LTRPipeline [-version] [-threads #] <input_sequence.fa>
+  LTRPipeline_from_scn -inscn <ltrharvest_format.scn> [-version] [-threads #] <input_sequence.fa>
+
+  The .scn's seq-nr column must be the 0-based index of each sequence in
+  <input_sequence.fa>, exactly as whole-genome gt ltrharvest would report it.
 
 =head1 DESCRIPTION
 
@@ -79,8 +95,20 @@ use File::Path;
 use File::Basename;
 use FindBin;
 use Cwd;
+use Cwd qw( abs_path );
 use Time::HiRes qw( gettimeofday tv_interval);
-use lib $FindBin::RealBin;
+my $RM_DIR;
+BEGIN {
+  $RM_DIR = $ENV{'RM_DIR'};
+  if ( !$RM_DIR ) {
+    my $rm = `which RepeatModeler 2>/dev/null`;
+    chomp $rm;
+    die "LTRPipeline_from_scn: set RM_DIR or put RepeatModeler on PATH\n"
+        unless $rm;
+    $RM_DIR = dirname( abs_path( $rm ) );
+  }
+}
+use lib $RM_DIR;
 use RepModelConfig;
 use SeedAlignment;
 use SeedAlignmentCollection;
@@ -116,6 +144,7 @@ my @getopt_args = (
                     '-giToID=s',
                     '-LTRMaxSeqLen=i',
                     '-threads=i',
+                    '-inscn=s',
 );
 
 # Add configuration parameters as additional command-line options
@@ -233,11 +262,12 @@ if ( $useLtrDet ) {
   }
 }
 else {
-  print "Running LtrHarvest...";
+  print "Reading precomputed LtrHarvest-format results...";
+  die "LTRPipeline_from_scn: -inscn <file> is required\n"
+      unless ( $options{'inscn'} && -s $options{'inscn'} );
   my $numAnnots =
-      &runLtrHarvest( $GENOMETOOLS_DIR, $inputFile,
-                      "$tempDir/raw-struct-results.txt",
-                      $threads, $tempDir );
+      &readPrecomputedScn( $options{'inscn'},
+                           "$tempDir/raw-struct-results.txt" );
   if ( $numAnnots == 0 ) {
     print
 "LTRPipeline: No results returned from LTR structural finder ( LtrHarvest ).\n";
@@ -397,7 +427,7 @@ foreach my $cluster ( sort keys %clusters ) {
   my $additionalOpts = "";
   $additionalOpts .= "-giToID " . $options{'giToID'} if ( $options{'giToID'} );
   my $cmd =
-"$FindBin::RealBin/Refiner $additionalOpts -name ltr-1_family-$idx $tempDir/ltr-1_family-$idx.fa";
+"$RM_DIR/Refiner $additionalOpts -name ltr-1_family-$idx $tempDir/ltr-1_family-$idx.fa";
   $cmd .= " -quiet" unless ( $DEBUG );
   print "LTRPipeline: Running $cmd\n" if ( $DEBUG );
   system( $cmd );
@@ -979,6 +1009,34 @@ sub runLtrHarvest {
 
   print "LTRPipeline::runLtrHarvest : Returning $annotCnt annotations.\n"
       if ( $DEBUG );
+  return $annotCnt;
+}
+
+# repeat_compare patch: same filtering runLtrHarvest applies to real
+# ltrharvest output, applied to a precomputed .scn instead.
+sub readPrecomputedScn {
+  my $scnFile = shift;
+  my $outFile = shift;
+  my $annotCnt = 0;
+  open IN, "<$scnFile" or die "Could not open $scnFile for reading!\n";
+  open OUT, ">$outFile" or die "Could not open $outFile for writing!\n";
+  while ( <IN> ) {
+    if ( /^#/ ) {
+      print OUT;
+    }
+    elsif ( /^\d+\s+\d+\s+\d+\s+\d+/ ) {
+      $annotCnt++;
+      print OUT;
+    }
+    elsif ( /^\s*$/ ) {
+      # Don't save
+    }
+    else {
+      die "LTRPipeline_from_scn: unexpected line in $scnFile:\n$_";
+    }
+  }
+  close IN;
+  close OUT;
   return $annotCnt;
 }
 

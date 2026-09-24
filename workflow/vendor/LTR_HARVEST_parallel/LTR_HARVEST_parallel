@@ -9,6 +9,20 @@ use Pod::Usage;
 
 # updates
 # add the -o parameter. Facilitated by DeepSeek R1. 03/23/2025
+#
+# repeat_compare local patches (KM, 2026-09; see workflow/vendor/README.md):
+#  1. -harvest_args "<args>" overrides the hard-coded LTRharvest parameters
+#     (repeat_compare passes RepeatModeler's own, i.e. gt defaults, by default).
+#  2. -timeout_log <file> appends one line per timed-out piece
+#     (piece, bp, action=salvaged|skipped) so skipped sequence is reportable.
+#  3. Salvage mode now re-runs the timed-out piece with -threads 2. Upstream
+#     used -threads 1, which takes the single-threaded branch below: that
+#     branch ignores -size/-time entirely and re-runs the WHOLE piece with no
+#     timeout, so a piece that stalled once could stall forever.
+#     Its overlap is 20 kb (upstream: 5 kb for LTR_FINDER; unset, i.e. the
+#     100 kb default, for LTR_HARVEST -- which cut.pl rejects as larger
+#     than the 50 kb piece), so elements up to ~20 kb crossing a salvage
+#     piece boundary are still found whole.
 
 my $version = "v1.3";
 # customized parameters
@@ -22,6 +36,7 @@ my $next = 0; #0, run LTRharvest. 1, only summarize results if the .harvest fold
 my $verbose = 0; #0, remove the .harvest folder after finished; 1, retain the folder for later use.
 my $threads = 4; #specify thread number to run LTR_HARVEST
 my $annotator = "LTR_HARVEST_parallel"; #the annotator name used in gff output
+my $timeout_log = ""; #repeat_compare patch: file to append timed-out pieces to
 
 # dependencies
 my $script_path = $FindBin::Bin;
@@ -70,6 +85,8 @@ foreach (@ARGV){
         $cut = $ARGV[$i+1] if /^-cut$/i;
         $genometools = $ARGV[$i+1] if /^-gt$/i;
         $threads = $ARGV[$i+1] if /^-threads$|^-t$/i;
+        $harvest_para = $ARGV[$i+1] if /^-harvest_args$/i;
+        $timeout_log = $ARGV[$i+1] if /^-timeout_log$/i;
         $check_dependencies = 1 if /^-check_dependencies$/i;
         $help = 1 if /^-help$|^-h$/i;
         $i++;
@@ -161,6 +178,20 @@ goto Next if $next == 1; #run the next step if all LTR_HARVEST processes are don
 chdir "$seq_file.harvest";
 `perl $cut ../$seq_clean -s -l $size_of_each_piece -o $overlap_length`;
 
+# repeat_compare patch: record a timed-out piece and its length
+sub log_timeout {
+        my ($piece, $action) = @_;
+        return if $timeout_log eq "";
+        my $bp = 0;
+        if (open my $pfh, "<", $piece) {
+                while (my $l = <$pfh>) { next if $l =~ /^>/; $l =~ s/\s+//g; $bp += length $l; }
+                close $pfh;
+                }
+        open my $lfh, ">>", $timeout_log or die "Cannot append to $timeout_log: $!";
+        print $lfh "$piece\t$bp\t$action\n";
+        close $lfh;
+        }
+
 ##multi-threading using queue, create a worker module for parallel computation
 my $process_q=Thread::Queue->new();
 sub worker {
@@ -170,9 +201,13 @@ sub worker {
                 print localtime() ." CPU".threads -> self() -> tid().": running on $seq\n";
                 `timeout -s KILL ${timeout}s ${genometools}gt suffixerator -db $seq -indexname $seq -tis -suf -lcp -des -ssp -sds -dna 2>/dev/null`;
                 `timeout -s KILL ${timeout}s ${genometools}gt ltrharvest -index $seq $harvest_para > $seq.harvest.scn 2>/dev/null`;
+                 if ($? ne 0){
+                        log_timeout($seq, $try1 ne 0 ? "salvaged" : "skipped");
+                        }
                  if ($? ne 0 and $try1 ne 0){
                         print localtime() ." CPU".threads -> self() -> tid().": $seq timeout, process it with the salvage mode\n";
-                        my $in=`perl $script_path/LTR_HARVEST_parallel -seq $seq -size 50000 -time 30 -try1 0 -threads 1 -cut $cut -gt $genometools`;
+                        my $log_arg = $timeout_log ne "" ? "-timeout_log $timeout_log" : "";
+                        my $in=`perl $script_path/LTR_HARVEST_parallel -seq $seq -size 50000 -overlap 20000 -time 30 -try1 0 -threads 2 -cut $cut -gt $genometools -harvest_args '$harvest_para' $log_arg`;
                         `mv $seq.harvest.combine.scn $seq.harvest.scn`;
                         `rm -rf ./${seq}.harvest 2>/dev/null`; #remove?
                         }
@@ -203,7 +238,7 @@ open GFF, ">>$seq_file.harvest.combine.gff3" or die $!;
 
 #print out headers
 print Out "#LTR_HARVEST_parallel -seq $seq_file -size $size_of_each_piece -time $timeout -try1 $try1 -threads $threads -cut $cut
-# LTR_HARVEST args= -minlenltr 100 -maxlenltr 7000 -mintsd 4 -maxtsd 6 -motif TGCA -motifmis 1 -similar 85 -vic 10 -seed 20 -seqids yes
+# LTR_HARVEST args= $harvest_para
 # LTR_HARVEST_parallel version=$version
 # predictions are reported in the following way
 # s(ret) e(ret) l(ret) s(lLTR) e(lLTR) l(lLTR) s(rLTR) e(rLTR) l(rLTR) sim(LTRs) seq-nr chr

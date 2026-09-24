@@ -9,6 +9,20 @@ use Pod::Usage;
 
 # updates
 # add the -o parameter. Facilitated by DeepSeek R1. 03/23/2025
+#
+# repeat_compare local patches (KM, 2026-09; see workflow/vendor/README.md):
+#  1. -finder_args "<args>" overrides the hard-coded ltr_finder parameters
+#     ("-w 2" must stay in them; the parser below depends on it).
+#  2. -timeout_log <file> appends one line per timed-out piece
+#     (piece, bp, action=salvaged|skipped) so skipped sequence is reportable.
+#  3. Salvage mode now re-runs the timed-out piece with -threads 2. Upstream
+#     used -threads 1, which takes the single-threaded branch below: that
+#     branch ignores -size/-time entirely and re-runs the WHOLE piece with no
+#     timeout, so a piece that stalled once could stall forever.
+#     Its overlap is 20 kb (upstream: 5 kb for LTR_FINDER; unset, i.e. the
+#     100 kb default, for LTR_HARVEST -- which cut.pl rejects as larger
+#     than the 50 kb piece), so elements up to ~20 kb crossing a salvage
+#     piece boundary are still found whole.
 
 my $version = "v1.4";
 # customized parameters
@@ -23,6 +37,7 @@ my $next = 0; #0, run LTR_FINDER. 1, only summarize results if the .finder folde
 my $verbose = 0; #0, remove the .finder folder after finished; 1, retain the folder for later use.
 my $threads = 4; #specify thread number to run ltr_finder
 my $annotator = "LTR_FINDER_parallel"; #the annotator name used in gff output
+my $timeout_log = ""; #repeat_compare patch: file to append timed-out pieces to
 
 # dependencies
 #my $script_path = dirname(__FILE__);
@@ -76,6 +91,8 @@ foreach (@ARGV){
 	$cut = $ARGV[$i+1] if /^-cut$/i;
 	$ltr_finder = $ARGV[$i+1] if /^-finder$/i;
 	$threads = $ARGV[$i+1] if /^-threads$|^-t$/i;
+	$finder_para = $ARGV[$i+1] if /^-finder_args$/i;
+	$timeout_log = $ARGV[$i+1] if /^-timeout_log$/i;
 	$check_dependencies = 1 if /^-check_dependencies$/i;
 	$help = 1 if /^-help$|^-h$/i;
 	$i++;
@@ -166,6 +183,20 @@ goto Next if $next == 1; #run the next step if all LTR_finder processes are done
 chdir "$seq_file.finder";
 `perl $cut ../$seq_clean -s -l $size_of_each_piece -o $overlap`;
 
+# repeat_compare patch: record a timed-out piece and its length
+sub log_timeout {
+	my ($piece, $action) = @_;
+	return if $timeout_log eq "";
+	my $bp = 0;
+	if (open my $pfh, "<", $piece) {
+		while (my $l = <$pfh>) { next if $l =~ /^>/; $l =~ s/\s+//g; $bp += length $l; }
+		close $pfh;
+		}
+	open my $lfh, ">>", $timeout_log or die "Cannot append to $timeout_log: $!";
+	print $lfh "$piece\t$bp\t$action\n";
+	close $lfh;
+	}
+
 ##multi-threading using queue, create a worker module for parallel computation
 my $process_q=Thread::Queue->new();
 sub worker {
@@ -174,9 +205,13 @@ sub worker {
 		$seq =~ s/\s+//;
 		print localtime() ." CPU".threads -> self() -> tid().": running on $seq\n";
 		`timeout -s KILL $timeout ${ltr_finder}ltr_finder $finder_para $seq > $seq.finder.scn`; #set the max running time for a thread as $timeout seconds
+		if ($? ne 0){
+			log_timeout($seq, $try1 ne 0 ? "salvaged" : "skipped");
+			}
 		if ($? ne 0 and $try1 ne 0){
 			print localtime() ." CPU".threads -> self() -> tid().": $seq timeout, process it with the salvage mode\n";
-			my $in=`perl $script_path/LTR_FINDER_parallel -seq $seq -size 50000 -overlap 5000 -time 10 -try1 0 -threads 1 -cut $cut -finder $ltr_finder`;
+			my $log_arg = $timeout_log ne "" ? "-timeout_log $timeout_log" : "";
+			my $in=`perl $script_path/LTR_FINDER_parallel -seq $seq -size 50000 -overlap 20000 -time 10 -try1 0 -threads 2 -cut $cut -finder $ltr_finder -finder_args '$finder_para' $log_arg`;
 			`mv $seq.finder.combine.scn $seq.finder.scn`;
 			`rm -rf ${seq}.finder`; #remove?
 			}

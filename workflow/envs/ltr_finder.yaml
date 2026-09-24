@@ -1,0 +1,11 @@
+name: ltr_finder
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  # LTR_FINDER_parallel (vendored, workflow/vendor/) needs a threaded perl
+  # (checked at run time with `perl -Mthreads`) and ltr_finder on PATH.
+  - perl
+  - ltr_finder>=1.07
+  - coreutils

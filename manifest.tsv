@@ -1,11 +1,19 @@
 # repeat_compare manifest — tab-separated, "#"-prefixed lines and blank lines ignored.
-# Columns: species_id  species_name  fasta  tissue  accession
-#   species_id  short code, [A-Za-z0-9]+, unique. Used as a wildcard and as the
-#               library-name prefix (e.g. Esto, Mlim).
-#   species_name  free text, for reports.
+# Columns: species_id  species_name  fasta  tissue  accession  [satellite_lib]
+#   species_id  short code, [A-Za-z0-9]+, unique. Used as a wildcard and in
+#               paths; also the library-name prefix unless
+#               satellite.harmonization_dir is set (then the stage-02b code,
+#               e.g. EST, is used as the prefix instead).
+#   species_name  "Genus species". With satellite.harmonization_dir set it must
+#               match the binomial stage 02b was given (case/whitespace-insensitive).
 #   fasta       absolute path to the assembly FASTA (may be gzipped).
 #   tissue      germline | soma | unknown.
 #   accession   optional; metadata only, never downloaded.
+#   satellite_lib optional 6th column (may be omitted entirely): satellite motif
+#               FASTA (#Class/Family headers) to screen this species with. Usually
+#               left empty and supplied for every species via
+#               satellite.harmonization_dir; a value here is a per-species
+#               override that only goes into this species' own-arm library.
 #
 # This file is an EXAMPLE with placeholders — replace with real absolute
 # paths and confirmed tissue values before running for real.

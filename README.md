@@ -149,6 +149,51 @@ Harmonized entries are never renamed. Some fragmentation can remain at
 family level, where one satellite appears under both a harmonized name and
 an `rnd-*` name. Class-level `Satellite` bp is the comparable number.
 
+### Satellite library QC (does each motif behave like a satellite here?)
+
+`satellite_library_qc` checks every library motif against the operational
+definition used by `compare_assemblies_satellites`. It measures each
+criterion on this genome's satellite screen. It's **report-only**: nothing
+is filtered, and masking uses the full library.
+
+| criterion | measured as | default (`satellite.qc`) |
+|---|---|---|
+| length | monomer length | 75–2000 bp (stage 02 ran with `min_period_length: 75`; 2000 is TRF's maximum period) |
+| copies | genome-wide: merged hit bp / monomer length | ≥ 100 |
+| tandem | fraction of the motif's bp in arrays (same motif, contig and strand, hits chained across gaps ≤ max(50 bp, 0.2 × monomer)) spanning ≥ 3 monomers | ≥ 0.5 |
+| not a simple repeat | fraction of the monomer covered by an exact period-1..10 self-repeat (≥ 3 copies of the unit) | ≤ 0.5 |
+
+Stage 02's copy cutoffs (`candidate_scan.min_copy_number: 100`,
+`min_single_block_copy_number: 300`, `copy_number_filter.min_total_copy_number: 500`)
+are TRF copy numbers **within arrays**. They don't establish genome-wide
+copy number or tandem organisation for a harmonized motif screened against
+a genome, which is why this recomputes both.
+- A motif whose bp is mostly isolated hits behaves like a dispersed
+  repeat, often a TE fragment. It still inflates satellite %, and it gets
+  hard-masked before LTR discovery.
+- A monomer that is mostly a short-period repeat is effectively
+  `Simple_repeat`. The screen's `-nolow` lets it count as satellite.
+
+**Outputs:**
+- Early: `{outdir}/{species}/satellite_screen/satellite_library_qc.tsv`
+  (one row per motif, a `pass_*` flag per criterion, and `pass_all`).
+- Final: `{outdir}/summary/satellite_library_qc.tsv`, which adds
+  `te_like_family_hits`: de novo families that RepeatClassifier calls a TE
+  and whose best satellite match is this motif, a hint the motif is
+  TE-derived. This needs RepeatModeler, so it only appears in the final
+  summary.
+- `satellite_composition.tsv` gains `satellite_pct_nongap_screen_passing`,
+  the screen counting only passing motifs, to show how much the headline
+  number depends on borderline motifs.
+
+**Check it before the full run:** the `satellite_qc` target runs only
+prep → satellite screen → QC. That takes hours, compared with days for
+RepeatModeler:
+
+```bash
+./runsnake 40 --configfile config.yaml satellite_qc
+```
+
 ### Species codes and stage 02b harmonization
 
 Set `satellite.harmonization_dir` to

@@ -246,6 +246,7 @@ def _satellite_targets():
     targets = [
         f"{OUTDIR}/summary/satellite_composition.tsv",
         f"{OUTDIR}/summary/satellite_per_contig.tsv",
+        f"{OUTDIR}/summary/satellite_library_qc.tsv",
     ]
     if HARMONIZATION_DIR:
         targets.append(f"{OUTDIR}/summary/satellite_by_origin.tsv")
@@ -272,6 +273,17 @@ rule all:
         f"{OUTDIR}/plots/divergence_landscape.png",
         f"{OUTDIR}/plots/arm_concordance.png",
         _satellite_targets(),
+
+
+rule satellite_qc:
+    # Early checkpoint: prep -> satellite screen -> per-motif library QC only
+    # (hours, vs days for RepeatModeler). Inspect
+    # {outdir}/{species}/satellite_screen/satellite_library_qc.tsv before
+    # committing to the full run. Report-only: `all` doesn't wait on it
+    # beyond producing it, and nothing is filtered by it.
+    input:
+        expand(f"{OUTDIR}/{{species}}/satellite_screen/satellite_library_qc.tsv", species=SAT_SPECIES),
+        expand(f"{OUTDIR}/{{species}}/satellite_screen/satellite_genomewide.tsv", species=SAT_SPECIES),
 
 
 rule library_only:
@@ -690,6 +702,38 @@ rule satellite_coverage:
         "--species {params.code} --species-id {wildcards.species} --tissue {params.tissue} "
         "--flag-pct {params.flag_pct} --bed {output.bed} --genomewide {output.genomewide} "
         "--per-contig {output.per_contig} > {log} 2>&1"
+
+
+rule satellite_library_qc:
+    # Each motif vs KM's operational satellite definition, measured on this
+    # genome: monomer length, genome-wide copies, fraction in tandem
+    # arrays, short-period (simple-repeat) content. See the script's
+    # docstring and README "Satellite library QC".
+    input:
+        lib=lambda wc: SAT_LIB_BY_SPECIES[wc.species],
+        out_file=f"{OUTDIR}/{{species}}/satellite_screen/{{species}}.satellite.fa.out",
+        genomewide=f"{OUTDIR}/{{species}}/satellite_screen/satellite_genomewide.tsv",
+    output:
+        qc=f"{OUTDIR}/{{species}}/satellite_screen/satellite_library_qc.tsv",
+        passing=f"{OUTDIR}/{{species}}/satellite_screen/satellite_library_qc_passing.tsv",
+    threads: config["resources"]["satellite_library_qc"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["satellite_library_qc"]["mem"] * attempt,
+        hrs=config["resources"]["satellite_library_qc"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/{{species}}/satellite_library_qc.log",
+    params:
+        code=lambda wc: SPECIES_CODE[wc.species],
+        q=SAT_CFG["qc"],
+    shell:
+        "python3 {SCRIPTS}/satellite_library_qc.py --satellite-lib {input.lib} --out-file {input.out_file} "
+        "--genomewide {input.genomewide} --species {params.code} --species-id {wildcards.species} "
+        "--min-len {params.q[min_monomer_len]} --max-len {params.q[max_monomer_len]} "
+        "--min-copies {params.q[min_copies]} --min-array-copies {params.q[min_array_copies]} "
+        "--min-tandem-frac {params.q[min_tandem_frac]} "
+        "--max-short-period-frac {params.q[max_short_period_frac]} "
+        "--out {output.qc} --passing-summary {output.passing} > {log} 2>&1"
 
 
 rule satellite_origin:
@@ -1527,6 +1571,13 @@ def _combine_inputs(wildcards):
         "sat_per_contig": expand(
             f"{OUTDIR}/{{species}}/satellite_screen/satellite_per_contig.tsv", species=SAT_SPECIES
         ),
+        "sat_qc": expand(
+            f"{OUTDIR}/{{species}}/satellite_screen/satellite_library_qc.tsv", species=SAT_SPECIES
+        ),
+        "sat_qc_passing": expand(
+            f"{OUTDIR}/{{species}}/satellite_screen/satellite_library_qc_passing.tsv", species=SAT_SPECIES
+        ),
+        "sat_relabel": expand(f"{OUTDIR}/{{species}}/families/satellite_relabel.tsv", species=SAT_SPECIES),
         "sat_origin": expand(
             f"{OUTDIR}/{{species}}/satellite_screen/satellite_by_origin.tsv", species=SAT_SPECIES
         ) if HARMONIZATION_DIR else [],
@@ -1548,6 +1599,7 @@ def _combine_outputs():
     if SAT_SPECIES:
         outputs["sat_composition"] = f"{OUTDIR}/summary/satellite_composition.tsv"
         outputs["sat_per_contig"] = f"{OUTDIR}/summary/satellite_per_contig.tsv"
+        outputs["sat_qc"] = f"{OUTDIR}/summary/satellite_library_qc.tsv"
     if SAT_SPECIES and HARMONIZATION_DIR:
         outputs["sat_origin"] = f"{OUTDIR}/summary/satellite_by_origin.tsv"
     return outputs
@@ -1570,7 +1622,11 @@ rule combine_summaries:
             f"--satellite-genomewide-chunks {' '.join(input.sat_genomewide)} "
             f"--satellite-per-contig-chunks {' '.join(input.sat_per_contig)} "
             f"--satellite-composition-out {output.sat_composition} "
-            f"--satellite-per-contig-out {output.sat_per_contig}"
+            f"--satellite-per-contig-out {output.sat_per_contig} "
+            f"--satellite-qc-chunks {' '.join(input.sat_qc)} "
+            f"--satellite-qc-passing-chunks {' '.join(input.sat_qc_passing)} "
+            f"--satellite-relabel {' '.join(f'{s}:{p}' for s, p in zip(SAT_SPECIES, input.sat_relabel))} "
+            f"--satellite-qc-out {output.sat_qc}"
         ) if SAT_SPECIES else "",
         origin_args=lambda wc, input, output: (
             f"--satellite-origin-chunks {' '.join(input.sat_origin)} --satellite-origin-out {output.sat_origin}"

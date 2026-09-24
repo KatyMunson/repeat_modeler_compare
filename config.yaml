@@ -49,6 +49,16 @@ satellite:
   # satellite_relabel: an rnd-*#Unknown family whose consensus is covered at
   # least this much by satellite-library hits is relabeled #Satellite.
   relabel_min_cov: 0.5
+  # satellite_library_qc: each motif vs the operational definition used by
+  # compare_assemblies_satellites (TRF motifs, run with min_period_length 75;
+  # 2000 = TRF's maximum period). Report-only -- nothing is filtered.
+  qc:
+    min_monomer_len: 75
+    max_monomer_len: 2000
+    min_copies: 100            # genome-wide: merged hit bp / monomer length
+    min_array_copies: 3        # a chained run of hits this many monomers long = tandem array
+    min_tandem_frac: 0.5       # fraction of a motif's bp that must sit in tandem arrays
+    max_short_period_frac: 0.5 # monomer covered by a period-1..10 self-repeat ((CA)n-like)
 
 ltr_discovery:
   # SGE-level parallelism: whole scaffolds split into this many bp-balanced
@@ -125,6 +135,7 @@ resources:
   snapshot_harmonization: {threads: 1, mem: 2, hrs: 1}
   satellite_screen: {threads: 8,  mem: 2,  hrs: 12}   # per chunk (repeatmasker.scatter_count chunks)
   satellite_coverage: {threads: 1, mem: 16, hrs: 2}
+  satellite_library_qc: {threads: 1, mem: 16, hrs: 2}
   # --- LTR side pipeline ---
   ltr_mask:         {threads: 1,  mem: 16, hrs: 2}
   ltr_group_genome: {threads: 1,  mem: 16, hrs: 2}

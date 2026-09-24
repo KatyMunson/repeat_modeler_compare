@@ -174,17 +174,45 @@ a genome, which is why this recomputes both.
 - A monomer that is mostly a short-period repeat is effectively
   `Simple_repeat`. The screen's `-nolow` lets it count as satellite.
 
+**Is 100 copies enough?** As an inclusion floor, yes. As a definition of
+"a real satellite", no:
+- 100 copies of a 75–2000 bp monomer is only 7.5–200 kb, a few thousandths
+  of a percent of a 2.5 Gb assembly. Major satellites run to 10⁴–10⁶
+  copies in kb–Mb arrays.
+- Any motif stage 02 discovered in a genome clears 100 copies in that same
+  genome almost automatically. The floor mainly catches harmonized motifs
+  borrowed from another species that barely occur here.
+- A fixed copy count favours long monomers.
+
+So pass/fail stays at `min_copies` and each motif also gets a `copy_tier`:
+- `major`: ≥ `major_min_copies` (1000) copies, **or** ≥ `major_min_bp`
+  (100 kb) of sequence;
+- `minor`: passes `min_copies` but isn't major;
+- `below_floor`: under `min_copies`.
+
+A long monomer can be `major` by bp while failing `pass_copies` (80
+copies of 1.8 kb is 144 kb). That's the long-monomer effect made visible,
+not a bug.
+
+`plots/satellite_copy_distribution.png` plots copies against monomer
+length for every motif, one panel per species, with each cutoff drawn in.
+If the copies show a clear gap, move `min_copies` there. That's the same
+idea as stage 02's `copy_number_diagnostic.png`.
+
 **Outputs:**
 - Early: `{outdir}/{species}/satellite_screen/satellite_library_qc.tsv`
-  (one row per motif, a `pass_*` flag per criterion, and `pass_all`).
+  (one row per motif, a `pass_*` flag per criterion, `pass_all`,
+  `copy_tier` and `largest_array_bp`).
 - Final: `{outdir}/summary/satellite_library_qc.tsv`, which adds
   `te_like_family_hits`: de novo families that RepeatClassifier calls a TE
   and whose best satellite match is this motif, a hint the motif is
   TE-derived. This needs RepeatModeler, so it only appears in the final
   summary.
-- `satellite_composition.tsv` gains `satellite_pct_nongap_screen_passing`,
-  the screen counting only passing motifs, to show how much the headline
-  number depends on borderline motifs.
+- `satellite_composition.tsv` gains two columns:
+  `satellite_pct_nongap_screen_passing` (only motifs that pass every
+  check) and `satellite_pct_nongap_screen_major` (only major-tier motifs).
+  Together they show how much the headline number depends on borderline
+  and minor motifs.
 
 **Check it before the full run:** the `satellite_qc` target runs only
 prep → satellite screen → QC. That takes hours, compared with days for

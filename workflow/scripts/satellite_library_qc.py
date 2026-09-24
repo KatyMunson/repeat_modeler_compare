@@ -17,6 +17,14 @@ definition of a satellite, measured on this genome's satellite screen
            period-1..10 self-repeat (a "satellite" that is really (CA)n
            counts as satellite here, because the screen runs with -nolow)
 
+Copy tier (context, not a pass/fail criterion): `major` = est. copies >=
+--major-min-copies OR genome bp >= --major-min-bp; `minor` = passes
+--min-copies but not major; `below_floor` = under --min-copies. 100
+genome-wide copies is an inclusion floor -- 7.5-200 kb of sequence, a few
+thousandths of a percent of a Gb-scale genome -- so it mostly catches
+harmonized motifs borrowed from another species that barely occur here;
+the tiers and the copies-vs-length plot show where real satellites sit.
+
 Report-only: nothing is filtered. Outputs one row per motif (--out) and a
 one-row passing-only coverage summary (--passing-summary) so the headline
 satellite % can be compared with the % from motifs that pass everything.
@@ -107,6 +115,8 @@ def main():
     ap.add_argument("--min-array-copies", type=float, default=3)
     ap.add_argument("--min-tandem-frac", type=float, default=0.5)
     ap.add_argument("--max-short-period-frac", type=float, default=0.5)
+    ap.add_argument("--major-min-copies", type=float, default=1000)
+    ap.add_argument("--major-min-bp", type=int, default=100000)
     ap.add_argument("--out", required=True)
     ap.add_argument("--passing-summary", required=True)
     args = ap.parse_args()
@@ -127,11 +137,12 @@ def main():
     nongap_bp = int(gw["nongap_bp"])
 
     passing_intervals = []
-    n_pass = 0
+    major_intervals = []
+    n_pass = n_major = 0
     with open(args.out, "w") as out:
         out.write("species\tspecies_id\tmotif\tmonomer_len\tgenome_bp\test_copies\tn_hits\tn_arrays\t"
-                  "n_isolated_hits\tlargest_array_copies\ttandem_bp\ttandem_frac\tshort_period_frac\t"
-                  "pass_length\tpass_copies\tpass_tandem\tpass_not_simple\tpass_all\n")
+                  "n_isolated_hits\tlargest_array_copies\tlargest_array_bp\ttandem_bp\ttandem_frac\tshort_period_frac\t"
+                  "pass_length\tpass_copies\tpass_tandem\tpass_not_simple\tpass_all\tcopy_tier\n")
         for name, seq in motifs:
             mlen = len(seq)
             mh = hits.get(name, [])
@@ -141,7 +152,8 @@ def main():
             tandem_bp = min(per_contig_bp(tandem), genome_bp)
             est_copies = genome_bp / mlen if mlen else 0.0
             tandem_frac = tandem_bp / genome_bp if genome_bp else 0.0
-            largest = max(((e - b + 1) / mlen for _c, b, e, _k in arrays), default=0.0)
+            largest_bp = max((e - b + 1 for _c, b, e, _k in arrays), default=0)
+            largest = largest_bp / mlen if mlen else 0.0
             isolated = sum(1 for *_x, k in arrays if k == 1)
             spf = short_period_frac(seq)
             p_len = args.min_len <= mlen <= args.max_len
@@ -149,21 +161,34 @@ def main():
             p_tandem = tandem_frac >= args.min_tandem_frac
             p_simple = spf <= args.max_short_period_frac
             p_all = p_len and p_copies and p_tandem and p_simple
+            if est_copies >= args.major_min_copies or genome_bp >= args.major_min_bp:
+                tier = "major"
+                n_major += 1
+                major_intervals += [(c, b, e) for c, _s, b, e in mh]
+            elif p_copies:
+                tier = "minor"
+            else:
+                tier = "below_floor"
             if p_all:
                 n_pass += 1
                 passing_intervals += [(c, b, e) for c, _s, b, e in mh]
             out.write(f"{args.species}\t{args.species_id}\t{name}\t{mlen}\t{genome_bp}\t{est_copies:.1f}\t"
-                      f"{len(mh)}\t{len(arrays)}\t{isolated}\t{largest:.1f}\t{tandem_bp}\t{tandem_frac:.3f}\t"
-                      f"{spf:.3f}\t{p_len}\t{p_copies}\t{p_tandem}\t{p_simple}\t{p_all}\n")
+                      f"{len(mh)}\t{len(arrays)}\t{isolated}\t{largest:.1f}\t{largest_bp}\t{tandem_bp}\t{tandem_frac:.3f}\t"
+                      f"{spf:.3f}\t{p_len}\t{p_copies}\t{p_tandem}\t{p_simple}\t{p_all}\t{tier}\n")
 
     passing_bp = per_contig_bp(passing_intervals)
+    major_bp = per_contig_bp(major_intervals)
     with open(args.passing_summary, "w") as out:
         out.write("species\tspecies_id\tn_motifs\tn_motifs_passing\tsatellite_bp_passing\t"
-                  "satellite_pct_nongap_screen_passing\n")
+                  "satellite_pct_nongap_screen_passing\tn_motifs_major\tsatellite_bp_major\t"
+                  "satellite_pct_nongap_screen_major\n")
         pct = 100.0 * passing_bp / nongap_bp if nongap_bp else 0.0
-        out.write(f"{args.species}\t{args.species_id}\t{len(motifs)}\t{n_pass}\t{passing_bp}\t{pct:.4f}\n")
+        pct_major = 100.0 * major_bp / nongap_bp if nongap_bp else 0.0
+        out.write(f"{args.species}\t{args.species_id}\t{len(motifs)}\t{n_pass}\t{passing_bp}\t{pct:.4f}\t"
+                  f"{n_major}\t{major_bp}\t{pct_major:.4f}\n")
     print(f"[satellite_library_qc] {args.species}: {n_pass}/{len(motifs)} motifs pass all criteria; "
-          f"passing motifs cover {pct:.2f}% of non-gap bp", file=sys.stderr)
+          f"passing motifs cover {pct:.2f}% of non-gap bp; {n_major} major motifs cover {pct_major:.2f}%",
+          file=sys.stderr)
 
 
 if __name__ == "__main__":

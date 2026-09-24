@@ -59,6 +59,12 @@ satellite:
     min_array_copies: 3        # a chained run of hits this many monomers long = tandem array
     min_tandem_frac: 0.5       # fraction of a motif's bp that must sit in tandem arrays
     max_short_period_frac: 0.5 # monomer covered by a period-1..10 self-repeat ((CA)n-like)
+    # Copy tiers (context only, not pass/fail): "major" = >= major_min_copies
+    # genome-wide copies OR >= major_min_bp of sequence; "minor" = passes
+    # min_copies but not major. min_copies is an inclusion floor (100 copies is
+    # 7.5-200 kb); see plots/satellite_copy_distribution.png for where the gap is.
+    major_min_copies: 1000
+    major_min_bp: 100000
 
 ltr_discovery:
   # SGE-level parallelism: whole scaffolds split into this many bp-balanced

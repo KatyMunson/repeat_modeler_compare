@@ -106,11 +106,13 @@ def build_satellite_composition(genomewide_chunks, class_composition_path, out_p
             if f[idx["arm"]] == "shared" and f[idx["class"]] == "Satellite":
                 shared[f[idx["species"]]] = (f[idx["bp"]], f[idx["pct_total"]], f[idx["pct_non_n"]])
     passing = {}
+    major = {}
     for path in passing_chunks:
         with open(path) as fh:
             header = fh.readline().rstrip("\n").split("\t")
             row = dict(zip(header, fh.readline().rstrip("\n").split("\t")))
             passing[row["species"]] = row["satellite_pct_nongap_screen_passing"]
+            major[row["species"]] = row["satellite_pct_nongap_screen_major"]
     with open(out_path, "w") as out:
         out.write(
             "# Satellite content per species. *_screen = upper bound: satellite-only RepeatMasker screen "
@@ -119,11 +121,13 @@ def build_satellite_composition(genomewide_chunks, class_composition_path, out_p
             "Satellite class of the shared-library arm, where the same satellite entries compete with de novo "
             "and Dfam families. Family-level satellite names can be split between a harmonized name and an "
             "rnd-* family; the class-level numbers here are the ones to compare. "
-            "*_screen_passing = the screen counting only motifs that pass satellite_library_qc.tsv.\n"
+            "*_screen_passing = the screen counting only motifs that pass satellite_library_qc.tsv; "
+            "*_screen_major = only motifs in the major copy tier.\n"
         )
         out.write("species\tspecies_id\ttissue\tsatellite_bp_screen\tsatellite_pct_nongap_screen\t"
                   "satellite_pct_total_screen\tsatellite_bp_shared_arm\tsatellite_pct_nongap_shared_arm\t"
-                  "satellite_pct_total_shared_arm\tsatellite_pct_nongap_screen_passing\n")
+                  "satellite_pct_total_shared_arm\tsatellite_pct_nongap_screen_passing\t"
+                  "satellite_pct_nongap_screen_major\n")
         for path in genomewide_chunks:
             with open(path) as fh:
                 header = fh.readline().rstrip("\n").split("\t")
@@ -131,7 +135,7 @@ def build_satellite_composition(genomewide_chunks, class_composition_path, out_p
             sh = shared.get(row["species"], ("NA", "NA", "NA"))
             out.write(f"{row['species']}\t{row['species_id']}\t{row['tissue']}\t{row['satellite_bp']}\t"
                       f"{row['pct_nongap']}\t{row['pct_total']}\t{sh[0]}\t{sh[2]}\t{sh[1]}\t"
-                      f"{passing.get(row['species'], 'NA')}\n")
+                      f"{passing.get(row['species'], 'NA')}\t{major.get(row['species'], 'NA')}\n")
 
 
 TE_CLASSES = ("LTR", "LINE", "SINE", "DNA", "RC", "Retroposon")

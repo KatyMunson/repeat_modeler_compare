@@ -247,6 +247,7 @@ def _satellite_targets():
         f"{OUTDIR}/summary/satellite_composition.tsv",
         f"{OUTDIR}/summary/satellite_per_contig.tsv",
         f"{OUTDIR}/summary/satellite_library_qc.tsv",
+        f"{OUTDIR}/plots/satellite_copy_distribution.png",
     ]
     if HARMONIZATION_DIR:
         targets.append(f"{OUTDIR}/summary/satellite_by_origin.tsv")
@@ -284,6 +285,7 @@ rule satellite_qc:
     input:
         expand(f"{OUTDIR}/{{species}}/satellite_screen/satellite_library_qc.tsv", species=SAT_SPECIES),
         expand(f"{OUTDIR}/{{species}}/satellite_screen/satellite_genomewide.tsv", species=SAT_SPECIES),
+        f"{OUTDIR}/plots/satellite_copy_distribution.png" if SAT_SPECIES else [],
 
 
 rule library_only:
@@ -733,6 +735,7 @@ rule satellite_library_qc:
         "--min-copies {params.q[min_copies]} --min-array-copies {params.q[min_array_copies]} "
         "--min-tandem-frac {params.q[min_tandem_frac]} "
         "--max-short-period-frac {params.q[max_short_period_frac]} "
+        "--major-min-copies {params.q[major_min_copies]} --major-min-bp {params.q[major_min_bp]} "
         "--out {output.qc} --passing-summary {output.passing} > {log} 2>&1"
 
 
@@ -1716,6 +1719,32 @@ rule provenance:
 # -----------------------------------------------------------------------------
 # 6.10 plot
 # -----------------------------------------------------------------------------
+rule plot_satellite_qc:
+    # Copies vs monomer length per motif, faceted by species -- where to put
+    # satellite.qc.min_copies (look for a gap), and which motifs are major.
+    # Reads the per-species QC tables (not the final summary), so it is
+    # available from the early satellite_qc target too.
+    input:
+        expand(f"{OUTDIR}/{{species}}/satellite_screen/satellite_library_qc.tsv", species=SAT_SPECIES),
+    output:
+        f"{OUTDIR}/plots/satellite_copy_distribution.png",
+    threads: config["resources"]["plot"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["plot"]["mem"] * attempt,
+        hrs=config["resources"]["plot"]["hrs"],
+        shell_exec="bash",
+    conda:
+        "workflow/envs/r_plot.yaml"
+    log:
+        f"{OUTDIR}/logs/summary/plot_satellite_qc.log",
+    params:
+        q=SAT_CFG["qc"],
+    shell:
+        "Rscript workflow/scripts/plot_satellite_qc.R {output} "
+        "{params.q[min_copies]} {params.q[major_min_copies]} {params.q[major_min_bp]} "
+        "{params.q[min_monomer_len]} {params.q[max_monomer_len]} {input} > {log} 2>&1"
+
+
 rule plot:
     input:
         class_composition=f"{OUTDIR}/summary/class_composition.tsv",

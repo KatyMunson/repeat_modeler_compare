@@ -10,13 +10,16 @@ Both genomes are masked with **two arms**:
 
 | arm | library | role |
 |---|---|---|
-| `shared` | non-redundant union of all species' de novo RepeatModeler2 families (+ optional Dfam export) | **primary comparison** |
-| `own` | that species' de novo families only (+ same optional Dfam export) | sanity check / concordance |
+| `shared` | non-redundant union of all species' de novo families (+ optional Dfam export + the shared satellite library) | **primary comparison** |
+| `own` | that species' de novo families only (+ same optional Dfam export + that species' satellite library) | sanity check / concordance |
 
 Masking every species with only its own library biases the comparison
 (each genome is best-annotated for its own families), so `shared` is the
 one to trust for cross-species numbers; `own` exists to sanity-check it via
-`results/summary/arm_concordance.tsv`.
+`{outdir}/summary/arm_concordance.tsv`. (`outdir` is `results_v2` by
+default: the restructured pipeline below writes to a fresh directory so
+runs made with the previous `-LTRStruct` version in `results/` stay
+untouched. Paths below are written as `{outdir}/...`.)
 
 Hagfish undergo programmed germline-to-soma genome rearrangement — a
 germline assembly and a somatic assembly are different genomes. This
@@ -25,6 +28,202 @@ carries it into every summary table and warns (never fails) if species
 disagree or are `unknown`. Assembly-quality covariates (contig count,
 total/N/non-N length, N50) are reported alongside every repeat result for
 the same reason — a fragmented or collapsed assembly undercounts repeats.
+
+## Pipeline flow
+
+Per species unless noted:
+
+```
+prep_genome -> genome_fingerprint, assembly_stats
+build_db -> repeatmodeler (RECON/RepeatScout rounds only, no -LTRStruct)
+                     |  rounds.consensi.fa / rounds.families.stk (unclassified)
+satellite screen (if a satellite library):  split_genome chunks -> satellite_chunk
+    (RepeatMasker -nolow -lib <satellite lib>) -> gather_satellite -> satellite_coverage
+LTR side pipeline:  ltr_mask (hard-mask satellite hits) -> ltr_group_genome
+    -> ltr_harvest_group + ltr_finder_group (per group) -> ltr_gather -> ltr_pipeline
+merge_families (rounds + LTR, RepeatModeler's own cd-hit merge)
+    -> classify_families (RepeatClassifier) -> satellite_relabel (if a satellite library)
+prefix_library -> cluster_library (all species) -> shared / own libraries (+ Dfam, + satellite)
+-> repeatmasker (both arms) -> divergence -> summarize -> combine_summaries -> plot
+```
+
+### Why LTR discovery runs outside RepeatModeler
+
+RepeatModeler 2.0.9's `-LTRStruct` runs `LTRPipeline`:
+1. **One** whole-genome `gt suffixerator` + `gt ltrharvest` with default
+   parameters, single-threaded. On the satellite-rich *E. stoutii*
+   assembly (~18% satellite, spread evenly over every chromosome-scale
+   scaffold) this step ran for days with no output.
+2. LTR_retriever (sequences renamed `seqN`, `-noanno`).
+3. MAFFT, NINJA and `Refiner` to build `ltr-1_family-N` consensi and seed
+   alignments.
+4. RepeatModeler then merges those with the round families
+   (`cd-hit-est -aS 0.8 -c 0.8 -g 1 -G 0 -A 80`; in a mixed cluster the
+   LTR family wins) and runs RepeatClassifier on the merged set.
+
+This pipeline replaces **only step 1**. `ltr_pipeline` runs
+`workflow/vendor/RepeatModeler/LTRPipeline_from_scn` (RepeatModeler's own
+`LTRPipeline`, patched to read a precomputed `.scn`) for steps 2–3.
+`merge_families.py` ports step 4's merge, and `classify_families` runs
+RepeatClassifier. Every species goes through the same path, so results are
+comparable across species. Relative to a stock `-LTRStruct` run, two things
+differ, and methods should say so:
+- LTR candidates come from the **satellite-hard-masked** genome;
+- **LTR_FINDER** candidates are added to LTRharvest's
+  (`ltr_discovery.use_ltr_finder`).
+
+`ltr_discovery.ltrharvest_args: ""` keeps RepeatModeler's own ltrharvest
+parameters (the `gt` defaults). `merge_families.py` also fixes two
+RepeatModeler edge cases, which its docstring lists: the last cd-hit
+cluster was never evaluated, and LTR families were dropped when no family
+was redundant.
+
+Parallelism has two levels:
+- **SGE jobs:** `ltr_group_genome` splits *whole* scaffolds into
+  `ltr_discovery.n_groups` bp-balanced groups (default 8). Scaffolds are
+  never split across groups, so merging groups is a plain concatenation.
+- **Threads within a job:** the vendored LTR_HARVEST_parallel and
+  LTR_FINDER_parallel cut each group into 5 Mb windows with 100 kb
+  overlap, and kill any window after `window_timeout_s`. With `try1: 1`, a
+  killed window is re-run as 50 kb pieces with their own timeouts. Pieces
+  that still time out are skipped and logged.
+
+`ltr_gather` (`normalize_scn.py`) rewrites every candidate to the 0-based
+whole-genome sequence index LTRPipeline expects, validates every
+coordinate against the sequence length, and reports the union of skipped
+sequence. The result goes to `{outdir}/summary/ltr_discovery.tsv` and
+`provenance.txt`. See `workflow/vendor/README.md` for what was patched in
+the vendored tools. That includes an upstream bug: salvage mode re-ran a
+timed-out window with no timeout at all.
+
+**If LTR candidate jobs are slow or failing, check these first:**
+- `{outdir}/{species}/ltr/groups/manifest.tsv` shows which contigs are in
+  which group;
+- `{outdir}/{species}/ltr/skipped_windows.tsv` shows which regions timed
+  out;
+- the per-group `*.timeouts.tsv` files list every salvaged or skipped piece.
+
+Tool paths: in `dfam/tetools`, `gt`, `LTR_retriever` and `cd-hit` live
+under `/opt` but are **not on `PATH`**, so `LTR_retriever` on its own says
+"command not found". The rules resolve them the way RepeatModeler does,
+through its `RepModelConfig.pm` (`workflow/scripts/rm_config_path.sh`).
+`ltr_finder` comes from bioconda (`workflow/envs/ltr_finder.yaml`).
+
+### Satellite screen, and the satellite library in the masking libraries
+
+Species with a satellite library (see below) get a satellite-only
+RepeatMasker screen: `-nolow -lib <library>`, no `-s`, the settings behind
+the original 17.9% estimate. It reuses the `split_genome` chunks. Outputs:
+- `{outdir}/{species}/satellite_screen/satellite_genomewide.tsv` and
+  `satellite_per_contig.tsv`: satellite bp against total and non-gap bp.
+  N runs are subtracted, so no seqtk or bedtools module is needed. The
+  per-contig table sets `flagged` at ≥ `satellite.per_contig_flag_pct`
+  (50, meaning "mostly satellite", informational only) and repeats the
+  genome-wide % on every row.
+- `satellite.bed`: merged hits, hard-masked by `ltr_mask` for LTR
+  discovery only.
+- `{outdir}/summary/satellite_composition.tsv`, with both bounds:
+  - `*_screen` (upper bound): the satellite library alone, no competition;
+  - `*_shared_arm` (lower bound): the shared arm's `Satellite` class, where
+    the same entries compete with de novo and Dfam families. Some satellite
+    loci go to an `rnd-*#Unknown` duplicate there.
+- `{outdir}/summary/satellite_by_origin.tsv` (with `harmonization_dir`):
+  satellite bp split into the species' own motifs, motifs promoted to a
+  shared ancestor (with `lca_rank`/`lca_taxon`), and other species'
+  motifs.
+
+The satellite library is appended to **both** masking arms, unclustered
+and unprefixed, the same way Dfam is. That keeps `arm_concordance.tsv` a
+comparison of clustering effects rather than of which arm has satellites.
+`append_libraries.py` checks every header is `name#Class/Family`,
+deduplicates libraries by content, skips names a `curated_override`
+already contains, and fails on name collisions.
+
+The satellite library is **not** cd-hit-clustered against de novo
+families, because cd-hit has no notion of repeat phase or rotation.
+Instead, `satellite_relabel` screens the classified families against each
+satellite monomer concatenated ×3. An `rnd-*#Unknown` family covered at
+least `satellite.relabel_min_cov` is relabeled `#Satellite`, and the
+matching harmonized name goes into `families/satellite_relabel.tsv`.
+Harmonized entries are never renamed. Some fragmentation can remain at
+family level, where one satellite appears under both a harmonized name and
+an `rnd-*` name. Class-level `Satellite` bp is the comparable number.
+
+### Species codes and stage 02b harmonization
+
+Set `satellite.harmonization_dir` to
+`compare_assemblies_satellites/results/02b_taxonomy_harmonization`. Then:
+- `snapshot_harmonization` copies its harmonized library, summary, code
+  tables, taxonomy tree and `taxonomy_cache/` into
+  `{outdir}/satellite_harmonization/`, with an md5 manifest. Every later
+  rule reads only that copy. Changing a source file re-triggers the
+  snapshot and everything downstream in a **single** run.
+- Each species' code (EST, MLI, ...) comes from 02b's
+  `taxonomy_cache/{code}.json`, by matching the manifest `species_name`
+  against the binomial 02b was given. The file name is the
+  collision-resolved code 02b actually used. The code becomes the library
+  family prefix (`EST_rnd-1_family-3`, matching `EST_SAT...`) and the
+  `species` column of every table. Paths keep `species_id`.
+- A species that isn't found is an error listing the available binomials.
+  Set `satellite.allow_unharmonized: true` to fall back to `species_id`
+  instead.
+- Without `harmonization_dir`, codes are the manifest `species_id`s and
+  satellite libraries come from manifest column 6 only.
+
+Never read meaning into a code prefix. Promoted codes are the first three
+letters of the ancestor's name plus a collision suffix, so `MYX` / `MYX2`
+can be genus *Myxine* or family Myxinidae depending on collision order.
+`satellite_by_origin.tsv` takes `lca_rank`/`lca_taxon` from
+`harmonized_summary.tsv` instead. No NCBI lookups happen here: 02b's cached
+lineages produced the names and are the source of truth.
+
+A manifest column-6 library is a per-species **override**. It goes only
+into that species' own arm and satellite screen, never into the shared
+library, so one species' un-harmonized motifs never mask every species.
+
+### Genome identity guard and RepeatModeler restarts
+
+`genome_fingerprint` records the prepped FASTA's md5 and every sequence
+name and length. Before starting a run, `repeatmodeler` stores that
+fingerprint next to the `RM_*` directory (`rm_run.fingerprint.tsv`). On any
+later attempt it refuses to touch an existing `RM_*` directory unless the
+current genome matches. Without this, a changed input (pre-scaffold vs
+scaffolded assembly, or a changed `genome_prep.test_subsample_bp`) would be
+silently `-recoverDir`-ed on top of a run built from a different genome.
+
+RepeatModeler's `-recoverDir` exits 0 without doing anything when every
+round already finished ("appears to contain a successful run"). The rule
+accepts that case, since only the rounds are needed, and otherwise
+requires a real completion.
+
+**Rule of thumb:** the satellite screen, RepeatModeler and the LTR side
+pipeline must all run on the identical genome FASTA for a species, every
+time. Scaffolded or pre-scaffold doesn't matter, as long as it's the same
+file. The pipeline guarantees this within a run. The guard catches it
+across runs.
+
+### RepeatModeler sampling depth
+
+RepeatModeler doesn't sample whole sequences. It cuts every sequence into
+~40 kb blocks, shuffles all blocks together, and draws blocks without
+replacement until each round's **non-N** bp target is reached (RepeatScout
+40 Mb, then RECON 10 → 30 → 90 → 270 Mb, about 15–20% of a 2.5 Gb
+assembly). Every region is therefore sampled in proportion to its non-N
+bp, whatever its scaffold's length.
+- Unplaced contigs aren't under-sampled. One shorter than 40 kb is a
+  single block, so it's slightly *over*-represented per bp.
+- Splitting contigs at Ns first would only dilute them.
+
+`{outdir}/summary/discovery_round_saturation.tsv` shows own-arm masked bp
+by the round that discovered each family (`rnd-1` … `rnd-N`, `ltr`,
+`satellite`, `other`). If families from the final round still mask a
+meaningful share (for example >1% of the genome), sampling hasn't
+saturated. In that case set `repeatmodeler.extra_args: "-numAddlRounds 1"`
+(or 2), the same value for every species, and rerun.
+- Each extra round costs about as much as the most expensive round, and
+  later rounds mostly add low-copy `Unknown` families.
+- Prefer extra rounds over a larger `-genomeSampleSizeMax`: RECON's
+  all-vs-all cost grows superlinearly with sample size.
 
 ## Quickstart
 
@@ -109,16 +308,18 @@ envmodules:
 
 ## RepeatModeler2 container
 
-`repeatmodeler.container` in `config.yaml` defaults to
-`docker://dfam/tetools:latest`, run via Singularity with `--bind
-/net/:/net/` (baked into `runsnake`). This is the only container image used
-in the pipeline; `build_db` also runs inside it (not the conda RepeatMasker
-env) so the `BuildDatabase`-written database files can't drift to a
-different RepeatModeler/RepeatMasker suite version than the one that will
-actually read them. Pin this to a specific tag once a real run has checked
-which Dfam/RepeatClassifier partitions the image actually bundles — see
-`results/{species}/repeatmodeler/{species}.repeatmodeler_provenance.txt`
-and `results/summary/provenance.txt`. The tetools image may ship only the
+`repeatmodeler.container` in `config.yaml` is pinned to
+`docker://dfam/tetools:2.00`, the tag whose digest matched `latest` for the
+first runs (RepeatModeler 2.0.9, LTR_retriever 2.9.0, genometools 1.6.4).
+It runs via Singularity with `--bind /net/:/net/`, which is baked into
+`runsnake`. This is the only container image in the pipeline.
+`build_db`, `repeatmodeler`, the LTR rules (`ltr_harvest_group`,
+`ltr_pipeline`), `merge_families` and `classify_families` all run inside
+it, so no step drifts to a different RepeatModeler/RepeatMasker suite
+version. To check which Dfam/RepeatClassifier partitions the image
+actually bundles, see
+`{outdir}/{species}/repeatmodeler/{species}.repeatmodeler_provenance.txt`
+and `{outdir}/summary/provenance.txt`. The tetools image may ship only the
 root FamDB partition; if Chordata/Vertebrata content is missing, that's
 recorded there, not silently assumed.
 
@@ -199,7 +400,11 @@ adjust both from real per-chunk runtimes observed in the wiring test.
 | step | parallelism |
 |---|---|
 | `BuildDatabase` | none |
-| `RepeatModeler -threads` | partial; plateaus (RepeatScout/RECON serial), `-LTRStruct` scales poorly |
+| `RepeatModeler -threads` | partial; plateaus (RepeatScout/RECON serial); rounds only (no `-LTRStruct`) |
+| satellite screen (`RepeatMasker -pa`) | yes, per chunk, like the masking arms |
+| `ltr_harvest_group` / `ltr_finder_group` | yes: `n_groups` SGE jobs per species × `threads` windows each (threads must be ≥ 2) |
+| `ltr_pipeline` (LTR_retriever, MAFFT, NINJA) | yes, `-threads`; once per species (needs the whole genome's candidates) |
+| `merge_families` (cd-hit-est), `classify_families` (RepeatClassifier) | yes, `-T` / `-threads` |
 | `cd-hit-est -T` | yes |
 | `RepeatMasker -pa` | yes; each slot ~4 cores under RMBlast (`repeatmasker.cores_per_pa`) |
 | `calcDivergenceFromAlign.pl`, `createRepeatLandscape.pl` | none; run per genome as separate jobs |
@@ -236,8 +441,8 @@ resolved.
 
 `library.curated_override` (path to a FASTA) replaces `shared_library.fa`'s
 content entirely with that file (recorded in `provenance.txt`) — use this
-after inspecting `results/library/shared_library.fa` and
-`results/library/library_membership.tsv` from the `library_only` target,
+after inspecting `{outdir}/library/shared_library.fa` and
+`{outdir}/library/library_membership.tsv` from the `library_only` target,
 if some families need manual extension/TSD-checking/TEtrimmer before the
 real masking run. `cluster_library` and `library_membership.tsv` still run
 unconditionally either way, since the de novo shared-vocabulary comparison
@@ -247,7 +452,7 @@ is a result in its own right. TEtrimmer/DeepTE are not implemented in v1.
 
 `workflow/scripts/` includes one script beyond the spec's original list:
 `combine_summaries.py`, which concatenates each `summarize_rm.py` per-arm/
-per-species chunk into the final `results/summary/*.tsv` tables and
+per-species chunk into the final `{outdir}/summary/*.tsv` tables and
 computes `arm_concordance.tsv`. This keeps `summarize_rm.py` itself focused
 on one (arm, species) at a time (matching the spec's description of what
 it does) rather than overloading it with cross-run aggregation.
@@ -271,7 +476,12 @@ it does) rather than overloading it with cross-run aggregation.
 
 ## Provenance
 
-`results/summary/provenance.txt` records RepeatMasker/RepeatModeler
+`{outdir}/summary/provenance.txt` records RepeatMasker/RepeatModeler
 versions, the FamDB release info, cd-hit version, which Dfam
-partition(s) each species' RepeatModeler container could see, any
-`curated_override` in effect, and a full `config.yaml` snapshot.
+partition(s) each species' RepeatModeler container could see, the pinned
+container tag, each species' genome fingerprint, the LTR tool versions
+(genometools, LTR_retriever, ltr_finder; vendored script commits are in
+`workflow/vendor/README.md`), LTR candidate counts and window-timeout
+skipped bp, the species code map, which satellite library went into which
+arm (plus the stage-02b snapshot md5s), any `curated_override` in effect,
+and a full `config.yaml` snapshot.

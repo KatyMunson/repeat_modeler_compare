@@ -8,27 +8,27 @@
 # 2. Runs RepeatModeler2's RECON/RepeatScout rounds (dfam/tetools
 #    Singularity image) de novo on each species independently — WITHOUT
 #    -LTRStruct.
-# 3. Satellite screen (optional, per species): RepeatMasker with KM's
-#    curated/harmonized satellite library (compare_assemblies_satellites
-#    stage 02b), reported as a first-class output and used to hard-mask
-#    satellites before LTR discovery.
-# 4. LTR structural discovery outside RepeatModeler: LTR_HARVEST_parallel
-#    (+ LTR_FINDER_parallel) on the satellite-masked genome, split into
+# 3. LTR structural discovery outside RepeatModeler: LTR_HARVEST_parallel
+#    (+ LTR_FINDER_parallel) on the prepped genome, split into
 #    bp-balanced groups of whole scaffolds and fixed-size windows with
 #    timeouts, then RepeatModeler's own LTRPipeline downstream steps
 #    (LTR_retriever -> MAFFT -> NINJA -> Refiner) on the combined
 #    candidates, merged back with the round families exactly the way
 #    RepeatModeler does and classified with RepeatClassifier. Only the
 #    single whole-genome ltrharvest call (which stalled for days on a
-#    satellite-rich hagfish assembly) is replaced.
-# 5. Prefixes each species' family names with its species code, optionally
+#    highly repetitive hagfish assembly) is replaced.
+# 4. Prefixes each species' family names with its species_id, optionally
 #    exports a Dfam supplement, clusters all species' families together
-#    with cd-hit-est into one non-redundant "shared" library (+ Dfam +
-#    satellite library), and assembles a per-species "own" library.
-# 6. Masks every species' genome with BOTH libraries (two "arms"), computes
+#    with cd-hit-est into one non-redundant "shared" library (+ Dfam), and
+#    assembles a per-species "own" library.
+# 5. Masks every species' genome with BOTH libraries (two "arms"), computes
 #    divergence landscapes, and summarizes non-overlapping repeat bp per
 #    class and per Class/Family against both total and non-N length.
-# 7. Combines everything into long-format comparison tables and plots.
+# 6. Combines everything into long-format comparison tables and plots.
+#
+# A satellite screen / satellite-library arm existed briefly and was removed
+# pending fixes to the satellite caller (compare_assemblies_satellites); it
+# is preserved at commit 502accf (tag satellite-arm-v1) -- see README.
 #
 # Species undergoing programmed germline-to-soma genome rearrangement (e.g.
 # hagfish) can have very different repeat content between tissues — this
@@ -44,23 +44,15 @@
 # Created: 2026-09
 # =============================================================================
 
-import hashlib
 import os
 import re
-import sys
-
-sys.path.insert(0, os.path.join(workflow.basedir, "workflow", "scripts"))
-from harmonization import resolve_species_codes  # noqa: E402
 
 configfile: "config.yaml"
 
 
 # -----------------------------------------------------------------------------
-# Manifest parsing (stdlib only, no pandas) — §5.1, + optional column 6
+# Manifest parsing (stdlib only, no pandas) — §5.1
 # -----------------------------------------------------------------------------
-MANIFEST_COLUMNS = ["species_id", "species_name", "fasta", "tissue", "accession", "satellite_lib"]
-
-
 def parse_manifest(path):
     manifest = []
     seen_ids = set()
@@ -70,15 +62,15 @@ def parse_manifest(path):
             if not line.strip() or line.lstrip().startswith("#"):
                 continue
             fields = line.split("\t")
-            if len(fields) not in (5, 6):
+            if len(fields) != 5:
+                extra = (" (a 6th satellite_lib column is no longer supported -- the satellite "
+                         "arm was removed; see README)") if len(fields) == 6 else ""
                 raise ValueError(
-                    f"{path}:{lineno}: expected 5 or 6 tab-separated fields "
-                    f"(species_id, species_name, fasta, tissue, accession[, satellite_lib]), "
-                    f"got {len(fields)}: {line!r}"
+                    f"{path}:{lineno}: expected 5 tab-separated fields "
+                    f"(species_id, species_name, fasta, tissue, accession), "
+                    f"got {len(fields)}{extra}: {line!r}"
                 )
-            fields += [""] * (6 - len(fields))
-            species_id, species_name, fasta, tissue, accession, satellite_lib = fields
-            satellite_lib = satellite_lib.strip()
+            species_id, species_name, fasta, tissue, accession = fields
             if not re.fullmatch(r"[A-Za-z0-9]+", species_id):
                 raise ValueError(
                     f"{path}:{lineno}: species_id '{species_id}' must match [A-Za-z0-9]+"
@@ -92,9 +84,15 @@ def parse_manifest(path):
                 )
             if not os.path.exists(fasta):
                 raise ValueError(f"{path}:{lineno}: fasta path does not exist: {fasta}")
-            if satellite_lib and not os.path.exists(satellite_lib):
-                raise ValueError(f"{path}:{lineno}: satellite_lib path does not exist: {satellite_lib}")
-            manifest.append(dict(zip(MANIFEST_COLUMNS, fields[:5] + [satellite_lib])))
+            manifest.append(
+                {
+                    "species_id": species_id,
+                    "species_name": species_name,
+                    "fasta": fasta,
+                    "tissue": tissue,
+                    "accession": accession,
+                }
+            )
     if len(manifest) < 2:
         raise ValueError(f"{path}: at least 2 species are required, found {len(manifest)}")
     return manifest
@@ -138,80 +136,6 @@ SCRIPTS = "workflow/scripts"
 VENDOR = "workflow/vendor"
 
 
-# -----------------------------------------------------------------------------
-# Satellite library + stage-02b harmonization (compare_assemblies_satellites)
-# -----------------------------------------------------------------------------
-SAT_CFG = config["satellite"]
-HARMONIZATION_DIR = (SAT_CFG.get("harmonization_dir") or "").strip()
-HARM_SNAPSHOT = f"{OUTDIR}/satellite_harmonization"
-HARM_FILES = [
-    "harmonized_repeatmasker_lib.fasta",
-    "harmonized_summary.tsv",
-    "taxon_codes.tsv",
-    "collisions_report.tsv",
-    "taxonomy_tree.json",
-]
-HARM_CACHE_FILES = []
-if HARMONIZATION_DIR:
-    for name in HARM_FILES:
-        if not os.path.exists(os.path.join(HARMONIZATION_DIR, name)):
-            raise ValueError(f"satellite.harmonization_dir: {name} not found in {HARMONIZATION_DIR}")
-    cache_dir = os.path.join(HARMONIZATION_DIR, "taxonomy_cache")
-    HARM_CACHE_FILES = sorted(f for f in os.listdir(cache_dir) if f.endswith(".json")) if os.path.isdir(cache_dir) else []
-HARMONIZED_LIB = f"{HARM_SNAPSHOT}/harmonized_repeatmasker_lib.fasta"
-
-# One resolved species code per species: the stage-02b code when
-# harmonization_dir is set (e.g. Esto -> EST), else the manifest species_id.
-# Used as the library family prefix and the `species` column in every
-# summary table; wildcards and paths keep species_id.
-SPECIES_CODE, _code_warnings = resolve_species_codes(
-    MANIFEST, HARMONIZATION_DIR, bool(SAT_CFG.get("allow_unharmonized", False))
-)
-for _w in _code_warnings:
-    print(f"[repeat_compare] WARNING: {_w}")
-for _sid, _code in SPECIES_CODE.items():
-    if not re.fullmatch(r"[A-Za-z0-9]+", _code):
-        raise ValueError(f"resolved species code '{_code}' for {_sid} must match [A-Za-z0-9]+")
-
-
-def _md5(path):
-    with open(path, "rb") as fh:
-        return hashlib.md5(fh.read()).hexdigest()
-
-
-# Per-species satellite library: an explicit manifest column-6 override wins;
-# otherwise the snapshot of the harmonized library when harmonization_dir is
-# set; otherwise none (no satellite screen for that species).
-SAT_LIB_BY_SPECIES = {}
-for row in MANIFEST:
-    if row["satellite_lib"]:
-        SAT_LIB_BY_SPECIES[row["species_id"]] = row["satellite_lib"]
-    elif HARMONIZATION_DIR:
-        SAT_LIB_BY_SPECIES[row["species_id"]] = HARMONIZED_LIB
-SAT_SPECIES = [s for s in SPECIES_IDS if s in SAT_LIB_BY_SPECIES]
-
-# Satellite libraries appended to the SHARED library. With harmonization_dir:
-# only the harmonized library (manifest overrides go to that species' own arm
-# only, so one species' un-harmonized motifs never mask every species).
-# Without it: the manifest libraries, but only if they are all the same file
-# content; differing per-species libraries go to own arms only.
-if HARMONIZATION_DIR:
-    SHARED_SAT_LIBS = [HARMONIZED_LIB]
-    _overrides = [r["species_id"] for r in MANIFEST if r["satellite_lib"]]
-    if _overrides:
-        print(f"[repeat_compare] NOTE: satellite_lib overrides for {_overrides} go into their own arm only")
-else:
-    _libs = sorted({SAT_LIB_BY_SPECIES[s] for s in SAT_SPECIES})
-    if len({_md5(p) for p in _libs}) == 1:
-        SHARED_SAT_LIBS = _libs[:1]
-    else:
-        SHARED_SAT_LIBS = []
-        if _libs:
-            print(
-                "[repeat_compare] WARNING: manifest satellite_lib files differ between species; "
-                "none is added to the shared library (each goes into its own species' arm only)."
-            )
-
 LTR_CFG = config["ltr_discovery"]
 LTR_GROUPS = [f"g{i}" for i in range(int(LTR_CFG["n_groups"]))]
 if config["resources"]["ltr_harvest_group"]["threads"] < 2 or config["resources"]["ltr_finder_group"]["threads"] < 2:
@@ -231,8 +155,7 @@ wildcard_constraints:
 # repeatmasker_chunk / gather_repeatmasker below) -- reused pattern from
 # compare_assemblies_satellites' stage 03 (its -lib-mode RepeatMasker
 # scatter/gather), adapted here since our own repeatmasker rule originally
-# ran each species' whole genome as one unchunked job. The satellite screen
-# reuses the same chunks.
+# ran each species' whole genome as one unchunked job.
 scattergather:
     genome_chunks=config["repeatmasker"]["scatter_count"],
 
@@ -240,20 +163,6 @@ scattergather:
 # -----------------------------------------------------------------------------
 # rule all / library_only — §6.11
 # -----------------------------------------------------------------------------
-def _satellite_targets():
-    if not SAT_SPECIES:
-        return []
-    targets = [
-        f"{OUTDIR}/summary/satellite_composition.tsv",
-        f"{OUTDIR}/summary/satellite_per_contig.tsv",
-        f"{OUTDIR}/summary/satellite_library_qc.tsv",
-        f"{OUTDIR}/plots/satellite_copy_distribution.png",
-    ]
-    if HARMONIZATION_DIR:
-        targets.append(f"{OUTDIR}/summary/satellite_by_origin.tsv")
-    return targets
-
-
 rule all:
     input:
         expand(
@@ -273,19 +182,6 @@ rule all:
         f"{OUTDIR}/plots/class_composition_shared.png",
         f"{OUTDIR}/plots/divergence_landscape.png",
         f"{OUTDIR}/plots/arm_concordance.png",
-        _satellite_targets(),
-
-
-rule satellite_qc:
-    # Early checkpoint: prep -> satellite screen -> per-motif library QC only
-    # (hours, vs days for RepeatModeler). Inspect
-    # {outdir}/{species}/satellite_screen/satellite_library_qc.tsv before
-    # committing to the full run. Report-only: `all` doesn't wait on it
-    # beyond producing it, and nothing is filtered by it.
-    input:
-        expand(f"{OUTDIR}/{{species}}/satellite_screen/satellite_library_qc.tsv", species=SAT_SPECIES),
-        expand(f"{OUTDIR}/{{species}}/satellite_screen/satellite_genomewide.tsv", species=SAT_SPECIES),
-        f"{OUTDIR}/plots/satellite_copy_distribution.png" if SAT_SPECIES else [],
 
 
 rule library_only:
@@ -587,217 +483,20 @@ rule repeatmodeler:
 
 
 # -----------------------------------------------------------------------------
-# Stage-02b harmonization snapshot (only with satellite.harmonization_dir):
-# every downstream rule reads these copies, never the sibling repo directly,
-# so results stay interpretable if stage 02b is rerun later. The source
-# files are declared inputs, so a changed 02b output re-triggers the
-# snapshot and everything downstream in a single run.
-# -----------------------------------------------------------------------------
-if HARMONIZATION_DIR:
-
-    rule snapshot_harmonization:
-        input:
-            files=[os.path.join(HARMONIZATION_DIR, f) for f in HARM_FILES],
-            cache=[os.path.join(HARMONIZATION_DIR, "taxonomy_cache", f) for f in HARM_CACHE_FILES],
-        output:
-            files=[f"{HARM_SNAPSHOT}/{f}" for f in HARM_FILES],
-            cache=[f"{HARM_SNAPSHOT}/taxonomy_cache/{f}" for f in HARM_CACHE_FILES],
-            md5=f"{HARM_SNAPSHOT}/snapshot_md5.tsv",
-        threads: config["resources"]["snapshot_harmonization"]["threads"]
-        resources:
-            mem=lambda wildcards, attempt: config["resources"]["snapshot_harmonization"]["mem"] * attempt,
-            hrs=config["resources"]["snapshot_harmonization"]["hrs"],
-            shell_exec="bash",
-        log:
-            f"{OUTDIR}/logs/library/snapshot_harmonization.log",
-        params:
-            source=HARMONIZATION_DIR,
-            snapshot=HARM_SNAPSHOT,
-        shell:
-            """
-            exec > {log} 2>&1
-            set -euo pipefail
-            mkdir -p {params.snapshot}/taxonomy_cache
-            for f in {input.files}; do cp "$f" {params.snapshot}/; done
-            for f in {input.cache}; do cp "$f" {params.snapshot}/taxonomy_cache/; done
-            listing=$(cd {params.snapshot} && find . -type f ! -name 'snapshot_md5.tsv*' | sort | xargs md5sum)
-            {{
-                printf "# snapshot of %s\\n" "{params.source}"
-                printf "%s\\n" "$listing" | awk '{{print $2"\\t"$1}}'
-            }} > {output.md5}
-            """
-
-
-# -----------------------------------------------------------------------------
-# Satellite screen (species with a satellite library): RepeatMasker
-# -nolow -lib <satellite library>, no -s -- the same settings that produced
-# the 17.9% E. stoutii estimate. Reuses split_genome's chunks.
-# -----------------------------------------------------------------------------
-rule satellite_chunk:
-    input:
-        fasta=f"{OUTDIR}/{{species}}/genome/chunks/{{scatteritem}}/{{scatteritem}}.fa",
-        lib=lambda wc: SAT_LIB_BY_SPECIES[wc.species],
-        famdb_verified=f"{OUTDIR}/library/famdb_verified.txt",
-    output:
-        out_file=temp(f"{OUTDIR}/{{species}}/satellite_screen/chunks/{{scatteritem}}/{{scatteritem}}.fa.out"),
-    threads: config["resources"]["satellite_screen"]["threads"]
-    resources:
-        mem=lambda wildcards, attempt: config["resources"]["satellite_screen"]["mem"] * attempt,
-        hrs=config["resources"]["satellite_screen"]["hrs"],
-        shell_exec="bash",
-    conda:
-        "workflow/envs/repeatmasker.yaml"
-    params:
-        outdir=f"{OUTDIR}/{{species}}/satellite_screen/chunks/{{scatteritem}}",
-        pa=max(1, config["resources"]["satellite_screen"]["threads"] // config["repeatmasker"]["cores_per_pa"]),
-        fa_abs=lambda wc, input: os.path.abspath(input.fasta),
-        lib_abs=lambda wc, input: os.path.abspath(input.lib),
-    log:
-        f"{OUTDIR}/logs/{{species}}/satellite_chunk/{{scatteritem}}.log",
-    shell:
-        "mkdir -p {params.outdir} && "
-        "(cd {params.outdir} && trap 'rm -rf RM_*' EXIT && "
-        "RepeatMasker -pa {params.pa} -nolow -lib {params.lib_abs} -xsmall -gff "
-        "-dir . {params.fa_abs}) > {log} 2>&1 && "
-        "touch {output.out_file}"
-
-
-rule gather_satellite:
-    input:
-        gather.genome_chunks(
-            f"{OUTDIR}/{{{{species}}}}/satellite_screen/chunks/{{scatteritem}}/{{scatteritem}}.fa.out"
-        ),
-    output:
-        f"{OUTDIR}/{{species}}/satellite_screen/{{species}}.satellite.fa.out",
-    threads: config["resources"]["gather_repeatmasker"]["threads"]
-    resources:
-        mem=lambda wildcards, attempt: config["resources"]["gather_repeatmasker"]["mem"] * attempt,
-        hrs=config["resources"]["gather_repeatmasker"]["hrs"],
-        shell_exec="bash",
-    log:
-        f"{OUTDIR}/logs/{{species}}/gather_satellite.log",
-    shell:
-        "bash workflow/scripts/gather_rm_out.sh {output} {input} > {log} 2>&1"
-
-
-rule satellite_coverage:
-    input:
-        out_file=f"{OUTDIR}/{{species}}/satellite_screen/{{species}}.satellite.fa.out",
-        fa=f"{OUTDIR}/{{species}}/genome/{{species}}.fa",
-    output:
-        bed=f"{OUTDIR}/{{species}}/satellite_screen/satellite.bed",
-        genomewide=f"{OUTDIR}/{{species}}/satellite_screen/satellite_genomewide.tsv",
-        per_contig=f"{OUTDIR}/{{species}}/satellite_screen/satellite_per_contig.tsv",
-    threads: config["resources"]["satellite_coverage"]["threads"]
-    resources:
-        mem=lambda wildcards, attempt: config["resources"]["satellite_coverage"]["mem"] * attempt,
-        hrs=config["resources"]["satellite_coverage"]["hrs"],
-        shell_exec="bash",
-    log:
-        f"{OUTDIR}/logs/{{species}}/satellite_coverage.log",
-    params:
-        code=lambda wc: SPECIES_CODE[wc.species],
-        tissue=lambda wc: TISSUE_BY_SPECIES[wc.species],
-        flag_pct=SAT_CFG["per_contig_flag_pct"],
-    shell:
-        "python3 {SCRIPTS}/satellite_coverage.py --out-file {input.out_file} --fasta {input.fa} "
-        "--species {params.code} --species-id {wildcards.species} --tissue {params.tissue} "
-        "--flag-pct {params.flag_pct} --bed {output.bed} --genomewide {output.genomewide} "
-        "--per-contig {output.per_contig} > {log} 2>&1"
-
-
-rule satellite_library_qc:
-    # Each motif vs KM's operational satellite definition, measured on this
-    # genome: monomer length, genome-wide copies, fraction in tandem
-    # arrays, short-period (simple-repeat) content. See the script's
-    # docstring and README "Satellite library QC".
-    input:
-        lib=lambda wc: SAT_LIB_BY_SPECIES[wc.species],
-        out_file=f"{OUTDIR}/{{species}}/satellite_screen/{{species}}.satellite.fa.out",
-        genomewide=f"{OUTDIR}/{{species}}/satellite_screen/satellite_genomewide.tsv",
-    output:
-        qc=f"{OUTDIR}/{{species}}/satellite_screen/satellite_library_qc.tsv",
-        passing=f"{OUTDIR}/{{species}}/satellite_screen/satellite_library_qc_passing.tsv",
-    threads: config["resources"]["satellite_library_qc"]["threads"]
-    resources:
-        mem=lambda wildcards, attempt: config["resources"]["satellite_library_qc"]["mem"] * attempt,
-        hrs=config["resources"]["satellite_library_qc"]["hrs"],
-        shell_exec="bash",
-    log:
-        f"{OUTDIR}/logs/{{species}}/satellite_library_qc.log",
-    params:
-        code=lambda wc: SPECIES_CODE[wc.species],
-        q=SAT_CFG["qc"],
-    shell:
-        "python3 {SCRIPTS}/satellite_library_qc.py --satellite-lib {input.lib} --out-file {input.out_file} "
-        "--genomewide {input.genomewide} --species {params.code} --species-id {wildcards.species} "
-        "--min-len {params.q[min_monomer_len]} --max-len {params.q[max_monomer_len]} "
-        "--min-copies {params.q[min_copies]} --min-array-copies {params.q[min_array_copies]} "
-        "--min-tandem-frac {params.q[min_tandem_frac]} "
-        "--max-short-period-frac {params.q[max_short_period_frac]} "
-        "--major-min-copies {params.q[major_min_copies]} --major-min-bp {params.q[major_min_bp]} "
-        "--out {output.qc} --passing-summary {output.passing} > {log} 2>&1"
-
-
-rule satellite_origin:
-    input:
-        out_file=f"{OUTDIR}/{{species}}/satellite_screen/{{species}}.satellite.fa.out",
-        summary=f"{HARM_SNAPSHOT}/harmonized_summary.tsv",
-        assembly_stats=f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv",
-    output:
-        f"{OUTDIR}/{{species}}/satellite_screen/satellite_by_origin.tsv",
-    threads: config["resources"]["satellite_coverage"]["threads"]
-    resources:
-        mem=lambda wildcards, attempt: config["resources"]["satellite_coverage"]["mem"] * attempt,
-        hrs=config["resources"]["satellite_coverage"]["hrs"],
-        shell_exec="bash",
-    log:
-        f"{OUTDIR}/logs/{{species}}/satellite_origin.log",
-    params:
-        code=lambda wc: SPECIES_CODE[wc.species],
-    shell:
-        "python3 {SCRIPTS}/satellite_origin.py --out-file {input.out_file} "
-        "--harmonized-summary {input.summary} --assembly-stats {input.assembly_stats} "
-        "--species {params.code} --species-id {wildcards.species} --out {output} > {log} 2>&1"
-
-
-# -----------------------------------------------------------------------------
 # LTR structural discovery, outside RepeatModeler.
 #
 # RepeatModeler 2.0.9's -LTRStruct = LTRPipeline: whole-genome gt
 # suffixerator + ltrharvest (default parameters, ONE single-threaded
 # process -- the step that stalled) -> LTR_retriever -> MAFFT -> NINJA ->
 # Refiner. Here only the ltrharvest step is replaced: candidates come from
-# LTR_HARVEST_parallel (+ LTR_FINDER_parallel) on the satellite-masked
-# genome, run as bp-balanced groups of whole scaffolds (SGE parallelism)
+# LTR_HARVEST_parallel (+ LTR_FINDER_parallel) on the prepped genome, run as bp-balanced groups of whole scaffolds (SGE parallelism)
 # and 5 Mb windows with per-window timeouts inside each group (thread
 # parallelism). Everything downstream is RepeatModeler's own code
 # (workflow/vendor/RepeatModeler/LTRPipeline_from_scn).
 # -----------------------------------------------------------------------------
-rule ltr_mask:
-    input:
-        fa=f"{OUTDIR}/{{species}}/genome/{{species}}.fa",
-        bed=lambda wc: [f"{OUTDIR}/{wc.species}/satellite_screen/satellite.bed"] if wc.species in SAT_LIB_BY_SPECIES else [],
-    output:
-        f"{OUTDIR}/{{species}}/ltr/{{species}}.satmasked.fa",
-    threads: config["resources"]["ltr_mask"]["threads"]
-    resources:
-        mem=lambda wildcards, attempt: config["resources"]["ltr_mask"]["mem"] * attempt,
-        hrs=config["resources"]["ltr_mask"]["hrs"],
-        shell_exec="bash",
-    log:
-        f"{OUTDIR}/logs/{{species}}/ltr_mask.log",
-    params:
-        bed_arg=lambda wc, input: f"--bed {input.bed}" if input.bed else "",
-    shell:
-        # No satellite library -> an unmasked copy, so every species takes
-        # the same path through the LTR rules.
-        "python3 {SCRIPTS}/mask_bed.py --fasta {input.fa} {params.bed_arg} --out {output} > {log} 2>&1"
-
-
 rule ltr_group_genome:
     input:
-        f"{OUTDIR}/{{species}}/ltr/{{species}}.satmasked.fa",
+        f"{OUTDIR}/{{species}}/genome/{{species}}.fa",
     output:
         groups=temp(expand(f"{OUTDIR}/{{{{species}}}}/ltr/groups/{{group}}.fa", group=LTR_GROUPS)),
         manifest=f"{OUTDIR}/{{species}}/ltr/groups/manifest.tsv",
@@ -918,7 +617,7 @@ rule ltr_finder_group:
 
 rule ltr_gather:
     input:
-        genome=f"{OUTDIR}/{{species}}/ltr/{{species}}.satmasked.fa",
+        genome=f"{OUTDIR}/{{species}}/genome/{{species}}.fa",
         harvest=expand(f"{OUTDIR}/{{{{species}}}}/ltr/groups/{{group}}.harvest.scn", group=LTR_GROUPS),
         harvest_to=expand(f"{OUTDIR}/{{{{species}}}}/ltr/groups/{{group}}.harvest.timeouts.tsv", group=LTR_GROUPS),
         finder=expand(f"{OUTDIR}/{{{{species}}}}/ltr/groups/{{group}}.finder.scn", group=LTR_GROUPS) if USE_LTR_FINDER else [],
@@ -935,7 +634,6 @@ rule ltr_gather:
     log:
         f"{OUTDIR}/logs/{{species}}/ltr_gather.log",
     params:
-        code=lambda wc: SPECIES_CODE[wc.species],
         timeout_logs=lambda wc, input: " ".join(
             [f"harvest:{p}" for p in input.harvest_to] + [f"finder:{p}" for p in input.finder_to]
         ),
@@ -945,14 +643,14 @@ rule ltr_gather:
     shell:
         "python3 {SCRIPTS}/normalize_scn.py --genome {input.genome} --harvest {input.harvest} "
         "{params.finder_arg} --timeout-logs {params.timeout_logs} "
-        "--window-size {params.size} --overlap {params.overlap} --species {params.code} "
+        "--window-size {params.size} --overlap {params.overlap} --species {wildcards.species} "
         "--out-scn {output.scn} --out-skipped {output.skipped} --out-summary {output.summary} "
         "> {log} 2>&1"
 
 
 rule ltr_pipeline:
     input:
-        genome=f"{OUTDIR}/{{species}}/ltr/{{species}}.satmasked.fa",
+        genome=f"{OUTDIR}/{{species}}/genome/{{species}}.fa",
         scn=f"{OUTDIR}/{{species}}/ltr/rawLTR.scn",
     output:
         fa=f"{OUTDIR}/{{species}}/ltr/{{species}}.ltrs.fa",
@@ -1075,55 +773,12 @@ rule classify_families:
         """
 
 
-rule satellite_relabel:
-    input:
-        families=f"{OUTDIR}/{{species}}/families/{{species}}-families.fa",
-        lib=lambda wc: SAT_LIB_BY_SPECIES[wc.species],
-        famdb_verified=f"{OUTDIR}/library/famdb_verified.txt",
-    output:
-        fa=f"{OUTDIR}/{{species}}/families/{{species}}-families.final.fa",
-        tsv=f"{OUTDIR}/{{species}}/families/satellite_relabel.tsv",
-    threads: config["resources"]["satellite_relabel"]["threads"]
-    resources:
-        mem=lambda wildcards, attempt: config["resources"]["satellite_relabel"]["mem"] * attempt,
-        hrs=config["resources"]["satellite_relabel"]["hrs"],
-        shell_exec="bash",
-    conda:
-        "workflow/envs/repeatmasker.yaml"
-    log:
-        f"{OUTDIR}/logs/{{species}}/satellite_relabel.log",
-    params:
-        workdir=f"{OUTDIR}/{{species}}/families/relabel_work",
-        pa=max(1, config["resources"]["satellite_relabel"]["threads"] // config["repeatmasker"]["cores_per_pa"]),
-        min_cov=SAT_CFG["relabel_min_cov"],
-    shell:
-        """
-        exec > {log} 2>&1
-        set -euo pipefail
-        rm -rf {params.workdir} && mkdir -p {params.workdir}
-        python3 {SCRIPTS}/satellite_relabel.py build --satellite-lib {input.lib} --families {input.families} \
-            --targets {params.workdir}/targets.fa --queries {params.workdir}/queries.fa --map {params.workdir}/queries.tsv
-        (cd {params.workdir} && RepeatMasker -pa {params.pa} -nolow -no_is -lib targets.fa -dir . queries.fa)
-        python3 {SCRIPTS}/satellite_relabel.py apply --families {input.families} --map {params.workdir}/queries.tsv \
-            --out-file {params.workdir}/queries.fa.out --min-cov {params.min_cov} \
-            --out-fasta {output.fa} --tsv {output.tsv}
-        rm -rf {params.workdir}
-        """
-
-
 # -----------------------------------------------------------------------------
-# 6.5 prefix_library — prefix = resolved species code (stage-02b code when
-# harmonization_dir is set, e.g. EST_rnd-1_family-3, matching EST_SAT...)
+# 6.5 prefix_library
 # -----------------------------------------------------------------------------
-def _final_families(wildcards):
-    if wildcards.species in SAT_LIB_BY_SPECIES:
-        return f"{OUTDIR}/{wildcards.species}/families/{wildcards.species}-families.final.fa"
-    return f"{OUTDIR}/{wildcards.species}/families/{wildcards.species}-families.fa"
-
-
 rule prefix_library:
     input:
-        fa=_final_families,
+        fa=f"{OUTDIR}/{{species}}/families/{{species}}-families.fa",
     output:
         f"{OUTDIR}/{{species}}/library/{{species}}.prefixed.fa",
     threads: config["resources"]["prefix_library"]["threads"]
@@ -1135,10 +790,9 @@ rule prefix_library:
         f"{OUTDIR}/logs/{{species}}/prefix_library.log",
     params:
         sep=config["library"]["species_prefix_sep"],
-        code=lambda wc: SPECIES_CODE[wc.species],
     shell:
         "python3 workflow/scripts/prefix_library.py "
-        "--fasta {input.fa} --species-id {params.code} --sep {params.sep} "
+        "--fasta {input.fa} --species-id {wildcards.species} --sep {params.sep} "
         "--out {output} > {log} 2>&1"
 
 
@@ -1221,7 +875,6 @@ rule library_membership:
     input:
         clstr=f"{OUTDIR}/library/shared_denovo.nr.fa.clstr",
         dfam=[DFAM_EXPORT_FASTA] if INCLUDE_DFAM else [],
-        satellite=SHARED_SAT_LIBS,
     output:
         f"{OUTDIR}/library/library_membership.tsv",
     threads: config["resources"]["library_membership"]["threads"]
@@ -1233,17 +886,16 @@ rule library_membership:
         f"{OUTDIR}/logs/library/library_membership.log",
     params:
         sep=config["library"]["species_prefix_sep"],
-        codes=" ".join(SPECIES_CODE[s] for s in SPECIES_IDS),
+        codes=" ".join(SPECIES_IDS),
         dfam_arg=lambda wc, input: f"--dfam {input.dfam}" if input.dfam else "",
-        sat_arg=lambda wc, input: f"--satellite-libs {input.satellite}" if input.satellite else "",
     shell:
         "python3 workflow/scripts/library_membership.py "
         "--clstr {input.clstr} --sep {params.sep} --species-codes {params.codes} "
-        "{params.dfam_arg} {params.sat_arg} --out {output} > {log} 2>&1"
+        "{params.dfam_arg} --out {output} > {log} 2>&1"
 
 
 def _shared_library_inputs(wildcards):
-    inputs = {"nr": f"{OUTDIR}/library/shared_denovo.nr.fa", "satellite": SHARED_SAT_LIBS}
+    inputs = {"nr": f"{OUTDIR}/library/shared_denovo.nr.fa"}
     if INCLUDE_DFAM:
         inputs["dfam"] = DFAM_EXPORT_FASTA
     return inputs
@@ -1252,12 +904,9 @@ def _shared_library_inputs(wildcards):
 rule assemble_shared_library:
     # Primary comparison-arm library: clustered de novo families (or
     # library.curated_override, which replaces clustering for THIS file,
-    # §8) + Dfam export + the shared satellite library, appended unclustered
-    # and unprefixed (append_libraries.py validates #Class/Family headers,
-    # dedupes by content, and skips satellite names an override already
-    # contains). cluster_library and library_membership.tsv still run
-    # unconditionally, since the de novo shared-vocabulary comparison is a
-    # result in its own right.
+    # §8) + the optional Dfam export. cluster_library and
+    # library_membership.tsv still run unconditionally, since the de novo
+    # shared-vocabulary comparison is a result in its own right.
     input:
         unpack(_shared_library_inputs),
     output:
@@ -1273,9 +922,8 @@ rule assemble_shared_library:
     params:
         base=lambda wc, input: config["library"]["curated_override"] or input.nr,
         dfam_arg=lambda wc, input: f"--dfam {input.dfam}" if INCLUDE_DFAM else "",
-        sat_arg=lambda wc, input: f"--satellite-libs {input.satellite}" if input.satellite else "",
     shell:
-        "python3 {SCRIPTS}/append_libraries.py --base {params.base} {params.dfam_arg} {params.sat_arg} "
+        "python3 {SCRIPTS}/append_libraries.py --base {params.base} {params.dfam_arg} "
         "--out {output.fa} --report {output.report} > {log} 2>&1"
 
 
@@ -1283,16 +931,13 @@ def _own_library_inputs(wildcards):
     inputs = {"prefixed": f"{OUTDIR}/{wildcards.species}/library/{wildcards.species}.prefixed.fa"}
     if INCLUDE_DFAM:
         inputs["dfam"] = DFAM_EXPORT_FASTA
-    inputs["satellite"] = [SAT_LIB_BY_SPECIES[wildcards.species]] if wildcards.species in SAT_LIB_BY_SPECIES else []
     return inputs
 
 
 rule own_library:
     # Sanity-check arm library: that species' de novo families only (+ the
-    # same optional Dfam export + that species' satellite library, so the
-    # shared vs own comparison isn't confounded by satellites being in only
-    # one arm), assembled in its own small rule so both arms call
-    # RepeatMasker identically (§6.7).
+    # same optional Dfam export), assembled in its own small rule so both
+    # arms call RepeatMasker identically (§6.7).
     input:
         unpack(_own_library_inputs),
     output:
@@ -1307,9 +952,8 @@ rule own_library:
         f"{OUTDIR}/logs/{{species}}/own_library.log",
     params:
         dfam_arg=lambda wc, input: f"--dfam {input.dfam}" if INCLUDE_DFAM else "",
-        sat_arg=lambda wc, input: f"--satellite-libs {input.satellite}" if input.satellite else "",
     shell:
-        "python3 {SCRIPTS}/append_libraries.py --base {input.prefixed} {params.dfam_arg} {params.sat_arg} "
+        "python3 {SCRIPTS}/append_libraries.py --base {input.prefixed} {params.dfam_arg} "
         "--out {output.fa} --report {output.report} > {log} 2>&1"
 
 
@@ -1336,8 +980,7 @@ rule split_genome:
     # chunks (workflow/scripts/split_fasta.py, copied verbatim from the
     # sibling repo's common/scripts/split_fasta.py -- snake/boustrophedon by
     # contig count). Per-species, not per-arm: the genome being split is
-    # identical regardless of which library later masks it (and the
-    # satellite screen reuses the same chunks).
+    # identical regardless of which library later masks it.
     input:
         fasta=f"{OUTDIR}/{{species}}/genome/{{species}}.fa",
     output:
@@ -1491,7 +1134,7 @@ rule divergence:
 
 
 # -----------------------------------------------------------------------------
-# 6.9 summarize (per arm, species) — species column = resolved species code
+# 6.9 summarize (per arm, species)
 # -----------------------------------------------------------------------------
 rule summarize:
     input:
@@ -1512,13 +1155,12 @@ rule summarize:
         f"{OUTDIR}/logs/{{arm}}/{{species}}/summarize.log",
     params:
         tissue=lambda wc: TISSUE_BY_SPECIES[wc.species],
-        code=lambda wc: SPECIES_CODE[wc.species],
         landscape_max_div=config["summary"]["landscape_max_div"],
     shell:
         "python3 workflow/scripts/summarize_rm.py "
         "--out-file {input.out_file} --tbl-file {input.tbl_file} "
         "--divsum-file {input.divsum} --assembly-stats {input.assembly_stats} "
-        "--arm {wildcards.arm} --species {params.code} --tissue {params.tissue} "
+        "--arm {wildcards.arm} --species {wildcards.species} --tissue {params.tissue} "
         "--landscape-max-div {params.landscape_max_div} "
         "--class-out {output.class_chunk} --family-out {output.family_chunk} "
         "--divergence-out {output.divergence_chunk} > {log} 2>&1"
@@ -1530,7 +1172,6 @@ rule round_saturation:
     input:
         out_file=f"{OUTDIR}/own/{{species}}/repeatmasker/{{species}}.fa.out",
         assembly_stats=f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv",
-        satellite=lambda wc: [SAT_LIB_BY_SPECIES[wc.species]] if wc.species in SAT_LIB_BY_SPECIES else [],
     output:
         f"{OUTDIR}/own/{{species}}/summary/round_saturation.tsv",
     threads: config["resources"]["summarize"]["threads"]
@@ -1540,18 +1181,15 @@ rule round_saturation:
         shell_exec="bash",
     log:
         f"{OUTDIR}/logs/own/{{species}}/round_saturation.log",
-    params:
-        code=lambda wc: SPECIES_CODE[wc.species],
-        sat_arg=lambda wc, input: f"--satellite-lib {input.satellite}" if input.satellite else "",
     shell:
         "python3 {SCRIPTS}/round_saturation.py --out-file {input.out_file} "
-        "--assembly-stats {input.assembly_stats} {params.sat_arg} --species {params.code} "
-        "--species-id {wildcards.species} --out {output} > {log} 2>&1"
+        "--assembly-stats {input.assembly_stats} --species {wildcards.species} "
+        "--out {output} > {log} 2>&1"
 
 
 # -----------------------------------------------------------------------------
 # combine_summaries — final long-format comparison tables + arm_concordance
-# (+ satellite tables and round saturation)
+# (+ round saturation and LTR discovery summaries)
 # -----------------------------------------------------------------------------
 def _combine_inputs(wildcards):
     inputs = {
@@ -1568,22 +1206,6 @@ def _combine_inputs(wildcards):
             f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv", species=SPECIES_IDS
         ),
         "round_chunks": expand(f"{OUTDIR}/own/{{species}}/summary/round_saturation.tsv", species=SPECIES_IDS),
-        "sat_genomewide": expand(
-            f"{OUTDIR}/{{species}}/satellite_screen/satellite_genomewide.tsv", species=SAT_SPECIES
-        ),
-        "sat_per_contig": expand(
-            f"{OUTDIR}/{{species}}/satellite_screen/satellite_per_contig.tsv", species=SAT_SPECIES
-        ),
-        "sat_qc": expand(
-            f"{OUTDIR}/{{species}}/satellite_screen/satellite_library_qc.tsv", species=SAT_SPECIES
-        ),
-        "sat_qc_passing": expand(
-            f"{OUTDIR}/{{species}}/satellite_screen/satellite_library_qc_passing.tsv", species=SAT_SPECIES
-        ),
-        "sat_relabel": expand(f"{OUTDIR}/{{species}}/families/satellite_relabel.tsv", species=SAT_SPECIES),
-        "sat_origin": expand(
-            f"{OUTDIR}/{{species}}/satellite_screen/satellite_by_origin.tsv", species=SAT_SPECIES
-        ) if HARMONIZATION_DIR else [],
         "ltr_summaries": expand(f"{OUTDIR}/{{species}}/ltr/ltr_discovery_summary.tsv", species=SPECIES_IDS),
     }
     return inputs
@@ -1599,12 +1221,6 @@ def _combine_outputs():
         "round_saturation": f"{OUTDIR}/summary/discovery_round_saturation.tsv",
         "ltr_discovery": f"{OUTDIR}/summary/ltr_discovery.tsv",
     }
-    if SAT_SPECIES:
-        outputs["sat_composition"] = f"{OUTDIR}/summary/satellite_composition.tsv"
-        outputs["sat_per_contig"] = f"{OUTDIR}/summary/satellite_per_contig.tsv"
-        outputs["sat_qc"] = f"{OUTDIR}/summary/satellite_library_qc.tsv"
-    if SAT_SPECIES and HARMONIZATION_DIR:
-        outputs["sat_origin"] = f"{OUTDIR}/summary/satellite_by_origin.tsv"
     return outputs
 
 
@@ -1620,20 +1236,6 @@ rule combine_summaries:
         shell_exec="bash",
     log:
         f"{OUTDIR}/logs/summary/combine_summaries.log",
-    params:
-        sat_args=lambda wc, input, output: (
-            f"--satellite-genomewide-chunks {' '.join(input.sat_genomewide)} "
-            f"--satellite-per-contig-chunks {' '.join(input.sat_per_contig)} "
-            f"--satellite-composition-out {output.sat_composition} "
-            f"--satellite-per-contig-out {output.sat_per_contig} "
-            f"--satellite-qc-chunks {' '.join(input.sat_qc)} "
-            f"--satellite-qc-passing-chunks {' '.join(input.sat_qc_passing)} "
-            f"--satellite-relabel {' '.join(f'{s}:{p}' for s, p in zip(SAT_SPECIES, input.sat_relabel))} "
-            f"--satellite-qc-out {output.sat_qc}"
-        ) if SAT_SPECIES else "",
-        origin_args=lambda wc, input, output: (
-            f"--satellite-origin-chunks {' '.join(input.sat_origin)} --satellite-origin-out {output.sat_origin}"
-        ) if (SAT_SPECIES and HARMONIZATION_DIR) else "",
     shell:
         "python3 workflow/scripts/combine_summaries.py "
         "--manifest {config[manifest]} "
@@ -1650,7 +1252,6 @@ rule combine_summaries:
         "--round-saturation-out {output.round_saturation} "
         "--ltr-summary-chunks {input.ltr_summaries} "
         "--ltr-summary-out {output.ltr_discovery} "
-        "{params.sat_args} {params.origin_args} "
         "> {log} 2>&1"
 
 
@@ -1672,7 +1273,6 @@ rule provenance:
             f"{OUTDIR}/{{species}}/ltr/groups/{{group}}.finder.version.txt", species=SPECIES_IDS, group=LTR_GROUPS[:1]
         ) if USE_LTR_FINDER else [],
         ltr_discovery=f"{OUTDIR}/summary/ltr_discovery.tsv",
-        harmonization_md5=[f"{HARM_SNAPSHOT}/snapshot_md5.tsv"] if HARMONIZATION_DIR else [],
         config_snapshot="config.yaml",
     output:
         f"{OUTDIR}/summary/provenance.txt",
@@ -1686,10 +1286,6 @@ rule provenance:
     params:
         curated_override=config["library"]["curated_override"] or "(none — clustered library used)",
         container=TETOOLS,
-        codes="; ".join(f"{s}={SPECIES_CODE[s]}" for s in SPECIES_IDS),
-        sat_libs="; ".join(f"{s}={SAT_LIB_BY_SPECIES.get(s, '(none)')}" for s in SPECIES_IDS),
-        shared_sat=" ".join(SHARED_SAT_LIBS) or "(none)",
-        harmonization_dir=HARMONIZATION_DIR or "(not set)",
     shell:
         """
         exec > {output} 2> {log}
@@ -1705,12 +1301,6 @@ rule provenance:
         for f in {input.ltr_versions} {input.finder_versions}; do echo "--- $f ---"; cat "$f"; done
         echo "vendored: see workflow/vendor/README.md (LTR_HARVEST_parallel c3c9b3c, LTR_FINDER_parallel f1036ca, RepeatModeler 2.0.9 LTRPipeline, all patched)"
         echo; echo "=== LTR candidates and window-timeout skipped bp ==="; cat {input.ltr_discovery}
-        echo; echo "=== Species codes (species_id=code) ==="; echo "{params.codes}"
-        echo; echo "=== Satellite libraries ==="
-        echo "harmonization_dir: {params.harmonization_dir}"
-        echo "per species: {params.sat_libs}"
-        echo "shared library: {params.shared_sat}"
-        for f in {input.harmonization_md5}; do echo "--- $f ---"; cat "$f"; done
         echo; echo "=== curated_override ==="; echo "{params.curated_override}"
         echo; echo "=== config.yaml snapshot ==="; cat {input.config_snapshot}
         """
@@ -1719,32 +1309,6 @@ rule provenance:
 # -----------------------------------------------------------------------------
 # 6.10 plot
 # -----------------------------------------------------------------------------
-rule plot_satellite_qc:
-    # Copies vs monomer length per motif, faceted by species -- where to put
-    # satellite.qc.min_copies (look for a gap), and which motifs are major.
-    # Reads the per-species QC tables (not the final summary), so it is
-    # available from the early satellite_qc target too.
-    input:
-        expand(f"{OUTDIR}/{{species}}/satellite_screen/satellite_library_qc.tsv", species=SAT_SPECIES),
-    output:
-        f"{OUTDIR}/plots/satellite_copy_distribution.png",
-    threads: config["resources"]["plot"]["threads"]
-    resources:
-        mem=lambda wildcards, attempt: config["resources"]["plot"]["mem"] * attempt,
-        hrs=config["resources"]["plot"]["hrs"],
-        shell_exec="bash",
-    conda:
-        "workflow/envs/r_plot.yaml"
-    log:
-        f"{OUTDIR}/logs/summary/plot_satellite_qc.log",
-    params:
-        q=SAT_CFG["qc"],
-    shell:
-        "Rscript workflow/scripts/plot_satellite_qc.R {output} "
-        "{params.q[min_copies]} {params.q[major_min_copies]} {params.q[major_min_bp]} "
-        "{params.q[min_monomer_len]} {params.q[max_monomer_len]} {input} > {log} 2>&1"
-
-
 rule plot:
     input:
         class_composition=f"{OUTDIR}/summary/class_composition.tsv",

@@ -10,7 +10,7 @@
 
 manifest: manifest.tsv
 # results_v2: the restructured pipeline (rounds-only RepeatModeler + LTR side
-# pipeline + satellite screen) writes to a fresh directory, so the runs made
+# pipeline) writes to a fresh directory, so the runs made
 # with the previous version (RepeatModeler -LTRStruct, in results/) stay
 # untouched.
 outdir: results_v2
@@ -31,40 +31,6 @@ repeatmodeler:
   # sampling, if discovery_round_saturation.tsv says the last round still
   # matters: "-numAddlRounds 1" (same value for every species).
   extra_args: ""
-
-satellite:
-  # compare_assemblies_satellites stage 02b results dir
-  # (.../results/02b_taxonomy_harmonization). When set: its harmonized
-  # satellite library is snapshotted into {outdir}/satellite_harmonization/
-  # and used for every species (manifest column 6 = per-species override),
-  # and each species' code (EST, MLI, ...) is taken from 02b's
-  # taxonomy_cache by matching the manifest species_name. Empty: manifest
-  # column 6 only, codes = species_id.
-  harmonization_dir: ""
-  # A manifest species missing from 02b's taxonomy_cache is an error unless
-  # this is true (then it falls back to its species_id, with a warning).
-  allow_unharmonized: false
-  # Per-contig "mostly satellite" flag (informational only).
-  per_contig_flag_pct: 50
-  # satellite_relabel: an rnd-*#Unknown family whose consensus is covered at
-  # least this much by satellite-library hits is relabeled #Satellite.
-  relabel_min_cov: 0.5
-  # satellite_library_qc: each motif vs the operational definition used by
-  # compare_assemblies_satellites (TRF motifs, run with min_period_length 75;
-  # 2000 = TRF's maximum period). Report-only -- nothing is filtered.
-  qc:
-    min_monomer_len: 75
-    max_monomer_len: 2000
-    min_copies: 100            # genome-wide: merged hit bp / monomer length
-    min_array_copies: 3        # a chained run of hits this many monomers long = tandem array
-    min_tandem_frac: 0.5       # fraction of a motif's bp that must sit in tandem arrays
-    max_short_period_frac: 0.5 # monomer covered by a period-1..10 self-repeat ((CA)n-like)
-    # Copy tiers (context only, not pass/fail): "major" = >= major_min_copies
-    # genome-wide copies OR >= major_min_bp of sequence; "minor" = passes
-    # min_copies but not major. min_copies is an inclusion floor (100 copies is
-    # 7.5-200 kb); see plots/satellite_copy_distribution.png for where the gap is.
-    major_min_copies: 1000
-    major_min_bp: 100000
 
 ltr_discovery:
   # SGE-level parallelism: whole scaffolds split into this many bp-balanced
@@ -137,13 +103,7 @@ resources:
   combine_summaries: {threads: 1, mem: 8,  hrs: 1}
   provenance:       {threads: 1,  mem: 2,  hrs: 1}
   plot:             {threads: 1,  mem: 8,  hrs: 1}
-  # --- satellite screen ---
-  snapshot_harmonization: {threads: 1, mem: 2, hrs: 1}
-  satellite_screen: {threads: 8,  mem: 2,  hrs: 12}   # per chunk (repeatmasker.scatter_count chunks)
-  satellite_coverage: {threads: 1, mem: 16, hrs: 2}
-  satellite_library_qc: {threads: 1, mem: 16, hrs: 2}
   # --- LTR side pipeline ---
-  ltr_mask:         {threads: 1,  mem: 16, hrs: 2}
   ltr_group_genome: {threads: 1,  mem: 16, hrs: 2}
   # per group; threads must be >= 2 (see Snakefile). mem is per slot.
   ltr_harvest_group: {threads: 16, mem: 2, hrs: 24}
@@ -153,4 +113,3 @@ resources:
   ltr_pipeline:     {threads: 16, mem: 4,  hrs: 48}
   merge_families:   {threads: 8,  mem: 2,  hrs: 4}
   classify_families: {threads: 16, mem: 2, hrs: 24}
-  satellite_relabel: {threads: 8, mem: 2,  hrs: 4}

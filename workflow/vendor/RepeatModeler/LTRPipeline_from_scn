@@ -27,7 +27,7 @@
 # Copied from RepeatModeler 2.0.9's LTRPipeline. Two changes, nothing else:
 #  1. The LtrHarvest step (whole-genome gt suffixerator + gt ltrharvest,
 #     one single-threaded process -- the step that stalled for days on a
-#     satellite-rich hagfish assembly) is replaced by -inscn <file>: a
+#     highly repetitive hagfish assembly) is replaced by -inscn <file>: a
 #     precomputed LTRharvest-format .scn built upstream in parallel
 #     windows. It gets the same line filtering runLtrHarvest applies to
 #     real ltrharvest output. Everything after it (LTR_retriever, MAFFT,

@@ -1,5 +1,16 @@
 # Addendum 1 (revised): satellite screen and LTR discovery outside RepeatModeler
 
+> **Status (2026-09): the satellite arm has been removed.** Its first QC run
+> on *E. stoutii* showed most of the harmonized satellite library's screen
+> bp were dispersed, non-tandem fragments. Only about 3% of the genome was
+> in tandem arrays, against 17.8% from all hits. So satellite masking,
+> satellite libraries, the relabel step and the stage-02b harmonization
+> were taken out, pending fixes to the satellite caller
+> (`compare_assemblies_satellites` stage 02). The LTR side pipeline, the
+> fingerprint guard and the restart fix below remain. LTR discovery now
+> runs on the unmasked genome, and the per-window timeouts bound stalls.
+> The satellite-arm code is at commit `502accf` (tag `satellite-arm-v1`).
+
 This replaces the first draft of Addendum 1 to `repeat_compare_spec.md`. It
 records the design as implemented and the decisions made while reviewing
 the draft. The README has the full "how"; this document keeps the "what and

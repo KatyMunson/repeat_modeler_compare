@@ -12,11 +12,9 @@ class_composition.tsv. Flagged, not resolved (consistent with the spec's
 "warn, don't fail" treatment of caveats it doesn't want solved in code).
 
 Each cluster row also carries `sources`: member counts by origin --
-`rnd` (RepeatScout/RECON round family), `ltr` (LTR structural pipeline
-family), `sat_relabeled` (a round family relabeled #Satellite by
-satellite_relabel.py). Entries appended to the libraries after
-clustering (Dfam export, satellite libraries) are listed as extra
-one-member rows with category `dfam` / `satellite`, so the table
+`rnd` (RepeatScout/RECON round family) or `ltr` (LTR structural pipeline
+family). The Dfam export, appended to the libraries after clustering, is
+listed as extra one-member rows with category `dfam`, so the table
 accounts for everything in shared_library.fa.
 Stdlib only.
 """
@@ -32,7 +30,7 @@ def species_of(name, sep, known_codes=None):
     code = name.split(sep, 1)[0]
     if known_codes and code not in known_codes:
         raise ValueError(f"family '{name}' has prefix '{code}', which is not one of the "
-                         f"resolved species codes {sorted(known_codes)}")
+                         f"species_ids {sorted(known_codes)}")
     return code
 
 
@@ -40,8 +38,6 @@ def source_of(name):
     base = name.split("#", 1)[0]
     if "ltr-" in base and "_family-" in base:
         return "ltr"
-    if class_family_of(name).startswith("Satellite"):
-        return "sat_relabeled"
     return "rnd"
 
 
@@ -86,9 +82,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--clstr", required=True)
     ap.add_argument("--sep", default="_", help="species_prefix_sep from config")
-    ap.add_argument("--species-codes", nargs="*", default=[], help="resolved species codes (validates prefixes)")
+    ap.add_argument("--species-codes", nargs="*", default=[], help="species_ids (validates family-name prefixes)")
     ap.add_argument("--dfam", help="Dfam export appended after clustering")
-    ap.add_argument("--satellite-libs", nargs="*", default=[], help="satellite libraries appended after clustering")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
     known = set(args.species_codes)
@@ -141,12 +136,6 @@ def main():
         appended = []
         if args.dfam:
             appended += [("dfam", n) for n in appended_names(args.dfam)]
-        seen = set()
-        for path in args.satellite_libs:
-            for n in appended_names(path):
-                if n not in seen:
-                    seen.add(n)
-                    appended.append(("satellite", n))
         for i, (category, name) in enumerate(appended, 1):
             label = class_family_of(name)
             fh.write(f"appended_{i}\t{name}\t{label}\t{category}\t1\tNA\tTrue\t{label}\t{category}:1\n")

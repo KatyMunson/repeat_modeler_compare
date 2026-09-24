@@ -10,8 +10,8 @@ Both genomes are masked with **two arms**:
 
 | arm | library | role |
 |---|---|---|
-| `shared` | non-redundant union of all species' de novo families (+ optional Dfam export + the shared satellite library) | **primary comparison** |
-| `own` | that species' de novo families only (+ same optional Dfam export + that species' satellite library) | sanity check / concordance |
+| `shared` | non-redundant union of all species' de novo families (+ optional Dfam export) | **primary comparison** |
+| `own` | that species' de novo families only (+ same optional Dfam export) | sanity check / concordance |
 
 Masking every species with only its own library biases the comparison
 (each genome is best-annotated for its own families), so `shared` is the
@@ -37,13 +37,11 @@ Per species unless noted:
 prep_genome -> genome_fingerprint, assembly_stats
 build_db -> repeatmodeler (RECON/RepeatScout rounds only, no -LTRStruct)
                      |  rounds.consensi.fa / rounds.families.stk (unclassified)
-satellite screen (if a satellite library):  split_genome chunks -> satellite_chunk
-    (RepeatMasker -nolow -lib <satellite lib>) -> gather_satellite -> satellite_coverage
-LTR side pipeline:  ltr_mask (hard-mask satellite hits) -> ltr_group_genome
+LTR side pipeline:  ltr_group_genome
     -> ltr_harvest_group + ltr_finder_group (per group) -> ltr_gather -> ltr_pipeline
 merge_families (rounds + LTR, RepeatModeler's own cd-hit merge)
-    -> classify_families (RepeatClassifier) -> satellite_relabel (if a satellite library)
-prefix_library -> cluster_library (all species) -> shared / own libraries (+ Dfam, + satellite)
+    -> classify_families (RepeatClassifier)
+prefix_library -> cluster_library (all species) -> shared / own libraries (+ Dfam)
 -> repeatmasker (both arms) -> divergence -> summarize -> combine_summaries -> plot
 ```
 
@@ -51,9 +49,8 @@ prefix_library -> cluster_library (all species) -> shared / own libraries (+ Dfa
 
 RepeatModeler 2.0.9's `-LTRStruct` runs `LTRPipeline`:
 1. **One** whole-genome `gt suffixerator` + `gt ltrharvest` with default
-   parameters, single-threaded. On the satellite-rich *E. stoutii*
-   assembly (~18% satellite, spread evenly over every chromosome-scale
-   scaffold) this step ran for days with no output.
+   parameters, single-threaded. On the highly repetitive *E. stoutii*
+   assembly this step ran for days with no output.
 2. LTR_retriever (sequences renamed `seqN`, `-noanno`).
 3. MAFFT, NINJA and `Refiner` to build `ltr-1_family-N` consensi and seed
    alignments.
@@ -68,7 +65,9 @@ This pipeline replaces **only step 1**. `ltr_pipeline` runs
 RepeatClassifier. Every species goes through the same path, so results are
 comparable across species. Relative to a stock `-LTRStruct` run, two things
 differ, and methods should say so:
-- LTR candidates come from the **satellite-hard-masked** genome;
+- LTRharvest runs on **overlapping 5 Mb windows with per-window timeouts**
+  instead of one whole-genome pass. Windows that still time out are
+  skipped, and their bp are reported in `{outdir}/summary/ltr_discovery.tsv`.
 - **LTR_FINDER** candidates are added to LTRharvest's
   (`ltr_discovery.use_ltr_finder`).
 
@@ -109,151 +108,6 @@ under `/opt` but are **not on `PATH`**, so `LTR_retriever` on its own says
 through its `RepModelConfig.pm` (`workflow/scripts/rm_config_path.sh`).
 `ltr_finder` comes from bioconda (`workflow/envs/ltr_finder.yaml`).
 
-### Satellite screen, and the satellite library in the masking libraries
-
-Species with a satellite library (see below) get a satellite-only
-RepeatMasker screen: `-nolow -lib <library>`, no `-s`, the settings behind
-the original 17.9% estimate. It reuses the `split_genome` chunks. Outputs:
-- `{outdir}/{species}/satellite_screen/satellite_genomewide.tsv` and
-  `satellite_per_contig.tsv`: satellite bp against total and non-gap bp.
-  N runs are subtracted, so no seqtk or bedtools module is needed. The
-  per-contig table sets `flagged` at ≥ `satellite.per_contig_flag_pct`
-  (50, meaning "mostly satellite", informational only) and repeats the
-  genome-wide % on every row.
-- `satellite.bed`: merged hits, hard-masked by `ltr_mask` for LTR
-  discovery only.
-- `{outdir}/summary/satellite_composition.tsv`, with both bounds:
-  - `*_screen` (upper bound): the satellite library alone, no competition;
-  - `*_shared_arm` (lower bound): the shared arm's `Satellite` class, where
-    the same entries compete with de novo and Dfam families. Some satellite
-    loci go to an `rnd-*#Unknown` duplicate there.
-- `{outdir}/summary/satellite_by_origin.tsv` (with `harmonization_dir`):
-  satellite bp split into the species' own motifs, motifs promoted to a
-  shared ancestor (with `lca_rank`/`lca_taxon`), and other species'
-  motifs.
-
-The satellite library is appended to **both** masking arms, unclustered
-and unprefixed, the same way Dfam is. That keeps `arm_concordance.tsv` a
-comparison of clustering effects rather than of which arm has satellites.
-`append_libraries.py` checks every header is `name#Class/Family`,
-deduplicates libraries by content, skips names a `curated_override`
-already contains, and fails on name collisions.
-
-The satellite library is **not** cd-hit-clustered against de novo
-families, because cd-hit has no notion of repeat phase or rotation.
-Instead, `satellite_relabel` screens the classified families against each
-satellite monomer concatenated ×3. An `rnd-*#Unknown` family covered at
-least `satellite.relabel_min_cov` is relabeled `#Satellite`, and the
-matching harmonized name goes into `families/satellite_relabel.tsv`.
-Harmonized entries are never renamed. Some fragmentation can remain at
-family level, where one satellite appears under both a harmonized name and
-an `rnd-*` name. Class-level `Satellite` bp is the comparable number.
-
-### Satellite library QC (does each motif behave like a satellite here?)
-
-`satellite_library_qc` checks every library motif against the operational
-definition used by `compare_assemblies_satellites`. It measures each
-criterion on this genome's satellite screen. It's **report-only**: nothing
-is filtered, and masking uses the full library.
-
-| criterion | measured as | default (`satellite.qc`) |
-|---|---|---|
-| length | monomer length | 75–2000 bp (stage 02 ran with `min_period_length: 75`; 2000 is TRF's maximum period) |
-| copies | genome-wide: merged hit bp / monomer length | ≥ 100 |
-| tandem | fraction of the motif's bp in arrays (same motif, contig and strand, hits chained across gaps ≤ max(50 bp, 0.2 × monomer)) spanning ≥ 3 monomers | ≥ 0.5 |
-| not a simple repeat | fraction of the monomer covered by an exact period-1..10 self-repeat (≥ 3 copies of the unit) | ≤ 0.5 |
-
-Stage 02's copy cutoffs (`candidate_scan.min_copy_number: 100`,
-`min_single_block_copy_number: 300`, `copy_number_filter.min_total_copy_number: 500`)
-are TRF copy numbers **within arrays**. They don't establish genome-wide
-copy number or tandem organisation for a harmonized motif screened against
-a genome, which is why this recomputes both.
-- A motif whose bp is mostly isolated hits behaves like a dispersed
-  repeat, often a TE fragment. It still inflates satellite %, and it gets
-  hard-masked before LTR discovery.
-- A monomer that is mostly a short-period repeat is effectively
-  `Simple_repeat`. The screen's `-nolow` lets it count as satellite.
-
-**Is 100 copies enough?** As an inclusion floor, yes. As a definition of
-"a real satellite", no:
-- 100 copies of a 75–2000 bp monomer is only 7.5–200 kb, a few thousandths
-  of a percent of a 2.5 Gb assembly. Major satellites run to 10⁴–10⁶
-  copies in kb–Mb arrays.
-- Any motif stage 02 discovered in a genome clears 100 copies in that same
-  genome almost automatically. The floor mainly catches harmonized motifs
-  borrowed from another species that barely occur here.
-- A fixed copy count favours long monomers.
-
-So pass/fail stays at `min_copies` and each motif also gets a `copy_tier`:
-- `major`: ≥ `major_min_copies` (1000) copies, **or** ≥ `major_min_bp`
-  (100 kb) of sequence;
-- `minor`: passes `min_copies` but isn't major;
-- `below_floor`: under `min_copies`.
-
-A long monomer can be `major` by bp while failing `pass_copies` (80
-copies of 1.8 kb is 144 kb). That's the long-monomer effect made visible,
-not a bug.
-
-`plots/satellite_copy_distribution.png` plots copies against monomer
-length for every motif, one panel per species, with each cutoff drawn in.
-If the copies show a clear gap, move `min_copies` there. That's the same
-idea as stage 02's `copy_number_diagnostic.png`.
-
-**Outputs:**
-- Early: `{outdir}/{species}/satellite_screen/satellite_library_qc.tsv`
-  (one row per motif, a `pass_*` flag per criterion, `pass_all`,
-  `copy_tier` and `largest_array_bp`).
-- Final: `{outdir}/summary/satellite_library_qc.tsv`, which adds
-  `te_like_family_hits`: de novo families that RepeatClassifier calls a TE
-  and whose best satellite match is this motif, a hint the motif is
-  TE-derived. This needs RepeatModeler, so it only appears in the final
-  summary.
-- `satellite_composition.tsv` gains two columns:
-  `satellite_pct_nongap_screen_passing` (only motifs that pass every
-  check) and `satellite_pct_nongap_screen_major` (only major-tier motifs).
-  Together they show how much the headline number depends on borderline
-  and minor motifs.
-
-**Check it before the full run:** the `satellite_qc` target runs only
-prep → satellite screen → QC. That takes hours, compared with days for
-RepeatModeler:
-
-```bash
-./runsnake 40 --configfile config.yaml satellite_qc
-```
-
-### Species codes and stage 02b harmonization
-
-Set `satellite.harmonization_dir` to
-`compare_assemblies_satellites/results/02b_taxonomy_harmonization`. Then:
-- `snapshot_harmonization` copies its harmonized library, summary, code
-  tables, taxonomy tree and `taxonomy_cache/` into
-  `{outdir}/satellite_harmonization/`, with an md5 manifest. Every later
-  rule reads only that copy. Changing a source file re-triggers the
-  snapshot and everything downstream in a **single** run.
-- Each species' code (EST, MLI, ...) comes from 02b's
-  `taxonomy_cache/{code}.json`, by matching the manifest `species_name`
-  against the binomial 02b was given. The file name is the
-  collision-resolved code 02b actually used. The code becomes the library
-  family prefix (`EST_rnd-1_family-3`, matching `EST_SAT...`) and the
-  `species` column of every table. Paths keep `species_id`.
-- A species that isn't found is an error listing the available binomials.
-  Set `satellite.allow_unharmonized: true` to fall back to `species_id`
-  instead.
-- Without `harmonization_dir`, codes are the manifest `species_id`s and
-  satellite libraries come from manifest column 6 only.
-
-Never read meaning into a code prefix. Promoted codes are the first three
-letters of the ancestor's name plus a collision suffix, so `MYX` / `MYX2`
-can be genus *Myxine* or family Myxinidae depending on collision order.
-`satellite_by_origin.tsv` takes `lca_rank`/`lca_taxon` from
-`harmonized_summary.tsv` instead. No NCBI lookups happen here: 02b's cached
-lineages produced the names and are the source of truth.
-
-A manifest column-6 library is a per-species **override**. It goes only
-into that species' own arm and satellite screen, never into the shared
-library, so one species' un-harmonized motifs never mask every species.
-
 ### Genome identity guard and RepeatModeler restarts
 
 `genome_fingerprint` records the prepped FASTA's md5 and every sequence
@@ -269,8 +123,8 @@ round already finished ("appears to contain a successful run"). The rule
 accepts that case, since only the rounds are needed, and otherwise
 requires a real completion.
 
-**Rule of thumb:** the satellite screen, RepeatModeler and the LTR side
-pipeline must all run on the identical genome FASTA for a species, every
+**Rule of thumb:** RepeatModeler and the LTR side pipeline must both run
+on the identical genome FASTA for a species, every
 time. Scaffolded or pre-scaffold doesn't matter, as long as it's the same
 file. The pipeline guarantees this within a run. The guard catches it
 across runs.
@@ -289,7 +143,8 @@ bp, whatever its scaffold's length.
 
 `{outdir}/summary/discovery_round_saturation.tsv` shows own-arm masked bp
 by the round that discovered each family (`rnd-1` … `rnd-N`, `ltr`,
-`satellite`, `other`). If families from the final round still mask a
+`other`, where `other` means Dfam and RepeatMasker's own simple/low-complexity
+calls). If families from the final round still mask a
 meaningful share (for example >1% of the genome), sampling hasn't
 saturated. In that case set `repeatmodeler.extra_args: "-numAddlRounds 1"`
 (or 2), the same value for every species, and rerun.
@@ -297,6 +152,27 @@ saturated. In that case set `repeatmodeler.extra_args: "-numAddlRounds 1"`
   later rounds mostly add low-copy `Unknown` families.
 - Prefer extra rounds over a larger `-genomeSampleSizeMax`: RECON's
   all-vs-all cost grows superlinearly with sample size.
+
+## Satellite analysis (removed)
+
+A satellite arm existed briefly. It was a satellite-only RepeatMasker
+screen with the harmonized library from `compare_assemblies_satellites`
+stage 02b, per-motif QC, satellite masking before LTR discovery, and the
+satellite library appended to both masking arms. It was removed because
+its first QC run on *E. stoutii* showed most of the library's
+satellite-screen bp weren't tandem:
+- 181 high-copy motifs, carrying 86% of screen bp, were low-divergence,
+  partial, mixed-strand fragments dispersed genome-wide;
+- only about 72 Mb, roughly 3% of the genome, sat in tandem arrays,
+  against 17.8% from all hits.
+
+The satellite caller will be tightened first. The last commit that
+includes the satellite arm is `502accf`, tagged `satellite-arm-v1`
+where the tag has been pushed. To bring it back:
+
+```bash
+git checkout 502accf -- Snakefile config.yaml workflow/scripts   # or cherry-pick specific files
+```
 
 ## Quickstart
 
@@ -474,7 +350,6 @@ adjust both from real per-chunk runtimes observed in the wiring test.
 |---|---|
 | `BuildDatabase` | none |
 | `RepeatModeler -threads` | partial; plateaus (RepeatScout/RECON serial); rounds only (no `-LTRStruct`) |
-| satellite screen (`RepeatMasker -pa`) | yes, per chunk, like the masking arms |
 | `ltr_harvest_group` / `ltr_finder_group` | yes: `n_groups` SGE jobs per species × `threads` windows each (threads must be ≥ 2) |
 | `ltr_pipeline` (LTR_retriever, MAFFT, NINJA) | yes, `-threads`; once per species (needs the whole genome's candidates) |
 | `merge_families` (cd-hit-est), `classify_families` (RepeatClassifier) | yes, `-T` / `-threads` |
@@ -555,6 +430,5 @@ partition(s) each species' RepeatModeler container could see, the pinned
 container tag, each species' genome fingerprint, the LTR tool versions
 (genometools, LTR_retriever, ltr_finder; vendored script commits are in
 `workflow/vendor/README.md`), LTR candidate counts and window-timeout
-skipped bp, the species code map, which satellite library went into which
-arm (plus the stage-02b snapshot md5s), any `curated_override` in effect,
-and a full `config.yaml` snapshot.
+skipped bp, any `curated_override` in effect, and a full `config.yaml`
+snapshot.

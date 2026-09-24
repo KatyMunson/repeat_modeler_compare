@@ -2,7 +2,8 @@
 """Concatenate the per-(arm,species) chunks summarize_rm.py and
 assembly_stats.py write into the final long-format comparison tables, and
 compute arm_concordance.tsv (shared vs own pct + delta per species/class).
-Stdlib only, no pandas.
+discovery_round_saturation.tsv / ltr_discovery.tsv: per-species chunks
+concatenated. Stdlib only, no pandas.
 """
 
 import argparse
@@ -97,6 +98,10 @@ def main():
     ap.add_argument("--divergence-landscape-out", required=True)
     ap.add_argument("--assembly-covariates-out", required=True)
     ap.add_argument("--arm-concordance-out", required=True)
+    ap.add_argument("--round-saturation-chunks", nargs="*", default=[])
+    ap.add_argument("--round-saturation-out", required=True)
+    ap.add_argument("--ltr-summary-chunks", nargs="*", default=[])
+    ap.add_argument("--ltr-summary-out", required=True)
     args = ap.parse_args()
 
     tissue_by_species = parse_manifest_tissue(args.manifest)
@@ -106,6 +111,8 @@ def main():
     concat_chunks(args.divergence_chunks, args.divergence_landscape_out)
     combine_assembly_covariates(args.assembly_stats_chunks, tissue_by_species, args.assembly_covariates_out)
     build_arm_concordance(args.class_composition_out, args.arm_concordance_out)
+    concat_chunks(args.round_saturation_chunks, args.round_saturation_out)
+    concat_chunks(args.ltr_summary_chunks, args.ltr_summary_out)
 
     tissues = set(tissue_by_species.values())
     if "unknown" in tissues or len(tissues) > 1:

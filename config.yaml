@@ -9,7 +9,11 @@
 # =============================================================================
 
 manifest: manifest.tsv
-outdir: results
+# results_v2: the restructured pipeline (rounds-only RepeatModeler + LTR side
+# pipeline) writes to a fresh directory, so the runs made
+# with the previous version (RepeatModeler -LTRStruct, in results/) stay
+# untouched.
+outdir: results_v2
 
 genome_prep:
   min_contig_len: 0            # 0 = keep everything
@@ -17,12 +21,37 @@ genome_prep:
   test_subsample_bp: 0         # >0 = keep only first N bp per species, for wiring tests
 
 repeatmodeler:
-  # docker://dfam/tetools:latest, run via Singularity. Pin to a specific tag
-  # once a real run has validated this image's bundled RepeatClassifier/Dfam
-  # partition content (see provenance output of the `repeatmodeler` rule).
-  container: "docker://dfam/tetools:latest"
-  ltrstruct: true
+  # dfam/tetools, run via Singularity; pinned to the tag whose digest matched
+  # `latest` when the first runs were made (RepeatModeler 2.0.9,
+  # LTR_retriever 2.9.0, genometools 1.6.4). BuildDatabase, RepeatModeler,
+  # the LTR side pipeline and RepeatClassifier all run in this one image.
+  container: "docker://dfam/tetools:2.00"
+  # RepeatModeler runs RECON/RepeatScout rounds only -- there is no
+  # ltrstruct key any more (LTR discovery is the ltr_* rules). Deeper
+  # sampling, if discovery_round_saturation.tsv says the last round still
+  # matters: "-numAddlRounds 1" (same value for every species).
   extra_args: ""
+
+ltr_discovery:
+  # SGE-level parallelism: whole scaffolds split into this many bp-balanced
+  # groups (one ltr_harvest_group / ltr_finder_group job each).
+  n_groups: 8
+  # Thread-level parallelism inside each group: windows of window_size bp
+  # overlapping by overlap bp, each killed after window_timeout_s seconds;
+  # with try1: 1 a timed-out window is re-run as 50 kb pieces (20 kb
+  # overlap, 30 s / 10 s timeouts) before its sequence is logged as skipped.
+  window_size: 5000000
+  overlap: 100000
+  window_timeout_s: 1500
+  try1: 1
+  # "" = gt ltrharvest defaults, i.e. exactly what RepeatModeler's own
+  # LTRPipeline runs. LTR_retriever's recommendation, for comparison:
+  # "-minlenltr 100 -maxlenltr 7000 -mintsd 4 -maxtsd 6 -motif TGCA -motifmis 1 -similar 85 -vic 10 -seed 20 -seqids yes"
+  ltrharvest_args: ""
+  # LTR_FINDER candidates in addition to LTRharvest (the one deliberate
+  # sensitivity addition beyond RepeatModeler; say so in methods).
+  use_ltr_finder: true
+  ltr_finder_args: "-w 2 -C -D 15000 -d 1000 -L 7000 -l 100 -p 20 -M 0.85"
 
 library:
   species_prefix_sep: "_"
@@ -51,6 +80,7 @@ summary:
 
 resources:
   prep_genome:      {threads: 1,  mem: 8,  hrs: 4}
+  genome_fingerprint: {threads: 1, mem: 8, hrs: 2}
   assembly_stats:   {threads: 1,  mem: 8,  hrs: 4}
   build_db:         {threads: 1,  mem: 16, hrs: 4}
   repeatmodeler:    {threads: 24, mem: 4,  hrs: 96}
@@ -73,3 +103,13 @@ resources:
   combine_summaries: {threads: 1, mem: 8,  hrs: 1}
   provenance:       {threads: 1,  mem: 2,  hrs: 1}
   plot:             {threads: 1,  mem: 8,  hrs: 1}
+  # --- LTR side pipeline ---
+  ltr_group_genome: {threads: 1,  mem: 16, hrs: 2}
+  # per group; threads must be >= 2 (see Snakefile). mem is per slot.
+  ltr_harvest_group: {threads: 16, mem: 2, hrs: 24}
+  ltr_finder_group: {threads: 16, mem: 2,  hrs: 24}
+  ltr_gather:       {threads: 1,  mem: 16, hrs: 2}
+  # LTR_retriever + MAFFT (up to 10,000 sequences) + NINJA + Refiner
+  ltr_pipeline:     {threads: 16, mem: 4,  hrs: 48}
+  merge_families:   {threads: 8,  mem: 2,  hrs: 4}
+  classify_families: {threads: 16, mem: 2, hrs: 24}

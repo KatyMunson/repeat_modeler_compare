@@ -133,6 +133,24 @@ DFAM_TAXON = config["library"]["dfam_taxon"]
 DFAM_EXPORT_FASTA = f"{OUTDIR}/library/dfam_{DFAM_TAXON}.fa"
 TETOOLS = config["repeatmodeler"]["container"]
 
+# Mask-only escape hatch: an existing shared library FASTA to mask with
+# directly, bypassing discovery/LTR/clustering entirely (rm_library below
+# returns it for the shared arm, and no rule produces it, so nothing
+# upstream gets scheduled). Meant for the mask_shared_only target, e.g.
+#   ./runsnake 40 --configfile config.yaml \
+#       --config mask_shared_library=results/library/shared_library.fa \
+#       -- mask_shared_only
+MASK_SHARED_LIBRARY = config.get("mask_shared_library") or ""
+if MASK_SHARED_LIBRARY:
+    if not os.path.exists(MASK_SHARED_LIBRARY):
+        raise ValueError(f"mask_shared_library does not exist: {MASK_SHARED_LIBRARY}")
+    MASK_SHARED_LIBRARY = os.path.abspath(MASK_SHARED_LIBRARY)
+    print(
+        f"[repeat_compare] WARNING: mask_shared_library is set -- the shared arm masks with "
+        f"{MASK_SHARED_LIBRARY} instead of {config['outdir']}/library/shared_library.fa. "
+        f"Use it with the mask_shared_only target; unset it for a normal run."
+    )
+
 # Prepended to every rule that runs in workflow/envs/repeatmasker.yaml.
 # runsnake submits with -V, so a job inherits the PATH of whatever shell
 # launched Snakemake -- from a `(base)` shell, miniforge's base python3 can
@@ -205,6 +223,18 @@ rule library_only:
     input:
         f"{OUTDIR}/library/shared_library.fa",
         f"{OUTDIR}/library/library_membership.tsv",
+
+
+rule mask_shared_only:
+    # RepeatMasker with the shared library on every manifest species and
+    # nothing else (no own arm, no summaries). Pair with mask_shared_library
+    # (see top of file) to use an already-built library; without it this
+    # still pulls in the full discovery/library chain.
+    input:
+        expand(
+            f"{OUTDIR}/shared/{{species}}/repeatmasker/{{species}}.fa.out",
+            species=SPECIES_IDS,
+        ),
 
 
 # -----------------------------------------------------------------------------
@@ -991,7 +1021,7 @@ rule own_library:
 # -----------------------------------------------------------------------------
 def rm_library(wildcards):
     if wildcards.arm == "shared":
-        return f"{OUTDIR}/library/shared_library.fa"
+        return MASK_SHARED_LIBRARY or f"{OUTDIR}/library/shared_library.fa"
     return f"{OUTDIR}/own/{wildcards.species}/library/{wildcards.species}.own_library.fa"
 
 

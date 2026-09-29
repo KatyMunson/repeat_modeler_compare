@@ -15,6 +15,11 @@ manifest: manifest.tsv
 # untouched.
 outdir: results_v2
 
+# "" = normal. Path to an existing shared library FASTA = the shared arm masks
+# with it and no discovery/library rules run; use with the mask_shared_only
+# target (usually set via --config on the command line, see README).
+mask_shared_library: ""
+
 genome_prep:
   min_contig_len: 0            # 0 = keep everything
   max_header_len: 50           # RepeatMasker rejects long sequence names

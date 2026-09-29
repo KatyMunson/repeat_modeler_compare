@@ -190,6 +190,22 @@ snakemake -s Snakefile --configfile config.yaml -n -p --restart-times 3
 ./runsnake 8 --configfile config.yaml library_only
 ```
 
+**Mask with the shared library only (`mask_shared_only`):** to run just
+RepeatMasker with an already-built shared library on every species, with no
+discovery, LTR, clustering, own-arm or summary rules, point
+`mask_shared_library` at the library and ask for the `mask_shared_only` target:
+
+```bash
+./runsnake 40 --configfile config.yaml \
+    --config mask_shared_library=results/library/shared_library.fa \
+    -- mask_shared_only
+```
+
+Only `prep_genome`, `split_genome`, `setup_famdb` (quick ones) and the
+shared-arm `repeatmasker_chunk`/`gather_repeatmasker` jobs are scheduled.
+Output goes to `<outdir>/shared/<species>/repeatmasker/`. Leave
+`mask_shared_library` unset for a normal run.
+
 **`--configfile`-before-targets caveat:** passing a target name immediately
 after `--configfile` makes Snakemake treat it as a second configfile.
 Always put targets *before* `--configfile`, or use a `--` separator —

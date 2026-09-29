@@ -201,6 +201,8 @@ discovery, LTR, clustering, own-arm or summary rules, point
     -- mask_shared_only
 ```
 
+Everything after `--` is a target, so flags like `-n` must go *before* the
+`--` (`... shared_library.fa -n -- mask_shared_only`).
 Only `prep_genome`, `split_genome`, `setup_famdb` (quick ones) and the
 shared-arm `repeatmasker_chunk`/`gather_repeatmasker` jobs are scheduled.
 Output goes to `<outdir>/shared/<species>/repeatmasker/`. Leave

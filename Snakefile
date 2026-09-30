@@ -213,6 +213,7 @@ rule all:
         f"{OUTDIR}/summary/provenance.txt",
         f"{OUTDIR}/library/library_membership.tsv",
         f"{OUTDIR}/summary/discovery_summary.tsv",
+        [f"{OUTDIR}/summary/dfam_overlap.tsv"] if INCLUDE_DFAM else [],
         f"{OUTDIR}/plots/class_composition_shared.png",
         f"{OUTDIR}/plots/divergence_landscape.png",
         f"{OUTDIR}/plots/arm_concordance.png",
@@ -225,6 +226,7 @@ rule library_only:
         f"{OUTDIR}/library/shared_library.fa",
         f"{OUTDIR}/library/library_membership.tsv",
         f"{OUTDIR}/summary/discovery_summary.tsv",
+        [f"{OUTDIR}/summary/dfam_overlap.tsv"] if INCLUDE_DFAM else [],
 
 
 rule mask_shared_only:
@@ -980,6 +982,62 @@ rule discovery_summary:
         "--rounds-fa {input.rounds_fa} --ltr-fa {input.ltr_fa} --merged-fa {input.merged_fa} "
         "--classified-fa {input.classified_fa} --clstr {input.clstr} --membership {input.membership} "
         "--sep {params.sep} --out {output.summary} --by-class-out {output.by_class} > {log} 2>&1"
+
+
+if INCLUDE_DFAM:
+
+    rule dfam_overlap_species:
+        # Which of this species' de novo families are already-known Dfam
+        # families: cd-hit-est-2d with db1 = the Dfam export, db2 = the
+        # species' prefixed families, same thresholds as cluster_library.
+        # -s2 0 / -S2 lets a de novo family longer than its Dfam match still
+        # join it (cd-hit-2d's default requires db1 >= db2 in length).
+        input:
+            dfam=DFAM_EXPORT_FASTA,
+            families=f"{OUTDIR}/{{species}}/library/{{species}}.prefixed.fa",
+        output:
+            clstr=f"{OUTDIR}/library/dfam_overlap/{{species}}.dfam2d.clstr",
+            unmatched=temp(f"{OUTDIR}/library/dfam_overlap/{{species}}.dfam2d"),
+        threads: config["resources"]["dfam_overlap"]["threads"]
+        resources:
+            mem=lambda wildcards, attempt: config["resources"]["dfam_overlap"]["mem"] * attempt,
+            hrs=config["resources"]["dfam_overlap"]["hrs"],
+            shell_exec="bash",
+        conda:
+            "workflow/envs/cdhit.yaml"
+        log:
+            f"{OUTDIR}/logs/library/dfam_overlap_{{species}}.log",
+        params:
+            identity=config["library"]["cdhit"]["identity"],
+            coverage_short=config["library"]["cdhit"]["coverage_short"],
+            word_size=config["library"]["cdhit"]["word_size"],
+            total_mb=lambda wc, threads, resources: resources.mem * threads * 1024,
+        shell:
+            "cd-hit-est-2d -i {input.dfam} -i2 {input.families} -o {output.unmatched} "
+            "-c {params.identity} -aS {params.coverage_short} -n {params.word_size} "
+            "-G 0 -g 1 -r 1 -d 0 -s2 0 -S2 999999999 -M {params.total_mb} -T {threads} "
+            "> {log} 2>&1"
+
+    rule dfam_overlap:
+        input:
+            families=expand(f"{OUTDIR}/{{species}}/library/{{species}}.prefixed.fa", species=SPECIES_IDS),
+            clstr=expand(f"{OUTDIR}/library/dfam_overlap/{{species}}.dfam2d.clstr", species=SPECIES_IDS),
+        output:
+            summary=f"{OUTDIR}/summary/dfam_overlap.tsv",
+            matches=f"{OUTDIR}/library/dfam_overlap/dfam_matches.tsv",
+        threads: config["resources"]["discovery_summary"]["threads"]
+        resources:
+            mem=lambda wildcards, attempt: config["resources"]["discovery_summary"]["mem"] * attempt,
+            hrs=config["resources"]["discovery_summary"]["hrs"],
+            shell_exec="bash",
+        log:
+            f"{OUTDIR}/logs/summary/dfam_overlap.log",
+        params:
+            species=" ".join(SPECIES_IDS),
+        shell:
+            "python3 {SCRIPTS}/dfam_overlap.py --species {params.species} "
+            "--families {input.families} --clstr {input.clstr} "
+            "--out-summary {output.summary} --out-matches {output.matches} > {log} 2>&1"
 
 
 def _shared_library_inputs(wildcards):

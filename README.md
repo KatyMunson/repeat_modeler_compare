@@ -180,6 +180,26 @@ shared clusters per Class (the part of each family's own label before
 `/`), for each species and `ALL`. Sharing is usually very uneven across
 classes, so read this alongside the overall percentage.
 
+### Overlap with Dfam
+
+RepeatClassifier compares families with the Dfam in the container, but it
+only assigns a class. It doesn't record which Dfam family matched, and the
+Dfam export is appended to the libraries without being compared with the
+de novo families. `dfam_overlap` (run when `library.include_dfam` is set)
+fills that gap. It runs `cd-hit-est-2d` of each species' families against
+the Dfam export, with the same identity/coverage thresholds and both
+strands as `cluster_library`:
+- `{outdir}/summary/dfam_overlap.tsv`: per species and `ALL`, and per
+  Class, how many families match a Dfam family (`class_agrees` = matches
+  whose Class equals the Dfam family's);
+- `{outdir}/library/dfam_overlap/dfam_matches.tsv`: each matching family
+  with its Dfam family, identity and strand.
+
+The coverage threshold applies to the shorter sequence, so a family that
+only *contains* a piece of a Dfam family doesn't count. This counts
+families that are already-known elements. Expect few in lineages Dfam
+barely covers, such as cyclostomes.
+
 ## Satellite analysis (removed)
 
 A satellite arm existed briefly. It was a satellite-only RepeatMasker

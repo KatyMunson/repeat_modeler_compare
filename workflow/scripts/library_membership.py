@@ -72,7 +72,7 @@ def parse_clstr(path):
                 raise ValueError(f"Unparseable .clstr line: {line!r}")
             name = m.group("name")
             is_rep = m.group("rest").strip() == "*"
-            current["members"].append({"name": name, "is_rep": is_rep})
+            current["members"].append({"name": name, "is_rep": is_rep, "rest": m.group("rest")})
         if current is not None:
             clusters.append(current)
     return clusters

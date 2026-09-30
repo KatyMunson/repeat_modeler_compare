@@ -153,6 +153,33 @@ saturated. In that case set `repeatmodeler.extra_args: "-numAddlRounds 1"`
 - Prefer extra rounds over a larger `-genomeSampleSizeMax`: RECON's
   all-vs-all cost grows superlinearly with sample size.
 
+### Discovery summary
+
+`{outdir}/summary/discovery_summary.tsv` follows the family counts from
+discovery to the shared library, with one row per species plus `ALL`.
+It's built from library-stage files only, so `library_only` produces it too.
+
+| Column | Meaning |
+|---|---|
+| `rounds_families`, `ltr_families` | families from RepeatModeler's rounds / the LTR side pipeline |
+| `merge_removed`, `merged_families` | round families dropped as redundant with an LTR family, and what's left (`merge_families`) |
+| `merged_ltr_families`, `putative_subfamilies` | LTR families in the merged set; round families tagged "putative subfamily of" |
+| `classified_families`, `unknown_families` | after RepeatClassifier; those labelled `Unknown` |
+| `clusters`, `species_only_clusters`, `shared_clusters` | cross-species cd-hit-est clusters (`cluster_library`) containing this species' families |
+| `families_in_species_only_clusters`, `families_in_shared_clusters`, `pct_families_in_shared_clusters` | where this species' families landed |
+| `shared_clusters_label_conflict` | shared clusters whose members' `Class/Family` labels disagree (see `library_membership.tsv`) |
+| `dfam_entries` | Dfam entries appended to the libraries (`ALL` row only) |
+
+In the `ALL` row, family counts are summed over species and cluster counts
+are over the whole clustering. A species' family count must equal its
+members in the `.clstr`; otherwise the rule fails, since the inputs would
+come from different runs.
+
+`discovery_summary_by_class.tsv` splits families into species-only vs
+shared clusters per Class (the part of each family's own label before
+`/`), for each species and `ALL`. Sharing is usually very uneven across
+classes, so read this alongside the overall percentage.
+
 ## Satellite analysis (removed)
 
 A satellite arm existed briefly. It was a satellite-only RepeatMasker

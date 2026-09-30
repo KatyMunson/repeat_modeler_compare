@@ -212,6 +212,7 @@ rule all:
         f"{OUTDIR}/summary/ltr_discovery.tsv",
         f"{OUTDIR}/summary/provenance.txt",
         f"{OUTDIR}/library/library_membership.tsv",
+        f"{OUTDIR}/summary/discovery_summary.tsv",
         f"{OUTDIR}/plots/class_composition_shared.png",
         f"{OUTDIR}/plots/divergence_landscape.png",
         f"{OUTDIR}/plots/arm_concordance.png",
@@ -223,6 +224,7 @@ rule library_only:
     input:
         f"{OUTDIR}/library/shared_library.fa",
         f"{OUTDIR}/library/library_membership.tsv",
+        f"{OUTDIR}/summary/discovery_summary.tsv",
 
 
 rule mask_shared_only:
@@ -942,6 +944,38 @@ rule library_membership:
         "python3 workflow/scripts/library_membership.py "
         "--clstr {input.clstr} --sep {params.sep} --species-codes {params.codes} "
         "{params.dfam_arg} --out {output} > {log} 2>&1"
+
+
+rule discovery_summary:
+    # Family counts per species from RepeatModeler rounds + LTR pipeline
+    # through merge, classification and cross-species clustering (shared
+    # vs species-only), plus a per-Class breakdown. Library-stage inputs
+    # only, so it's also built by library_only.
+    input:
+        rounds_fa=expand(f"{OUTDIR}/{{species}}/repeatmodeler/{{species}}.rounds.consensi.fa", species=SPECIES_IDS),
+        ltr_fa=expand(f"{OUTDIR}/{{species}}/ltr/{{species}}.ltrs.fa", species=SPECIES_IDS),
+        merged_fa=expand(f"{OUTDIR}/{{species}}/families/{{species}}.merged.consensi.fa", species=SPECIES_IDS),
+        classified_fa=expand(f"{OUTDIR}/{{species}}/families/{{species}}-families.fa", species=SPECIES_IDS),
+        clstr=f"{OUTDIR}/library/shared_denovo.nr.fa.clstr",
+        membership=f"{OUTDIR}/library/library_membership.tsv",
+    output:
+        summary=f"{OUTDIR}/summary/discovery_summary.tsv",
+        by_class=f"{OUTDIR}/summary/discovery_summary_by_class.tsv",
+    threads: config["resources"]["discovery_summary"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["discovery_summary"]["mem"] * attempt,
+        hrs=config["resources"]["discovery_summary"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/summary/discovery_summary.log",
+    params:
+        sep=config["library"]["species_prefix_sep"],
+        species=" ".join(SPECIES_IDS),
+    shell:
+        "python3 {SCRIPTS}/discovery_summary.py --species {params.species} "
+        "--rounds-fa {input.rounds_fa} --ltr-fa {input.ltr_fa} --merged-fa {input.merged_fa} "
+        "--classified-fa {input.classified_fa} --clstr {input.clstr} --membership {input.membership} "
+        "--sep {params.sep} --out {output.summary} --by-class-out {output.by_class} > {log} 2>&1"
 
 
 def _shared_library_inputs(wildcards):

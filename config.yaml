@@ -94,6 +94,7 @@ resources:
   export_dfam:      {threads: 1,  mem: 8,  hrs: 2}
   setup_famdb:      {threads: 1,  mem: 8,  hrs: 2}
   library_membership: {threads: 1, mem: 4, hrs: 1}
+  discovery_summary: {threads: 1, mem: 4, hrs: 1}
   own_library:      {threads: 1,  mem: 4,  hrs: 1}
   assemble_shared_library: {threads: 1, mem: 4, hrs: 1}
   split_genome:     {threads: 1,  mem: 4,  hrs: 2}

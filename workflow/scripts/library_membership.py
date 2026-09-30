@@ -135,7 +135,9 @@ def main():
 
         appended = []
         if args.dfam:
-            appended += [("dfam", n) for n in appended_names(args.dfam)]
+            # dict.fromkeys: one row per family, even for an export made with
+            # --add-reverse-complement (forward + "(anti)" share a name).
+            appended += [("dfam", n) for n in dict.fromkeys(appended_names(args.dfam))]
         for i, (category, name) in enumerate(appended, 1):
             label = class_family_of(name)
             fh.write(f"appended_{i}\t{name}\t{label}\t{category}\t1\tNA\tTrue\t{label}\t{category}:1\n")

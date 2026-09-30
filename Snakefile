@@ -881,11 +881,15 @@ if INCLUDE_DFAM:
             # a "supplement" (spec §6.6) by any reading. -c restricts to
             # the curated cross-species reference set that section actually
             # describes.
+            #
+            # No --add-reverse-complement: it writes every family twice
+            # (forward + "(anti)"), and RepeatMasker already searches both
+            # strands, so the copies only doubled the Dfam search cost.
             """
             exec 2> {log}
             {ENV_PATH_GUARD}
             famdb.py families -f fasta_name --include-class-in-name -c -a -d \
-                --add-reverse-complement '{params.taxon}' > {output}
+                '{params.taxon}' > {output}
             """
 
 

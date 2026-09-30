@@ -109,12 +109,17 @@ def main():
                 "-- inputs from different runs?"
             )
 
-    n_dfam = 0
+    # Unique names, so an older library_membership.tsv built from a
+    # --add-reverse-complement export (each family twice) still counts families.
+    dfam_names = set()
     with open(args.membership) as fh:
         header = fh.readline().rstrip("\n").split("\t")
-        cat = header.index("category")
+        cat, rep = header.index("category"), header.index("representative")
         for line in fh:
-            n_dfam += line.rstrip("\n").split("\t")[cat] == "dfam"
+            fields = line.rstrip("\n").split("\t")
+            if fields[cat] == "dfam":
+                dfam_names.add(fields[rep])
+    n_dfam = len(dfam_names)
 
     all_row = {k: sum(r[k] for r in rows.values()) for k in next(iter(rows.values()))}
     all_row.update(totals)

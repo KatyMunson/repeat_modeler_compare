@@ -168,7 +168,7 @@ It's built from library-stage files only, so `library_only` produces it too.
 | `clusters`, `species_only_clusters`, `shared_clusters` | cross-species cd-hit-est clusters (`cluster_library`) containing this species' families |
 | `families_in_species_only_clusters`, `families_in_shared_clusters`, `pct_families_in_shared_clusters` | where this species' families landed |
 | `shared_clusters_label_conflict` | shared clusters whose members' `Class/Family` labels disagree (see `library_membership.tsv`) |
-| `dfam_entries` | Dfam entries appended to the libraries (`ALL` row only) |
+| `dfam_entries` | Dfam families appended to the libraries, counted by unique name (`ALL` row only) |
 
 In the `ALL` row, family counts are summed over species and cluster counts
 are over the whole clustering. A species' family count must equal its

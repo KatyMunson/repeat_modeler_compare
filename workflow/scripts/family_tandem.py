@@ -264,7 +264,13 @@ def main():
             p_len = args.min_len <= cons_len <= args.max_len
             p_copies = est_copies >= args.min_copies
             p_tandem = tandem_frac >= args.min_tandem_frac
-            p_simple = spf is None or spf <= args.max_short_period_frac
+            # RepeatMasker's built-in simple / low-complexity calls aren't
+            # library families (no consensus to test, and the .out-implied
+            # length is meaningless), so they never count as tandem families.
+            if cls in ("Simple_repeat", "Low_complexity"):
+                p_simple = False
+            else:
+                p_simple = spf is None or spf <= args.max_short_period_frac
             sat_like = p_len and p_copies and p_tandem and p_simple
             tandem_fam = p_copies and p_tandem and p_simple
             period, period_support = monomer_period(seq) if seq else (None, 0.0)

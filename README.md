@@ -269,11 +269,18 @@ the **same** `mask_shared_library` value:
 ```bash
 ./runsnake 10 --configfile config.yaml \
     --config mask_shared_library=results/library/shared_library.fa \
-    -n -- report_shared_only        # check: no repeatmasker_chunk jobs listed
+    --rerun-triggers mtime -n -- report_shared_only   # check: no repeatmasker_chunk jobs listed
 ./runsnake 10 --configfile config.yaml \
     --config mask_shared_library=results/library/shared_library.fa \
-    -- report_shared_only
+    --rerun-triggers mtime -- report_shared_only
 ```
+
+Keep `--rerun-triggers mtime`. The per-chunk RepeatMasker outputs are temp
+files, deleted after `gather_repeatmasker`. If Snakemake's recorded metadata
+makes it want to redo the gather (for example "Set of input files has
+changed since last execution"), it has to re-mask every chunk to rebuild
+them. With `mtime` it only reruns the gather if the genome or library is
+actually newer than the masked output.
 
 The target refuses to run without `mask_shared_library`. Without it the
 shared arm would mask with `<outdir>/library/shared_library.fa`, which

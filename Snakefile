@@ -990,8 +990,12 @@ if INCLUDE_DFAM:
         # Which of this species' de novo families are already-known Dfam
         # families: cd-hit-est-2d with db1 = the Dfam export, db2 = the
         # species' prefixed families, same thresholds as cluster_library.
-        # -s2 0 / -S2 lets a de novo family longer than its Dfam match still
-        # join it (cd-hit-2d's default requires db1 >= db2 in length).
+        # -s2 0.8: a Dfam family must be >= 80% of the de novo family's
+        # length. -aS alone (coverage of the SHORTER sequence) let any family
+        # that merely contains a short Dfam entry (tRNA, MITE, solo LTR)
+        # match it; -aL doesn't help in cd-hit-2d. -S2 lifts the default
+        # "db2 no longer than db1" so a family with some flank still joins.
+        # dfam_overlap.py then requires >= 80% coverage of the de novo family.
         input:
             dfam=DFAM_EXPORT_FASTA,
             families=f"{OUTDIR}/{{species}}/library/{{species}}.prefixed.fa",
@@ -1015,7 +1019,7 @@ if INCLUDE_DFAM:
         shell:
             "cd-hit-est-2d -i {input.dfam} -i2 {input.families} -o {output.unmatched} "
             "-c {params.identity} -aS {params.coverage_short} -n {params.word_size} "
-            "-G 0 -g 1 -r 1 -d 0 -s2 0 -S2 999999999 -M {params.total_mb} -T {threads} "
+            "-G 0 -g 1 -r 1 -d 0 -s2 0.8 -S2 999999999 -M {params.total_mb} -T {threads} "
             "> {log} 2>&1"
 
     rule dfam_overlap:
@@ -1034,9 +1038,11 @@ if INCLUDE_DFAM:
             f"{OUTDIR}/logs/summary/dfam_overlap.log",
         params:
             species=" ".join(SPECIES_IDS),
+            min_coverage=config["library"]["cdhit"]["coverage_short"],
         shell:
             "python3 {SCRIPTS}/dfam_overlap.py --species {params.species} "
             "--families {input.families} --clstr {input.clstr} "
+            "--min-coverage {params.min_coverage} "
             "--out-summary {output.summary} --out-matches {output.matches} > {log} 2>&1"
 
 

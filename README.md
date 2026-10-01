@@ -187,18 +187,25 @@ only assigns a class. It doesn't record which Dfam family matched, and the
 Dfam export is appended to the libraries without being compared with the
 de novo families. `dfam_overlap` (run when `library.include_dfam` is set)
 fills that gap. It runs `cd-hit-est-2d` of each species' families against
-the Dfam export, with the same identity/coverage thresholds and both
-strands as `cluster_library`:
+the Dfam export, with `cluster_library`'s identity threshold, on both
+strands:
 - `{outdir}/summary/dfam_overlap.tsv`: per species and `ALL`, and per
-  Class, how many families match a Dfam family (`class_agrees` = matches
-  whose Class equals the Dfam family's);
+  Class, how many families match a Dfam family, split into
+  `class_agrees` / `class_differs` (family classified; Dfam Class the
+  same / different) and `unknown_matched` (family was `Unknown`, so the
+  match suggests a class);
 - `{outdir}/library/dfam_overlap/dfam_matches.tsv`: each matching family
-  with its Dfam family, identity and strand.
+  with its Dfam family, identity, coverage of the de novo family and
+  strand.
 
-The coverage threshold applies to the shorter sequence, so a family that
-only *contains* a piece of a Dfam family doesn't count. This counts
-families that are already-known elements. Expect few in lineages Dfam
-barely covers, such as cyclostomes.
+A match means the alignment covers at least 80% of the **de novo** family
+(`library.cdhit.coverage_short`). A family that is a fragment of a known
+element counts. A family that only *contains* a short Dfam entry (a tRNA,
+MITE, solo LTR or satellite inside a longer element) doesn't. cd-hit's own
+`-aS` measures coverage of the *shorter* sequence, which would accept
+those, so the rule adds `-s2 0.8` and the script checks the coverage
+itself. Expect few matches in lineages Dfam barely covers, such as
+cyclostomes.
 
 ## Satellite analysis (removed)
 

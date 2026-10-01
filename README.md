@@ -207,6 +207,37 @@ those, so the rule adds `-s2 0.8` and the script checks the coverage
 itself. Expect few matches in lineages Dfam barely covers, such as
 cyclostomes.
 
+## Tandem check (`family_tandem`)
+
+Every family in the shared-arm `.out` of each species is checked against
+the operational satellite definition the removed satellite arm used
+(`satellite_library_qc.py`, tag `satellite-arm-v1`), so a shared-library
+family and a satellite-library motif are judged the same way:
+
+| criterion | rule (config `family_tandem`) |
+|---|---|
+| length | consensus 75–2000 bp |
+| copies | ≥ 100 genome-wide (merged hit bp / consensus length) |
+| tandem | ≥ 50% of the family's bp in arrays: same-family hits on one contig and strand, chained when the gap is ≤ max(50 bp, 0.2 × consensus), spanning ≥ 3 consensus lengths |
+| not simple | ≤ 50% of the consensus is a period-1..10 exact self-repeat |
+
+`satellite_like` = all four. Fragments of one interrupted TE chain too, but
+span about one consensus length, so they never reach 3 copies.
+
+- `{outdir}/summary/family_tandem.tsv` (or `summary_shared_only/`): one row
+  per family and species, largest first: `owned_bp` (the bp it holds under
+  the class table's highest-score rule), tandem fraction, array count and
+  largest array, `median_div` (bp-weighted `.out` perc. div., to place a
+  family on the landscape), the four pass flags, `satellite_like` and a
+  copy tier (major ≥ 1000 copies or ≥ 100 kb).
+- `{outdir}/summary/class_tandem.tsv`: per class, how much of the class's bp
+  is held by `satellite_like` families, e.g. how much of Unknown behaves
+  like satellite.
+
+Report-only: nothing is relabelled. To check it against the satellite
+pipeline, compare `satellite_like` families with the motifs that pass in
+that pipeline's own QC on the same assembly.
+
 ## Satellite analysis (removed)
 
 A satellite arm existed briefly. It was a satellite-only RepeatMasker

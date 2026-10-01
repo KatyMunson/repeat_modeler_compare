@@ -206,6 +206,8 @@ rule all:
         f"{OUTDIR}/summary/class_composition.tsv",
         f"{OUTDIR}/summary/family_composition.tsv",
         f"{OUTDIR}/summary/divergence_landscape.tsv",
+        f"{OUTDIR}/summary/family_tandem.tsv",
+        f"{OUTDIR}/summary/class_tandem.tsv",
         expand(
             f"{OUTDIR}/{{arm}}/{{species}}/divergence/{{species}}.landscape.html",
             arm=ARMS,
@@ -273,6 +275,8 @@ rule report_shared_only:
         f"{OUTDIR}/summary_shared_only/family_composition.tsv",
         f"{OUTDIR}/summary_shared_only/divergence_landscape.tsv",
         f"{OUTDIR}/summary_shared_only/assembly_covariates.tsv",
+        f"{OUTDIR}/summary_shared_only/family_tandem.tsv",
+        f"{OUTDIR}/summary_shared_only/class_tandem.tsv",
         f"{OUTDIR}/plots_shared_only/class_composition_shared.png",
         f"{OUTDIR}/plots_shared_only/divergence_landscape.png",
         expand(
@@ -1366,6 +1370,63 @@ rule summarize:
         "--landscape-max-div {params.landscape_max_div} "
         "--class-out {output.class_chunk} --family-out {output.family_chunk} "
         "--divergence-out {output.divergence_chunk} > {log} 2>&1"
+
+
+# -----------------------------------------------------------------------------
+# family_tandem (shared arm, per species): is each shared-library family
+# arranged in tandem arrays (satellite-like) or dispersed? Same operational
+# definition as the removed satellite arm's satellite_library_qc (README).
+# Report-only; nothing is relabelled.
+# -----------------------------------------------------------------------------
+rule family_tandem:
+    input:
+        out_file=f"{OUTDIR}/shared/{{species}}/repeatmasker/{{species}}.fa.out",
+        library=lambda wc: MASK_SHARED_LIBRARY or f"{OUTDIR}/library/shared_library.fa",
+        assembly_stats=f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv",
+    output:
+        family_chunk=f"{OUTDIR}/shared/{{species}}/summary/family_tandem.tsv",
+        class_chunk=f"{OUTDIR}/shared/{{species}}/summary/class_tandem.tsv",
+    threads: config["resources"]["family_tandem"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["family_tandem"]["mem"] * attempt,
+        hrs=config["resources"]["family_tandem"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/shared/{{species}}/family_tandem.log",
+    params:
+        t=config["family_tandem"],
+    shell:
+        "python3 workflow/scripts/family_tandem.py "
+        "--out-file {input.out_file} --library {input.library} "
+        "--assembly-stats {input.assembly_stats} "
+        "--arm shared --species {wildcards.species} "
+        "--min-len {params.t[min_cons_len]} --max-len {params.t[max_cons_len]} "
+        "--min-copies {params.t[min_copies]} --min-array-copies {params.t[min_array_copies]} "
+        "--min-tandem-frac {params.t[min_tandem_frac]} "
+        "--max-short-period-frac {params.t[max_short_period_frac]} "
+        "--major-min-copies {params.t[major_min_copies]} --major-min-bp {params.t[major_min_bp]} "
+        "--out {output.family_chunk} --class-out {output.class_chunk} > {log} 2>&1"
+
+
+rule combine_family_tandem:
+    # Concatenate the per-species tables (header once) into summary/ for a
+    # full run or summary_shared_only/ for report_shared_only.
+    input:
+        family_chunks=expand(f"{OUTDIR}/shared/{{species}}/summary/family_tandem.tsv", species=SPECIES_IDS),
+        class_chunks=expand(f"{OUTDIR}/shared/{{species}}/summary/class_tandem.tsv", species=SPECIES_IDS),
+    output:
+        family_tandem=f"{OUTDIR}/{{sumdir}}/family_tandem.tsv",
+        class_tandem=f"{OUTDIR}/{{sumdir}}/class_tandem.tsv",
+    wildcard_constraints:
+        sumdir="summary|summary_shared_only",
+    threads: 1
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["combine_summaries"]["mem"] * attempt,
+        hrs=config["resources"]["combine_summaries"]["hrs"],
+        shell_exec="bash",
+    shell:
+        "awk 'FNR == 1 && NR != 1 {{next}} {{print}}' {input.family_chunks} > {output.family_tandem} && "
+        "awk 'FNR == 1 && NR != 1 {{next}} {{print}}' {input.class_chunks} > {output.class_tandem}"
 
 
 rule round_saturation:

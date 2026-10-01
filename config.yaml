@@ -79,6 +79,19 @@ repeatmasker:
   extra_args: ""
   scatter_count: 10            # genome chunks per species for the repeatmasker scatter/gather
 
+# family_tandem: every shared-library family checked against the operational
+# satellite definition the removed satellite arm's satellite_library_qc used
+# (README "Tandem check"). Report-only.
+family_tandem:
+  min_cons_len: 75             # consensus length window (TRF min_period_length .. TRF max period)
+  max_cons_len: 2000
+  min_copies: 100              # genome-wide: merged hit bp / consensus length
+  min_array_copies: 3          # a chained run of hits this many consensus lengths long = tandem array
+  min_tandem_frac: 0.5         # fraction of a family's bp that must sit in tandem arrays
+  max_short_period_frac: 0.5   # consensus covered by period-1..10 exact self-repeat
+  major_min_copies: 1000       # copy_tier "major": >= this many copies ...
+  major_min_bp: 100000         # ... or >= this many bp
+
 summary:
   denominator: "non_n"         # non_n | total ; both are always written, this picks the headline
   landscape_max_div: 50
@@ -107,6 +120,7 @@ resources:
   gather_repeatmasker: {threads: 1, mem: 4, hrs: 2}
   divergence:       {threads: 1,  mem: 16, hrs: 8}
   summarize:        {threads: 1,  mem: 16, hrs: 6}   # parses the multi-Gb .align for the landscape
+  family_tandem:    {threads: 1,  mem: 16, hrs: 4}
   combine_summaries: {threads: 1, mem: 8,  hrs: 1}
   provenance:       {threads: 1,  mem: 2,  hrs: 1}
   plot:             {threads: 1,  mem: 8,  hrs: 1}

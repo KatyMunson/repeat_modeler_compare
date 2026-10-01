@@ -5,16 +5,12 @@ long-format, overlap-resolved divergence-landscape chunk from the .align
 file. Stdlib only, no pandas. Output rows already carry arm/species/tissue so the per-run
 chunks this writes can be concatenated as-is by combine_summaries.py.
 
-Non-overlapping bp: RepeatMasker's .out can contain multiple overlapping
-hits assigned to the same class (fragmented alignments of one element, or a
-lower-scoring competing call). Within one collapsed class (or one raw
-Class/Family, for the finer table), intervals are merged per contig before
-summing, so a base already counted for that class isn't counted again —
-this is a sweep over merged intervals, not a global "each base counted once
-across all classes" merge (a base can still count toward two different
-classes if RepeatMasker reported an overlap between them; the .tbl
-cross-check below uses the true global merge to sanity-check total masked
-bp, independent of any per-class double-count).
+Non-overlapping bp: RepeatMasker's .out keeps lower-scoring hits that
+overlap a better one (the lines flagged "*"), often from a different class.
+Every genome base is therefore assigned to the single highest-scoring .out
+hit covering it, and class / Class/Family bp are sums over those assigned
+bases. Classes add up to the total masked bp, and a base is never counted
+toward two classes. The total is cross-checked against the .tbl summary.
 
 Divergence landscape: built from the .align file, not from
 calcDivergenceFromAlign.pl's .divsum. The .divsum sums every alignment in
@@ -25,8 +21,8 @@ gets a Kimura divergence computed from its own transitions and
 transversions (no CpG adjustment, matching the pipeline's
 `calcDivergenceFromAlign.pl -noCpGMod`), and every genome base is assigned
 to the single highest-scoring alignment covering it. Each base therefore
-counts once, and a class's landscape sums to roughly its non-overlapping bp
-in the class table (checked below, with a warning past 5%).
+counts once, and a class's landscape sums to about its bp in the class
+table (both use the same rule; checked below, with a warning past 5%).
 """
 
 import argparse
@@ -71,7 +67,7 @@ def collapse_class(raw_class_family):
 
 
 def parse_out_file(path):
-    """Yield (query_seq, begin, end, class_family) for every hit line."""
+    """Yield (query_seq, begin, end, score, class_family) for every hit line."""
     with open(path) as fh:
         for line in fh:
             fields = line.split()
@@ -88,7 +84,7 @@ def parse_out_file(path):
             class_family = fields[10]
             if begin > end:
                 begin, end = end, begin
-            yield query_seq, begin, end, class_family
+            yield query_seq, begin, end, int(fields[0]), class_family
 
 
 def merge_intervals(intervals):
@@ -108,23 +104,45 @@ def merge_intervals(intervals):
     return bp
 
 
-def bp_per_group(hits, key_fn):
-    """hits: list of (query_seq, begin, end, class_family). key_fn maps a hit
-    to the class bucket. Returns {bucket: bp} merged per (query_seq, bucket)."""
-    by_contig_bucket = {}
-    for query_seq, begin, end, class_family in hits:
-        bucket = key_fn(class_family)
-        by_contig_bucket.setdefault((query_seq, bucket), []).append((begin, end))
+def owned_segments(records):
+    """records: iterable of (contig, begin, end, score, payload), 1-based
+    inclusive. Assigns every covered base to the highest-scoring record
+    covering it (ties: earliest record) and yields (bp, payload) for each
+    maximal run of bases owned by one record."""
+    by_contig = {}
+    for idx, (contig, begin, end, score, payload) in enumerate(records):
+        by_contig.setdefault(contig, []).append((begin, end, score, idx, payload))
+    for recs in by_contig.values():
+        # Sweep over elementary segments: at each boundary, add records that
+        # start there; the top of a max-heap on score (lazily dropping
+        # records that have ended) owns the segment up to the next boundary.
+        recs.sort()
+        boundaries = sorted({r[0] for r in recs} | {r[1] + 1 for r in recs})
+        heap = []
+        next_rec = 0
+        for seg_start, seg_next in zip(boundaries, boundaries[1:]):
+            while next_rec < len(recs) and recs[next_rec][0] <= seg_start:
+                begin, end, score, idx, payload = recs[next_rec]
+                heapq.heappush(heap, (-score, idx, end, payload))
+                next_rec += 1
+            while heap and heap[0][2] < seg_start:
+                heapq.heappop(heap)
+            if heap:
+                yield seg_next - seg_start, heap[0][3]
 
-    bp_by_bucket = {}
-    for (_query_seq, bucket), intervals in by_contig_bucket.items():
-        bp_by_bucket[bucket] = bp_by_bucket.get(bucket, 0) + merge_intervals(intervals)
-    return bp_by_bucket
+
+def owned_bp_by_family(hits):
+    """hits: (contig, begin, end, score, class_family). Returns
+    {class_family: bp}, each base counted once, for its best hit."""
+    bp = {}
+    for seg_bp, class_family in owned_segments(hits):
+        bp[class_family] = bp.get(class_family, 0) + seg_bp
+    return bp
 
 
 def total_masked_bp(hits):
     by_contig = {}
-    for query_seq, begin, end, _class_family in hits:
+    for query_seq, begin, end, _score, _class_family in hits:
         by_contig.setdefault(query_seq, []).append((begin, end))
     return sum(merge_intervals(intervals) for intervals in by_contig.values())
 
@@ -265,41 +283,23 @@ def parse_align_file(path):
 def resolve_landscape(alignments, landscape_max_div):
     """alignments: iterable of (contig, begin, end, score, class_family,
     kimura). Assigns every covered base to the highest-scoring alignment
-    covering it (ties: earliest in file), then sums bp per (class, Kimura
-    bin). Returns ({(class, bin): bp}, {class: resolved_bp_all_bins})."""
-    by_contig = {}
-    for idx, (contig, begin, end, score, class_family, kimura) in enumerate(alignments):
-        by_contig.setdefault(contig, []).append((begin, end, score, idx, collapse_class(class_family), kimura))
-
+    covering it (same rule as the class table), then sums bp per (class,
+    Kimura bin). Returns ({(class, bin): bp}, {class: resolved_bp_all_bins})."""
+    records = (
+        (contig, begin, end, score, (collapse_class(class_family), kimura))
+        for contig, begin, end, score, class_family, kimura in alignments
+    )
     landscape = {}
     resolved_by_class = {}
-    for alns in by_contig.values():
-        # Sweep over elementary segments: at each boundary, add alignments
-        # that start there; the top of a max-heap on score (lazily dropping
-        # alignments that have ended) owns the segment up to the next boundary.
-        alns.sort()
-        boundaries = sorted({a[0] for a in alns} | {a[1] + 1 for a in alns})
-        heap = []
-        next_aln = 0
-        for seg_start, seg_next in zip(boundaries, boundaries[1:]):
-            while next_aln < len(alns) and alns[next_aln][0] <= seg_start:
-                begin, end, score, idx, cls, kimura = alns[next_aln]
-                heapq.heappush(heap, (-score, idx, end, cls, kimura))
-                next_aln += 1
-            while heap and heap[0][2] < seg_start:
-                heapq.heappop(heap)
-            if not heap:
-                continue
-            _neg_score, _idx, _end, cls, kimura = heap[0]
-            seg_bp = seg_next - seg_start
-            resolved_by_class[cls] = resolved_by_class.get(cls, 0) + seg_bp
-            if cls in NO_LANDSCAPE_CLASSES or kimura is None:
-                continue
-            kimura_bin = int(kimura)
-            if kimura_bin > landscape_max_div:
-                continue
-            key = (cls, kimura_bin)
-            landscape[key] = landscape.get(key, 0) + seg_bp
+    for seg_bp, (cls, kimura) in owned_segments(records):
+        resolved_by_class[cls] = resolved_by_class.get(cls, 0) + seg_bp
+        if cls in NO_LANDSCAPE_CLASSES or kimura is None:
+            continue
+        kimura_bin = int(kimura)
+        if kimura_bin > landscape_max_div:
+            continue
+        key = (cls, kimura_bin)
+        landscape[key] = landscape.get(key, 0) + seg_bp
     return landscape, resolved_by_class
 
 
@@ -321,8 +321,11 @@ def main():
     hits = list(parse_out_file(args.out_file))
     total_bp, non_n_bp = read_assembly_stats(args.assembly_stats)
 
-    class_bp = bp_per_group(hits, collapse_class)
-    family_bp = bp_per_group(hits, lambda cf: cf)
+    family_bp = owned_bp_by_family(hits)
+    class_bp = {}
+    for class_family, bp in family_bp.items():
+        cls = collapse_class(class_family)
+        class_bp[cls] = class_bp.get(cls, 0) + bp
 
     for bucket in CANONICAL_CLASSES:
         class_bp.setdefault(bucket, 0)

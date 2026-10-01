@@ -275,6 +275,10 @@ the **same** `mask_shared_library` value:
     -- report_shared_only
 ```
 
+The target refuses to run without `mask_shared_library`. Without it the
+shared arm would mask with `<outdir>/library/shared_library.fa`, which
+schedules the whole discovery chain and re-runs RepeatMasker.
+
 It schedules `assembly_stats`, `divergence` and `summarize` per species,
 then `combine_summaries_shared_only` and `plot_shared_only`:
 - `<outdir>/summary_shared_only/`: `class_composition.tsv`,

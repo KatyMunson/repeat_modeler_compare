@@ -241,15 +241,29 @@ rule mask_shared_only:
         ),
 
 
+def _require_mask_shared_library(target):
+    # Input function, so it only fires when the target is actually requested.
+    if not MASK_SHARED_LIBRARY:
+        raise ValueError(
+            f"{target} needs --config mask_shared_library=<the library you masked with> "
+            f"(the same value as for mask_shared_only). Without it the shared arm masks "
+            f"with {OUTDIR}/library/shared_library.fa, which schedules discovery and "
+            f"re-runs RepeatMasker."
+        )
+    return []
+
+
 rule report_shared_only:
     # Reporting that needs only the shared arm: divergence + summarize per
     # species, then combined tables and plots under summary_shared_only/ and
     # plots_shared_only/ (kept apart from a full run's summary/ and plots/).
     # No arm concordance, round saturation, LTR or discovery tables -- those
-    # need the own arm or the discovery chain. Pair with the same
-    # mask_shared_library used for mask_shared_only, or the shared arm points
-    # back at {outdir}/library/shared_library.fa and pulls in discovery.
+    # need the own arm or the discovery chain. Requires the same
+    # mask_shared_library used for mask_shared_only: without it the shared
+    # arm points back at {outdir}/library/shared_library.fa, which pulls in
+    # the whole discovery chain AND re-masks every species.
     input:
+        lambda wc: _require_mask_shared_library("report_shared_only"),
         f"{OUTDIR}/summary_shared_only/class_composition.tsv",
         f"{OUTDIR}/summary_shared_only/family_composition.tsv",
         f"{OUTDIR}/summary_shared_only/divergence_landscape.tsv",

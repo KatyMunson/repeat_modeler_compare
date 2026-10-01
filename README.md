@@ -282,6 +282,11 @@ changed since last execution"), it has to re-mask every chunk to rebuild
 them. With `mtime` it only reruns the gather if the genome or library is
 actually newer than the masked output.
 
+`mtime` also ignores script changes, so after a pipeline update that changes
+`summarize_rm.py` (for example the overlap-resolved divergence landscape),
+add `--forcerun summarize`. That reruns the per-species summaries and
+everything downstream, but not the masking.
+
 The target refuses to run without `mask_shared_library`. Without it the
 shared arm would mask with `<outdir>/library/shared_library.fa`, which
 schedules the whole discovery chain and re-runs RepeatMasker.

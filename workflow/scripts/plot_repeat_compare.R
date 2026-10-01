@@ -29,6 +29,13 @@ dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 # (whose arithmetic silently breaks when bit64 isn't installed).
 class_composition <- fread(class_composition_path, integer64 = "double")
 divergence_landscape <- fread(divergence_landscape_path, integer64 = "double")
+if (!"pct_non_n" %in% names(divergence_landscape)) {
+  stop(
+    divergence_landscape_path, " has no pct_non_n column: it was written by the older ",
+    "summarize_rm.py (.divsum-based, over-counted). Rerun summarize, e.g. add ",
+    "`--forcerun summarize` (needed under --rerun-triggers mtime, which ignores script changes)."
+  )
+}
 has_concordance <- arm_concordance_path != "NONE"
 assembly_covariates <- fread(assembly_covariates_path, integer64 = "double")
 

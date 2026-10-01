@@ -241,6 +241,27 @@ rule mask_shared_only:
         ),
 
 
+rule report_shared_only:
+    # Reporting that needs only the shared arm: divergence + summarize per
+    # species, then combined tables and plots under summary_shared_only/ and
+    # plots_shared_only/ (kept apart from a full run's summary/ and plots/).
+    # No arm concordance, round saturation, LTR or discovery tables -- those
+    # need the own arm or the discovery chain. Pair with the same
+    # mask_shared_library used for mask_shared_only, or the shared arm points
+    # back at {outdir}/library/shared_library.fa and pulls in discovery.
+    input:
+        f"{OUTDIR}/summary_shared_only/class_composition.tsv",
+        f"{OUTDIR}/summary_shared_only/family_composition.tsv",
+        f"{OUTDIR}/summary_shared_only/divergence_landscape.tsv",
+        f"{OUTDIR}/summary_shared_only/assembly_covariates.tsv",
+        f"{OUTDIR}/plots_shared_only/class_composition_shared.png",
+        f"{OUTDIR}/plots_shared_only/divergence_landscape.png",
+        expand(
+            f"{OUTDIR}/shared/{{species}}/divergence/{{species}}.landscape.html",
+            species=SPECIES_IDS,
+        ),
+
+
 # -----------------------------------------------------------------------------
 # 6.1 prep_genome
 # -----------------------------------------------------------------------------
@@ -1411,6 +1432,40 @@ rule combine_summaries:
         "> {log} 2>&1"
 
 
+rule combine_summaries_shared_only:
+    # combine_summaries for report_shared_only: shared-arm chunks only, and
+    # none of the own-arm / discovery outputs.
+    input:
+        class_chunks=expand(f"{OUTDIR}/shared/{{species}}/summary/class_composition.tsv", species=SPECIES_IDS),
+        family_chunks=expand(f"{OUTDIR}/shared/{{species}}/summary/family_composition.tsv", species=SPECIES_IDS),
+        divergence_chunks=expand(f"{OUTDIR}/shared/{{species}}/summary/divergence_landscape.tsv", species=SPECIES_IDS),
+        assembly_stats_chunks=expand(f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv", species=SPECIES_IDS),
+    output:
+        class_composition=f"{OUTDIR}/summary_shared_only/class_composition.tsv",
+        family_composition=f"{OUTDIR}/summary_shared_only/family_composition.tsv",
+        divergence_landscape=f"{OUTDIR}/summary_shared_only/divergence_landscape.tsv",
+        assembly_covariates=f"{OUTDIR}/summary_shared_only/assembly_covariates.tsv",
+    threads: config["resources"]["combine_summaries"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["combine_summaries"]["mem"] * attempt,
+        hrs=config["resources"]["combine_summaries"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/summary_shared_only/combine_summaries.log",
+    shell:
+        "python3 workflow/scripts/combine_summaries.py "
+        "--manifest {config[manifest]} "
+        "--class-chunks {input.class_chunks} "
+        "--family-chunks {input.family_chunks} "
+        "--divergence-chunks {input.divergence_chunks} "
+        "--assembly-stats-chunks {input.assembly_stats_chunks} "
+        "--class-composition-out {output.class_composition} "
+        "--family-composition-out {output.family_composition} "
+        "--divergence-landscape-out {output.divergence_landscape} "
+        "--assembly-covariates-out {output.assembly_covariates} "
+        "> {log} 2>&1"
+
+
 # -----------------------------------------------------------------------------
 # provenance.txt
 # -----------------------------------------------------------------------------
@@ -1490,4 +1545,31 @@ rule plot:
         "Rscript workflow/scripts/plot_repeat_compare.R "
         "{input.class_composition} {input.divergence_landscape} "
         "{input.arm_concordance} {input.assembly_covariates} {params.out_dir} "
+        "> {log} 2>&1"
+
+
+rule plot_shared_only:
+    # plot for report_shared_only: no arm_concordance (no own arm).
+    input:
+        class_composition=f"{OUTDIR}/summary_shared_only/class_composition.tsv",
+        divergence_landscape=f"{OUTDIR}/summary_shared_only/divergence_landscape.tsv",
+        assembly_covariates=f"{OUTDIR}/summary_shared_only/assembly_covariates.tsv",
+    output:
+        class_plot=f"{OUTDIR}/plots_shared_only/class_composition_shared.png",
+        divergence_plot=f"{OUTDIR}/plots_shared_only/divergence_landscape.png",
+    threads: config["resources"]["plot"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["plot"]["mem"] * attempt,
+        hrs=config["resources"]["plot"]["hrs"],
+        shell_exec="bash",
+    conda:
+        "workflow/envs/r_plot.yaml"
+    params:
+        out_dir=f"{OUTDIR}/plots_shared_only",
+    log:
+        f"{OUTDIR}/logs/summary_shared_only/plot.log",
+    shell:
+        "Rscript workflow/scripts/plot_repeat_compare.R "
+        "{input.class_composition} {input.divergence_landscape} "
+        "NONE {input.assembly_covariates} {params.out_dir} "
         "> {log} 2>&1"

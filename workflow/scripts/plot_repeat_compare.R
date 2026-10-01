@@ -7,6 +7,9 @@
 # Usage: Rscript plot_repeat_compare.R <class_composition.tsv> \
 #          <divergence_landscape.tsv> <arm_concordance.tsv> \
 #          <assembly_covariates.tsv> <out_dir>
+#
+# Pass NONE for <arm_concordance.tsv> to skip plot 3 (shared-arm-only
+# report, where there is no own arm to compare against).
 
 suppressMessages({
   library(data.table)
@@ -24,7 +27,7 @@ dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 class_composition <- fread(class_composition_path)
 divergence_landscape <- fread(divergence_landscape_path)
-arm_concordance <- fread(arm_concordance_path)
+has_concordance <- arm_concordance_path != "NONE"
 assembly_covariates <- fread(assembly_covariates_path)
 
 # ---------------------------------------------------------------------------
@@ -64,13 +67,14 @@ ggsave(
 )
 
 # ---------------------------------------------------------------------------
-# 2. Divergence landscapes, faceted by species, stacked by class.
+# 2. Divergence landscapes (shared arm), faceted by species, stacked by
+#    class. Filtered to one arm: stacking both arms would double the bp.
 # ---------------------------------------------------------------------------
-p2 <- ggplot(divergence_landscape, aes(x = kimura_bin, y = bp, fill = class)) +
+p2 <- ggplot(divergence_landscape[arm == "shared"], aes(x = kimura_bin, y = bp, fill = class)) +
   geom_col(position = "stack") +
   facet_wrap(~species, scales = "free_y") +
   labs(
-    title = "Divergence (Kimura) landscape by class",
+    title = "Divergence (Kimura) landscape by class (shared-library arm)",
     x = "Kimura substitution level (%)",
     y = "bp",
     fill = "Class"
@@ -88,28 +92,31 @@ ggsave(
 # ---------------------------------------------------------------------------
 # 3. Shared vs own concordance dot plot.
 # ---------------------------------------------------------------------------
-p3 <- ggplot(arm_concordance, aes(x = pct_non_n_own, y = pct_non_n_shared, color = class)) +
-  geom_point(size = 2) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
-  facet_wrap(~species) +
-  labs(
-    title = "Shared-library vs own-library concordance",
-    x = "% non-N (own-library arm)",
-    y = "% non-N (shared-library arm)",
-    color = "Class"
-  ) +
-  theme_minimal()
+if (has_concordance) {
+  arm_concordance <- fread(arm_concordance_path)
+  p3 <- ggplot(arm_concordance, aes(x = pct_non_n_own, y = pct_non_n_shared, color = class)) +
+    geom_point(size = 2) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
+    facet_wrap(~species) +
+    labs(
+      title = "Shared-library vs own-library concordance",
+      x = "% non-N (own-library arm)",
+      y = "% non-N (shared-library arm)",
+      color = "Class"
+    ) +
+    theme_minimal()
 
-ggsave(
-  file.path(out_dir, "arm_concordance.png"),
-  plot = p3,
-  width = 8,
-  height = 6,
-  device = grDevices::png
-)
+  ggsave(
+    file.path(out_dir, "arm_concordance.png"),
+    plot = p3,
+    width = 8,
+    height = 6,
+    device = grDevices::png
+  )
+}
 
 if (interactive()) {
   print(p1)
   print(p2)
-  print(p3)
+  if (has_concordance) print(p3)
 }

@@ -262,6 +262,35 @@ shared-arm `repeatmasker_chunk`/`gather_repeatmasker` jobs are scheduled.
 Output goes to `<outdir>/shared/<species>/repeatmasker/`. Leave
 `mask_shared_library` unset for a normal run.
 
+**Report on the shared arm only (`report_shared_only`):** after
+`mask_shared_only`, run the reporting that needs only the shared arm, with
+the **same** `mask_shared_library` value:
+
+```bash
+./runsnake 10 --configfile config.yaml \
+    --config mask_shared_library=results/library/shared_library.fa \
+    -n -- report_shared_only        # check: no repeatmasker_chunk jobs listed
+./runsnake 10 --configfile config.yaml \
+    --config mask_shared_library=results/library/shared_library.fa \
+    -- report_shared_only
+```
+
+It schedules `assembly_stats`, `divergence` and `summarize` per species,
+then `combine_summaries_shared_only` and `plot_shared_only`:
+- `<outdir>/summary_shared_only/`: `class_composition.tsv`,
+  `family_composition.tsv`, `divergence_landscape.tsv`,
+  `assembly_covariates.tsv` (same formats as `summary/`);
+- `<outdir>/plots_shared_only/`: `class_composition_shared.png`,
+  `divergence_landscape.png`;
+- `<outdir>/shared/<species>/divergence/<species>.landscape.html`:
+  RepeatMasker's own landscape page.
+
+These go to separate directories so a later full run's `summary/` and
+`plots/` are never mixed with them. Not produced: `arm_concordance` (needs
+the own arm), `discovery_round_saturation` (own arm + RepeatModeler
+rounds), `ltr_discovery`, `discovery_summary`, `dfam_overlap` and
+`provenance.txt` (discovery chain).
+
 **`--configfile`-before-targets caveat:** passing a target name immediately
 after `--configfile` makes Snakemake treat it as a second configfile.
 Always put targets *before* `--configfile`, or use a `--` separator —

@@ -41,7 +41,12 @@ CANONICAL_CLASSES = {
     "Low_complexity",
     "Retroposon",
     "Unknown",
+    "Unknown_tandem",
 }
+
+# Unknown families that family_tandem.py found in tandem arrays are reported
+# as their own class, set from --tandem-table (see relabel()).
+TANDEM_CLASS = "Unknown_tandem"
 
 
 # Classes left out of the divergence landscape: Kimura divergence from a
@@ -66,7 +71,14 @@ def collapse_class(raw_class_family):
     return "Other"
 
 
-def parse_out_file(path):
+def relabel(family, class_family, tandem):
+    """class_family, or Unknown_tandem for an Unknown family in `tandem`."""
+    if class_family == "Unknown" and family in tandem:
+        return TANDEM_CLASS
+    return class_family
+
+
+def parse_out_file(path, tandem=frozenset()):
     """Yield (query_seq, begin, end, score, class_family) for every hit line."""
     with open(path) as fh:
         for line in fh:
@@ -81,7 +93,7 @@ def parse_out_file(path):
                 end = int(fields[6])
             except ValueError:
                 continue
-            class_family = fields[10]
+            class_family = relabel(fields[9], fields[10], tandem)
             if begin > end:
                 begin, end = end, begin
             yield query_seq, begin, end, int(fields[0]), class_family
@@ -218,7 +230,7 @@ def _well_characterized(query_seq, subject_seq):
     return len(query_seq) - (len(query_seq) - _acgt_count(query_seq)) - (len(subject_seq) - _acgt_count(subject_seq))
 
 
-def parse_align_file(path):
+def parse_align_file(path, tandem=frozenset()):
     """Yield (contig, begin, end, score, class_family, kimura_pct_or_None)
     for every alignment in a RepeatMasker .align file (-a output)."""
     try:
@@ -246,7 +258,8 @@ def parse_align_file(path):
                 class_family = None
                 for tok in fields[8:]:
                     if "#" in tok:
-                        class_family = tok.split("#", 1)[1]
+                        family, class_family = tok.split("#", 1)
+                        class_family = relabel(family, class_family, tandem)
                         break
                 if class_family is None:
                     if not missing_class_warned:
@@ -313,12 +326,17 @@ def main():
     ap.add_argument("--species", required=True)
     ap.add_argument("--tissue", required=True)
     ap.add_argument("--landscape-max-div", type=int, default=50)
+    ap.add_argument("--tandem-table", help="family_tandem.tsv: report its tandem Unknown families as Unknown_tandem")
     ap.add_argument("--class-out", required=True)
     ap.add_argument("--family-out", required=True)
     ap.add_argument("--divergence-out", required=True)
     args = ap.parse_args()
 
-    hits = list(parse_out_file(args.out_file))
+    tandem = frozenset()
+    if args.tandem_table:
+        from family_tandem import tandem_families
+        tandem = frozenset(tandem_families(args.tandem_table))
+    hits = list(parse_out_file(args.out_file, tandem))
     total_bp, non_n_bp = read_assembly_stats(args.assembly_stats)
 
     family_bp = owned_bp_by_family(hits)
@@ -358,7 +376,7 @@ def main():
 
     del hits
     landscape, resolved_by_class = resolve_landscape(
-        parse_align_file(args.align_file), args.landscape_max_div
+        parse_align_file(args.align_file, tandem), args.landscape_max_div
     )
     for cls, resolved_bp in sorted(resolved_by_class.items()):
         out_bp = class_bp.get(cls, 0)

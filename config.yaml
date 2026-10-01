@@ -83,6 +83,10 @@ repeatmasker:
 # satellite definition the removed satellite arm's satellite_library_qc used
 # (README "Tandem check"). Report-only.
 family_tandem:
+  # Report Unknown families that pass copies + tandem + not-simple (any
+  # consensus length) as their own class, Unknown_tandem, in the composition,
+  # landscape and concordance tables and plots.
+  carve_unknown: true
   min_cons_len: 75             # consensus length window (TRF min_period_length .. TRF max period)
   max_cons_len: 2000
   min_copies: 100              # genome-wide: merged hit bp / consensus length

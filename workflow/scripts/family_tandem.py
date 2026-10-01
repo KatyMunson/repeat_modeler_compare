@@ -18,7 +18,13 @@ two can be compared motif-for-family:
   simple   <= --max-short-period-frac of the consensus covered by an exact
            period-1..10 self-repeat
 
-`satellite_like` = all four pass. Fragments of one interrupted TE chain too,
+`satellite_like` = all four pass (comparable with the satellite pipeline).
+`tandem_family` = copies, tandem and simple pass, at any consensus length:
+TRF's 2000 bp period cap is a tool limit, and a RepeatModeler consensus can
+be a multimer or a large-unit tandem repeat. summarize_rm.py relabels
+Unknown hits of tandem families as Unknown_tandem. `monomer_period` is the
+strongest internal repeat period of the consensus (k-mer spacing), so a
+consensus that is several copies of a shorter unit shows that unit. Fragments of one interrupted TE chain too,
 but span about one consensus length, so they don't reach 3 copies. A
 RepeatModeler consensus can be a multimer of the true monomer; chaining
 works on hit positions, so that doesn't affect `tandem`, only `length`.
@@ -62,6 +68,51 @@ def short_period_frac(seq, max_period=10, min_matches=8):
                     covered[k] = 1
             i = j + 1
     return sum(covered) / n if n else 0.0
+
+
+def monomer_period(seq, k=12, min_period=10, min_support=0.2):
+    """Strongest internal repeat period of a consensus: the most common
+    spacing (within +-max(2 bp, 1%)) between successive occurrences of the
+    same k-mer. Returns (period, support) where support is the fraction of
+    k-mer positions that recur at that spacing, or (None, 0.0) when no
+    spacing reaches min_support (no internal repeat)."""
+    seq = seq.upper()
+    n_pos = len(seq) - k + 1
+    if n_pos < 2:
+        return None, 0.0
+    last = {}
+    diffs = {}
+    for i in range(n_pos):
+        kmer = seq[i:i + k]
+        if "N" in kmer:
+            continue
+        j = last.get(kmer)
+        if j is not None and i - j >= min_period:
+            diffs[i - j] = diffs.get(i - j, 0) + 1
+        last[kmer] = i
+    if not diffs:
+        return None, 0.0
+    best, best_support = None, 0
+    for d in diffs:
+        tol = max(2, d // 100)
+        support = sum(c for dd, c in diffs.items() if abs(dd - d) <= tol)
+        if support > best_support or (support == best_support and best is not None and d < best):
+            best, best_support = d, support
+    frac = best_support / n_pos
+    return (best, frac) if frac >= min_support else (None, frac)
+
+
+def tandem_families(path):
+    """Names of families flagged tandem_family in a family_tandem.tsv."""
+    names = set()
+    with open(path) as fh:
+        header = fh.readline().rstrip("\n").split("\t")
+        i_fam, i_flag = header.index("family"), header.index("tandem_family")
+        for line in fh:
+            f = line.rstrip("\n").split("\t")
+            if f[i_flag] == "True":
+                names.add(f[i_fam])
+    return names
 
 
 def _left(tok):
@@ -188,8 +239,9 @@ def main():
     with open(args.out, "w") as out:
         out.write("arm\tspecies\tfamily\tclass_family\tclass\tcons_len\tn_hits\tgenome_bp\towned_bp\t"
                   "owned_pct_non_n\test_copies\tmedian_div\tn_arrays\tn_isolated_hits\tlargest_array_bp\t"
-                  "largest_array_copies\ttandem_bp\ttandem_frac\tshort_period_frac\tpass_length\t"
-                  "pass_copies\tpass_tandem\tpass_not_simple\tsatellite_like\tcopy_tier\n")
+                  "largest_array_copies\ttandem_bp\ttandem_frac\tshort_period_frac\tmonomer_period\t"
+                  "monomer_period_support\tpass_length\tpass_copies\tpass_tandem\tpass_not_simple\t"
+                  "satellite_like\ttandem_family\tcopy_tier\n")
         for family in sorted(by_family, key=lambda f: -owned.get(f, 0)):
             fh_ = by_family[family]
             class_family = class_of[family]
@@ -214,6 +266,8 @@ def main():
             p_tandem = tandem_frac >= args.min_tandem_frac
             p_simple = spf is None or spf <= args.max_short_period_frac
             sat_like = p_len and p_copies and p_tandem and p_simple
+            tandem_fam = p_copies and p_tandem and p_simple
+            period, period_support = monomer_period(seq) if seq else (None, 0.0)
             if est_copies >= args.major_min_copies or genome_bp >= args.major_min_bp:
                 tier = "major"
             elif p_copies:
@@ -226,31 +280,37 @@ def main():
             out.write(f"{args.arm}\t{args.species}\t{family}\t{class_family}\t{cls}\t{cons_len}\t{len(fh_)}\t"
                       f"{genome_bp}\t{own}\t{own_pct:.4f}\t{est_copies:.1f}\t{med_div:.1f}\t{n_arrays}\t"
                       f"{n_isolated}\t{largest_bp}\t{largest_copies:.1f}\t{tandem_bp}\t{tandem_frac:.3f}\t"
-                      f"{spf_s}\t{p_len}\t{p_copies}\t{p_tandem}\t{p_simple}\t{sat_like}\t{tier}\n")
+                      f"{spf_s}\t{period if period else 'NA'}\t{period_support:.2f}\t{p_len}\t{p_copies}\t"
+                      f"{p_tandem}\t{p_simple}\t{sat_like}\t{tandem_fam}\t{tier}\n")
 
-            row = class_rows.setdefault(cls, [0, 0, 0, 0, 0])
+            row = class_rows.setdefault(cls, [0, 0, 0, 0, 0, 0, 0])
             row[0] += 1
             row[1] += own
             row[2] += tandem_bp
             if sat_like:
                 row[3] += 1
                 row[4] += own
+            if tandem_fam:
+                row[5] += 1
+                row[6] += own
 
     with open(args.class_out, "w") as out:
         out.write("arm\tspecies\tclass\tn_families\towned_bp\towned_pct_non_n\ttandem_bp_sum\t"
                   "n_satellite_like\tsatellite_like_owned_bp\tsatellite_like_pct_of_class\t"
-                  "satellite_like_pct_non_n\n")
-        for cls, (n_fam, own, tandem_sum, n_sat, sat_own) in sorted(class_rows.items()):
-            out.write(f"{args.arm}\t{args.species}\t{cls}\t{n_fam}\t{own}\t"
-                      f"{100.0 * own / non_n_bp if non_n_bp else 0.0:.4f}\t{tandem_sum}\t{n_sat}\t{sat_own}\t"
-                      f"{100.0 * sat_own / own if own else 0.0:.2f}\t"
-                      f"{100.0 * sat_own / non_n_bp if non_n_bp else 0.0:.4f}\n")
+                  "satellite_like_pct_non_n\tn_tandem_family\ttandem_family_owned_bp\t"
+                  "tandem_family_pct_of_class\ttandem_family_pct_non_n\n")
+        pct = lambda a, b: 100.0 * a / b if b else 0.0
+        for cls, (n_fam, own, tandem_sum, n_sat, sat_own, n_tf, tf_own) in sorted(class_rows.items()):
+            out.write(f"{args.arm}\t{args.species}\t{cls}\t{n_fam}\t{own}\t{pct(own, non_n_bp):.4f}\t"
+                      f"{tandem_sum}\t{n_sat}\t{sat_own}\t{pct(sat_own, own):.2f}\t{pct(sat_own, non_n_bp):.4f}\t"
+                      f"{n_tf}\t{tf_own}\t{pct(tf_own, own):.2f}\t{pct(tf_own, non_n_bp):.4f}\n")
 
-    n_sat = sum(r[3] for r in class_rows.values())
-    sat_bp = sum(r[4] for r in class_rows.values())
-    print(f"[family_tandem] {args.arm}/{args.species}: {n_sat} satellite-like families hold "
-          f"{sat_bp:,} bp ({100.0 * sat_bp / non_n_bp if non_n_bp else 0.0:.2f}% of non-N)",
-          file=sys.stderr)
+    for label, i_n, i_bp in (("satellite-like", 3, 4), ("tandem", 5, 6)):
+        n = sum(r[i_n] for r in class_rows.values())
+        bp = sum(r[i_bp] for r in class_rows.values())
+        print(f"[family_tandem] {args.arm}/{args.species}: {n} {label} families hold "
+              f"{bp:,} bp ({100.0 * bp / non_n_bp if non_n_bp else 0.0:.2f}% of non-N)",
+              file=sys.stderr)
 
 
 if __name__ == "__main__":

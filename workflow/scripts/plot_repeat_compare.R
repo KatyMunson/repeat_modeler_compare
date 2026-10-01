@@ -44,8 +44,9 @@ assembly_covariates <- fread(assembly_covariates_path, integer64 = "double")
 # whichever plot it's in and whichever classes a plot happens to contain.
 # Listed bottom of the stack first. The eight hues are a validated
 # categorical palette, assigned in an order where every pair adjacent in the
-# stack stays distinct for common color-vision deficiencies. Unknown, Other
-# and Low_complexity are deliberately neutral grays, since they carry no
+# stack stays distinct for common color-vision deficiencies. Unknown_tandem
+# is a lighter violet than Satellite: satellite-like, not yet confirmed.
+# Unknown, Other and Low_complexity are deliberately neutral grays, since they carry no
 # biological identity. Classes absent from this list fall back to black, and
 # the script warns.
 # ---------------------------------------------------------------------------
@@ -60,8 +61,11 @@ class_colors <- c(
   Simple_repeat  = "#e34948",  # red
   Low_complexity = "#b0afa9",  # light gray
   Other          = "#5f5e5a",  # dark gray
+  Unknown_tandem = "#7b6fdc",  # light violet: Unknown families in tandem arrays (family_tandem)
   Unknown        = "#8f8e88"   # mid gray
 )
+class_labels <- c(Unknown_tandem = "Unknown (tandem)")
+label_class <- function(x) ifelse(x %in% names(class_labels), class_labels[x], x)
 
 order_classes <- function(dt) {
   unmapped <- setdiff(unique(dt$class), names(class_colors))
@@ -75,8 +79,8 @@ order_classes <- function(dt) {
   dt
 }
 
-class_fill <- function() scale_fill_manual(values = class_colors, name = "Class")
-class_colour <- function() scale_colour_manual(values = class_colors, name = "Class")
+class_fill <- function() scale_fill_manual(values = class_colors, labels = label_class, name = "Class")
+class_colour <- function() scale_colour_manual(values = class_colors, labels = label_class, name = "Class")
 
 # ---------------------------------------------------------------------------
 # 1. Class composition, primary "shared" arm, species side by side.

@@ -224,6 +224,19 @@ family and a satellite-library motif are judged the same way:
 `satellite_like` = all four. Fragments of one interrupted TE chain too, but
 span about one consensus length, so they never reach 3 copies.
 
+`tandem_family` = copies + tandem + not simple at **any** consensus length.
+The 2000 bp cap is TRF's period limit, not biology: on *M. limosa* the
+largest satellite, `Mlim_rnd-1_family-3` (2.9 kb consensus, 542 Mb, 99% in
+arrays up to 1.85 Mb), fails only that test. With
+`family_tandem.carve_unknown: true` (default), `summarize` reports Unknown
+families with `tandem_family` as their own class, **Unknown_tandem**
+("Unknown (tandem)", light violet), in the composition, landscape and
+concordance tables and plots. `family_tandem` runs on both arms for this,
+each arm's own table deciding its families. It is a placeholder until the
+satellite library's RepeatMasker runs are folded in. `monomer_period` is the
+consensus's strongest internal repeat period (k-mer spacing), so a
+consensus that is several copies of a shorter unit reports that unit.
+
 - `{outdir}/summary/family_tandem.tsv` (or `summary_shared_only/`): one row
   per family and species, largest first: `owned_bp` (the bp it holds under
   the class table's highest-score rule), tandem fraction, array count and
@@ -231,10 +244,10 @@ span about one consensus length, so they never reach 3 copies.
   family on the landscape), the four pass flags, `satellite_like` and a
   copy tier (major ≥ 1000 copies or ≥ 100 kb).
 - `{outdir}/summary/class_tandem.tsv`: per class, how much of the class's bp
-  is held by `satellite_like` families, e.g. how much of Unknown behaves
-  like satellite.
+  is held by `satellite_like` and by `tandem_family` families, e.g. how much
+  of Unknown behaves like satellite.
 
-Report-only: nothing is relabelled. To check it against the satellite
+Apart from the Unknown_tandem class, nothing is relabelled. To check it against the satellite
 pipeline, compare `satellite_like` families with the motifs that pass in
 that pipeline's own QC on the same assembly.
 

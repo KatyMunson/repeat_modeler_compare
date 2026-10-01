@@ -1348,6 +1348,11 @@ rule summarize:
         tbl_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.tbl",
         align_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.align",
         assembly_stats=f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv",
+        tandem_table=(
+            f"{OUTDIR}/{{arm}}/{{species}}/summary/family_tandem.tsv"
+            if config["family_tandem"].get("carve_unknown", True)
+            else []
+        ),
     output:
         class_chunk=f"{OUTDIR}/{{arm}}/{{species}}/summary/class_composition.tsv",
         family_chunk=f"{OUTDIR}/{{arm}}/{{species}}/summary/family_composition.tsv",
@@ -1362,44 +1367,46 @@ rule summarize:
     params:
         tissue=lambda wc: TISSUE_BY_SPECIES[wc.species],
         landscape_max_div=config["summary"]["landscape_max_div"],
+        tandem_arg=lambda wc, input: f"--tandem-table {input.tandem_table}" if input.tandem_table else "",
     shell:
         "python3 workflow/scripts/summarize_rm.py "
         "--out-file {input.out_file} --tbl-file {input.tbl_file} "
         "--align-file {input.align_file} --assembly-stats {input.assembly_stats} "
         "--arm {wildcards.arm} --species {wildcards.species} --tissue {params.tissue} "
-        "--landscape-max-div {params.landscape_max_div} "
+        "--landscape-max-div {params.landscape_max_div} {params.tandem_arg} "
         "--class-out {output.class_chunk} --family-out {output.family_chunk} "
         "--divergence-out {output.divergence_chunk} > {log} 2>&1"
 
 
 # -----------------------------------------------------------------------------
-# family_tandem (shared arm, per species): is each shared-library family
-# arranged in tandem arrays (satellite-like) or dispersed? Same operational
-# definition as the removed satellite arm's satellite_library_qc (README).
-# Report-only; nothing is relabelled.
+# family_tandem (per arm, species): is each library family arranged in
+# tandem arrays (satellite-like) or dispersed? Same operational definition as
+# the removed satellite arm's satellite_library_qc (README). summarize reads
+# it to report tandem Unknown families as Unknown_tandem
+# (family_tandem.carve_unknown). Combined tables are shared-arm only.
 # -----------------------------------------------------------------------------
 rule family_tandem:
     input:
-        out_file=f"{OUTDIR}/shared/{{species}}/repeatmasker/{{species}}.fa.out",
-        library=lambda wc: MASK_SHARED_LIBRARY or f"{OUTDIR}/library/shared_library.fa",
+        out_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.out",
+        library=rm_library,
         assembly_stats=f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv",
     output:
-        family_chunk=f"{OUTDIR}/shared/{{species}}/summary/family_tandem.tsv",
-        class_chunk=f"{OUTDIR}/shared/{{species}}/summary/class_tandem.tsv",
+        family_chunk=f"{OUTDIR}/{{arm}}/{{species}}/summary/family_tandem.tsv",
+        class_chunk=f"{OUTDIR}/{{arm}}/{{species}}/summary/class_tandem.tsv",
     threads: config["resources"]["family_tandem"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["family_tandem"]["mem"] * attempt,
         hrs=config["resources"]["family_tandem"]["hrs"],
         shell_exec="bash",
     log:
-        f"{OUTDIR}/logs/shared/{{species}}/family_tandem.log",
+        f"{OUTDIR}/logs/{{arm}}/{{species}}/family_tandem.log",
     params:
         t=config["family_tandem"],
     shell:
         "python3 workflow/scripts/family_tandem.py "
         "--out-file {input.out_file} --library {input.library} "
         "--assembly-stats {input.assembly_stats} "
-        "--arm shared --species {wildcards.species} "
+        "--arm {wildcards.arm} --species {wildcards.species} "
         "--min-len {params.t[min_cons_len]} --max-len {params.t[max_cons_len]} "
         "--min-copies {params.t[min_copies]} --min-array-copies {params.t[min_array_copies]} "
         "--min-tandem-frac {params.t[min_tandem_frac]} "

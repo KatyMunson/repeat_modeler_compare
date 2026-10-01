@@ -22,15 +22,56 @@ out_dir <- args[5]
 
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
-class_composition <- fread(class_composition_path)
-divergence_landscape <- fread(divergence_landscape_path)
+# Genome-scale bp exceed 32-bit ints; read them as doubles, not integer64
+# (whose arithmetic silently breaks when bit64 isn't installed).
+class_composition <- fread(class_composition_path, integer64 = "double")
+divergence_landscape <- fread(divergence_landscape_path, integer64 = "double")
 arm_concordance <- fread(arm_concordance_path)
-assembly_covariates <- fread(assembly_covariates_path)
+assembly_covariates <- fread(assembly_covariates_path, integer64 = "double")
+
+# ---------------------------------------------------------------------------
+# One class -> color mapping shared by every plot, so a class keeps its color
+# whichever plot it's in and whichever classes a plot happens to contain.
+# Listed bottom of the stack first. The eight hues are a validated
+# categorical palette, assigned in an order where every pair adjacent in the
+# stack stays distinct for common color-vision deficiencies. Unknown, Other
+# and Low_complexity are deliberately neutral grays, since they carry no
+# biological identity. Classes absent from this list fall back to black, and
+# the script warns.
+# ---------------------------------------------------------------------------
+class_colors <- c(
+  DNA            = "#2a78d6",  # blue
+  RC             = "#eb6834",  # orange
+  LINE           = "#1baf7a",  # aqua
+  SINE           = "#eda100",  # yellow
+  Retroposon     = "#e87ba4",  # magenta
+  LTR            = "#008300",  # green
+  Satellite      = "#4a3aa7",  # violet
+  Simple_repeat  = "#e34948",  # red
+  Low_complexity = "#b0afa9",  # light gray
+  Other          = "#5f5e5a",  # dark gray
+  Unknown        = "#8f8e88"   # mid gray
+)
+
+order_classes <- function(dt) {
+  unmapped <- setdiff(unique(dt$class), names(class_colors))
+  if (length(unmapped) > 0) {
+    warning("classes with no assigned color (drawn black): ", paste(unmapped, collapse = ", "))
+    class_colors <<- c(class_colors, setNames(rep("#000000", length(unmapped)), unmapped))
+  }
+  # ggplot stacks the first factor level on top, so reverse: DNA sits on the
+  # baseline and the gray bins on top.
+  dt[, class := factor(class, levels = rev(names(class_colors)))]
+  dt
+}
+
+class_fill <- function() scale_fill_manual(values = class_colors, name = "Class")
+class_colour <- function() scale_colour_manual(values = class_colors, name = "Class")
 
 # ---------------------------------------------------------------------------
 # 1. Class composition, primary "shared" arm, species side by side.
 # ---------------------------------------------------------------------------
-shared_composition <- class_composition[arm == "shared"]
+shared_composition <- order_classes(class_composition[arm == "shared"])
 
 covariate_subtitle <- paste(
   sprintf(
@@ -45,13 +86,13 @@ covariate_subtitle <- paste(
 )
 
 p1 <- ggplot(shared_composition, aes(x = species, y = pct_non_n, fill = class)) +
-  geom_col(position = "stack") +
+  geom_col(position = "stack", colour = "white", linewidth = 0.4, width = 0.6) +
+  class_fill() +
   labs(
     title = "Repeat class composition (shared-library arm)",
     subtitle = covariate_subtitle,
     x = "Species",
-    y = "% of non-N assembly length",
-    fill = "Class"
+    y = "% of non-N assembly length"
   ) +
   theme_minimal()
 
@@ -64,16 +105,23 @@ ggsave(
 )
 
 # ---------------------------------------------------------------------------
-# 2. Divergence landscapes, faceted by species, stacked by class.
+# 2. Divergence landscapes, primary "shared" arm, faceted by species,
+#    stacked by class. Overlap-resolved (each base counted once), so heights
+#    are genome fractions and a shared y-axis compares species directly.
 # ---------------------------------------------------------------------------
-p2 <- ggplot(divergence_landscape, aes(x = kimura_bin, y = bp, fill = class)) +
-  geom_col(position = "stack") +
-  facet_wrap(~species, scales = "free_y") +
+shared_landscape <- divergence_landscape[arm == "shared",
+  .(pct_non_n = sum(pct_non_n)), by = .(species, class, kimura_bin)]
+shared_landscape <- order_classes(shared_landscape)
+
+p2 <- ggplot(shared_landscape, aes(x = kimura_bin, y = pct_non_n, fill = class)) +
+  geom_col(position = "stack", width = 1, colour = "white", linewidth = 0.1) +
+  facet_wrap(~species) +
+  class_fill() +
   labs(
-    title = "Divergence (Kimura) landscape by class",
+    title = "Divergence (Kimura) landscape by class (shared-library arm)",
+    subtitle = "Overlapping alignments resolved: each base counted once. Simple_repeat and Low_complexity have no divergence.",
     x = "Kimura substitution level (%)",
-    y = "bp",
-    fill = "Class"
+    y = "% of non-N assembly length"
   ) +
   theme_minimal()
 
@@ -88,15 +136,17 @@ ggsave(
 # ---------------------------------------------------------------------------
 # 3. Shared vs own concordance dot plot.
 # ---------------------------------------------------------------------------
+arm_concordance <- order_classes(arm_concordance)
+
 p3 <- ggplot(arm_concordance, aes(x = pct_non_n_own, y = pct_non_n_shared, color = class)) +
   geom_point(size = 2) +
+  class_colour() +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
   facet_wrap(~species) +
   labs(
     title = "Shared-library vs own-library concordance",
     x = "% non-N (own-library arm)",
-    y = "% non-N (shared-library arm)",
-    color = "Class"
+    y = "% non-N (shared-library arm)"
   ) +
   theme_minimal()
 

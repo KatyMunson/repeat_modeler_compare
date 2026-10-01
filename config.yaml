@@ -106,7 +106,7 @@ resources:
   repeatmasker:     {threads: 4,  mem: 4,  hrs: 12}
   gather_repeatmasker: {threads: 1, mem: 4, hrs: 2}
   divergence:       {threads: 1,  mem: 16, hrs: 8}
-  summarize:        {threads: 1,  mem: 8,  hrs: 2}
+  summarize:        {threads: 1,  mem: 16, hrs: 6}   # parses the multi-Gb .align for the landscape
   combine_summaries: {threads: 1, mem: 8,  hrs: 1}
   provenance:       {threads: 1,  mem: 2,  hrs: 1}
   plot:             {threads: 1,  mem: 8,  hrs: 1}

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Parse one (arm, species) RepeatMasker run into per-class and per-Class/Family
 non-overlapping bp tables, cross-checked against the .tbl summary, plus a
-long-format divergence-landscape chunk from the .divsum file. Stdlib only,
-no pandas. Output rows already carry arm/species/tissue so the per-run
+long-format, overlap-resolved divergence-landscape chunk from the .align
+file. Stdlib only, no pandas. Output rows already carry arm/species/tissue so the per-run
 chunks this writes can be concatenated as-is by combine_summaries.py.
 
 Non-overlapping bp: RepeatMasker's .out can contain multiple overlapping
@@ -15,9 +15,23 @@ across all classes" merge (a base can still count toward two different
 classes if RepeatMasker reported an overlap between them; the .tbl
 cross-check below uses the true global merge to sanity-check total masked
 bp, independent of any per-class double-count).
+
+Divergence landscape: built from the .align file, not from
+calcDivergenceFromAlign.pl's .divsum. The .divsum sums every alignment in
+.align, and .align keeps overlapping alignments that the .out resolves
+(most visibly across tandem arrays, where adjacent monomers' alignments
+overlap), so its per-class bp can exceed the genome. Here each alignment
+gets a Kimura divergence computed from its own transitions and
+transversions (no CpG adjustment, matching the pipeline's
+`calcDivergenceFromAlign.pl -noCpGMod`), and every genome base is assigned
+to the single highest-scoring alignment covering it. Each base therefore
+counts once, and a class's landscape sums to roughly its non-overlapping bp
+in the class table (checked below, with a warning past 5%).
 """
 
 import argparse
+import heapq
+import math
 import sys
 
 CANONICAL_CLASSES = {
@@ -34,14 +48,25 @@ CANONICAL_CLASSES = {
 }
 
 
+# Classes left out of the divergence landscape: Kimura divergence from a
+# consensus means nothing for (CA)n or AT-rich stretches. Their alignments
+# still take part in overlap resolution, so the bases they cover aren't
+# handed to a lower-scoring TE alignment instead.
+NO_LANDSCAPE_CLASSES = {"Simple_repeat", "Low_complexity"}
+
+_warned_unmapped = set()
+
+
 def collapse_class(raw_class_family):
     class_part = raw_class_family.split("/", 1)[0]
     if class_part in CANONICAL_CLASSES:
         return class_part
-    print(
-        f"[summarize_rm] WARNING: unmapped RepeatMasker class '{raw_class_family}' -> Other",
-        file=sys.stderr,
-    )
+    if raw_class_family not in _warned_unmapped:
+        _warned_unmapped.add(raw_class_family)
+        print(
+            f"[summarize_rm] WARNING: unmapped RepeatMasker class '{raw_class_family}' -> Other",
+            file=sys.stderr,
+        )
     return "Other"
 
 
@@ -123,69 +148,166 @@ def read_assembly_stats(path):
     return int(d["total_bp"]), int(d["non_n_bp"])
 
 
-def parse_divsum(path, landscape_max_div):
-    """Parse the 'Coverage for each repeat class and divergence (Kimura)'
-    table from a RepeatMasker calcDivergenceFromAlign.pl .divsum file.
-    Returns list of (kimura_bin, collapsed_class, bp). Defensive: this
-    section's exact column layout has varied across RepeatMasker versions,
-    so unparseable rows are skipped with a warning rather than crashing —
-    verify against a real .divsum during the wiring test (spec §10.2)."""
-    rows = []
+def kimura_2p(transitions, transversions, length):
+    """Kimura two-parameter distance, in percent. None if undefined
+    (no well-characterized bases, or too diverged for the log terms)."""
+    if length <= 0:
+        return None
+    p = transitions / length
+    q = transversions / length
+    a = 1 - 2 * p - q
+    b = 1 - 2 * q
+    if a <= 0 or b <= 0:
+        return None
+    return max(0.0, 100.0 * (-0.5 * math.log(a) - 0.25 * math.log(b)))
+
+
+def _is_align_header(fields):
+    # "score %div %del %ins query begin end (left) [C] repeat#class ..."
+    if len(fields) < 9 or not fields[0].isdigit():
+        return False
     try:
-        with open(path) as fh:
-            lines = fh.readlines()
+        float(fields[1])
+        int(fields[5])
+        int(fields[6])
+    except ValueError:
+        return False
+    return fields[7].startswith("(")
+
+
+def _is_seq_line(fields):
+    # "  query  begin  SEQ  end" or "C repeat#class  begin  SEQ  end"
+    return len(fields) >= 4 and fields[-1].isdigit() and fields[-3].isdigit()
+
+
+MARKUP_CHARS = set("iv-?")
+
+
+def _is_markup_line(fields):
+    # The line between query and consensus: "i" transition, "v"
+    # transversion, "-" gap, "?" ambiguous; blank for an identical block.
+    return all(set(tok) <= MARKUP_CHARS for tok in fields)
+
+
+def _acgt_count(seq):
+    return sum(seq.count(c) for c in "ACGTacgt")
+
+
+def _well_characterized(query_seq, subject_seq):
+    """Columns where both sides are A/C/G/T. str.count only, so a
+    multi-Gb .align stays fast; a column non-ACGT on both sides (N against
+    a gap) is subtracted twice, which is rare enough not to matter."""
+    return len(query_seq) - (len(query_seq) - _acgt_count(query_seq)) - (len(subject_seq) - _acgt_count(subject_seq))
+
+
+def parse_align_file(path):
+    """Yield (contig, begin, end, score, class_family, kimura_pct_or_None)
+    for every alignment in a RepeatMasker .align file (-a output)."""
+    try:
+        fh = open(path)
     except FileNotFoundError:
-        print(f"[summarize_rm] WARNING: no divsum file at {path}, skipping landscape", file=sys.stderr)
-        return rows
+        print(f"[summarize_rm] WARNING: no .align file at {path}, skipping landscape", file=sys.stderr)
+        return
+    header = None
+    pending_query = None
+    ts = tv = length = 0
+    missing_class_warned = False
 
-    start = None
-    for i, line in enumerate(lines):
-        if "Coverage for each repeat class and divergence" in line:
-            start = i + 1
-            break
-    if start is None:
-        print(f"[summarize_rm] WARNING: no Kimura coverage table found in {path}", file=sys.stderr)
-        return rows
+    def finish():
+        contig, begin, end, score, class_family = header
+        return contig, begin, end, score, class_family, kimura_2p(ts, tv, length)
 
-    header_line = lines[start].strip()
-    if not header_line:
-        start += 1
-        header_line = lines[start].strip() if start < len(lines) else ""
-    headers = header_line.split()
-    if headers and headers[0].lower() in ("div", "divergence"):
-        headers = headers[1:]
-    bucket_by_col = [collapse_class(h) for h in headers]
+    with fh:
+        for line in fh:
+            fields = line.split()
+            if not fields:
+                continue
+            if _is_align_header(fields):
+                if header is not None:
+                    yield finish()
+                class_family = None
+                for tok in fields[8:]:
+                    if "#" in tok:
+                        class_family = tok.split("#", 1)[1]
+                        break
+                if class_family is None:
+                    if not missing_class_warned:
+                        missing_class_warned = True
+                        print(
+                            f"[summarize_rm] WARNING: .align header without a repeat#class "
+                            f"token, counted as Unknown: {line.strip()}",
+                            file=sys.stderr,
+                        )
+                    class_family = "Unknown"
+                begin, end = int(fields[5]), int(fields[6])
+                if begin > end:
+                    begin, end = end, begin
+                header = (fields[4], begin, end, int(fields[0]), class_family)
+                pending_query = None
+                ts = tv = length = 0
+                continue
+            if header is None:
+                continue
+            if _is_seq_line(fields):
+                if pending_query is None:
+                    pending_query = fields[-2]
+                else:
+                    length += _well_characterized(pending_query, fields[-2])
+                    pending_query = None
+            elif pending_query is not None and _is_markup_line(fields):
+                markup = "".join(fields)
+                ts += markup.count("i")
+                tv += markup.count("v")
+    if header is not None:
+        yield finish()
 
-    for line in lines[start + 1 :]:
-        line = line.strip()
-        if not line:
-            continue
-        fields = line.split()
-        try:
-            kimura_bin = int(float(fields[0]))
-        except ValueError:
-            continue
-        if kimura_bin > landscape_max_div:
-            continue
-        values = fields[1:]
-        for col_idx, bucket in enumerate(bucket_by_col):
-            if col_idx >= len(values):
+
+def resolve_landscape(alignments, landscape_max_div):
+    """alignments: iterable of (contig, begin, end, score, class_family,
+    kimura). Assigns every covered base to the highest-scoring alignment
+    covering it (ties: earliest in file), then sums bp per (class, Kimura
+    bin). Returns ({(class, bin): bp}, {class: resolved_bp_all_bins})."""
+    by_contig = {}
+    for idx, (contig, begin, end, score, class_family, kimura) in enumerate(alignments):
+        by_contig.setdefault(contig, []).append((begin, end, score, idx, collapse_class(class_family), kimura))
+
+    landscape = {}
+    resolved_by_class = {}
+    for alns in by_contig.values():
+        # Sweep over elementary segments: at each boundary, add alignments
+        # that start there; the top of a max-heap on score (lazily dropping
+        # alignments that have ended) owns the segment up to the next boundary.
+        alns.sort()
+        boundaries = sorted({a[0] for a in alns} | {a[1] + 1 for a in alns})
+        heap = []
+        next_aln = 0
+        for seg_start, seg_next in zip(boundaries, boundaries[1:]):
+            while next_aln < len(alns) and alns[next_aln][0] <= seg_start:
+                begin, end, score, idx, cls, kimura = alns[next_aln]
+                heapq.heappush(heap, (-score, idx, end, cls, kimura))
+                next_aln += 1
+            while heap and heap[0][2] < seg_start:
+                heapq.heappop(heap)
+            if not heap:
                 continue
-            try:
-                bp = int(float(values[col_idx]))
-            except ValueError:
+            _neg_score, _idx, _end, cls, kimura = heap[0]
+            seg_bp = seg_next - seg_start
+            resolved_by_class[cls] = resolved_by_class.get(cls, 0) + seg_bp
+            if cls in NO_LANDSCAPE_CLASSES or kimura is None:
                 continue
-            if bp == 0:
+            kimura_bin = int(kimura)
+            if kimura_bin > landscape_max_div:
                 continue
-            rows.append((kimura_bin, bucket, bp))
-    return rows
+            key = (cls, kimura_bin)
+            landscape[key] = landscape.get(key, 0) + seg_bp
+    return landscape, resolved_by_class
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out-file", required=True, help="RepeatMasker .out")
     ap.add_argument("--tbl-file", required=True, help="RepeatMasker .tbl")
-    ap.add_argument("--divsum-file", required=True)
+    ap.add_argument("--align-file", required=True, help="RepeatMasker .align (-a)")
     ap.add_argument("--assembly-stats", required=True)
     ap.add_argument("--arm", required=True)
     ap.add_argument("--species", required=True)
@@ -231,11 +353,24 @@ def main():
             pct_non_n = 100.0 * bp / non_n_bp if non_n_bp else 0.0
             fh.write(f"{args.arm}\t{args.species}\t{args.tissue}\t{cf}\t{bp}\t{pct_total:.4f}\t{pct_non_n:.4f}\n")
 
-    divsum_rows = parse_divsum(args.divsum_file, args.landscape_max_div)
+    del hits
+    landscape, resolved_by_class = resolve_landscape(
+        parse_align_file(args.align_file), args.landscape_max_div
+    )
+    for cls, resolved_bp in sorted(resolved_by_class.items()):
+        out_bp = class_bp.get(cls, 0)
+        if out_bp and abs(resolved_bp - out_bp) / out_bp > 0.05:
+            print(
+                f"[summarize_rm] WARNING: {args.arm}/{args.species} {cls}: .align-resolved bp "
+                f"({resolved_bp}) differs from .out non-overlapping bp ({out_bp}) by "
+                f"{abs(resolved_bp - out_bp) / out_bp:.1%}",
+                file=sys.stderr,
+            )
     with open(args.divergence_out, "w") as fh:
-        fh.write("arm\tspecies\tclass\tkimura_bin\tbp\n")
-        for kimura_bin, bucket, bp in divsum_rows:
-            fh.write(f"{args.arm}\t{args.species}\t{bucket}\t{kimura_bin}\t{bp}\n")
+        fh.write("arm\tspecies\tclass\tkimura_bin\tbp\tpct_non_n\n")
+        for (cls, kimura_bin), bp in sorted(landscape.items()):
+            pct_non_n = 100.0 * bp / non_n_bp if non_n_bp else 0.0
+            fh.write(f"{args.arm}\t{args.species}\t{cls}\t{kimura_bin}\t{bp}\t{pct_non_n:.6f}\n")
 
 
 if __name__ == "__main__":

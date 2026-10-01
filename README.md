@@ -426,6 +426,25 @@ precedent in the sibling repo (it never needed to merge that file type) —
 verify it produces valid `calcDivergenceFromAlign.pl` input during the
 wiring test before trusting it for the full run.
 
+### Divergence landscape
+
+`{outdir}/summary/divergence_landscape.tsv` (and its plot) is **not**
+RepeatMasker's `.divsum`. `calcDivergenceFromAlign.pl` sums every
+alignment in `.align`, which keeps overlapping alignments that `.out`
+resolves. Across tandem arrays, adjacent monomers' alignments overlap, so
+the `.divsum` can count the same bases two or more times (on the first
+*M. limosa* run, the Unknown class summed to about 2× its `.out` bp).
+`summarize_rm.py` instead computes a Kimura distance per alignment from its
+transitions and transversions (no CpG adjustment, same as `-noCpGMod`) and
+gives each genome base to the highest-scoring alignment covering it. Each
+base counts once, so a class's landscape sums to about its bp in
+`class_composition.tsv`; the summarize log warns past a 5% difference.
+Landscape bins are 1% wide; `pct_non_n` is bp / non-N assembly length.
+Simple_repeat and Low_complexity take part in the overlap resolution but are
+left out of the landscape, because divergence from a consensus means nothing
+for them. RepeatMasker's own `.divsum` and landscape `.html` are still
+written under `{outdir}/{arm}/{species}/divergence/` for reference.
+
 `repeatmasker.scatter_count` (default 10) and the `repeatmasker` resource
 block are **per chunk now**, not per whole genome — untuned placeholders,
 adjust both from real per-chunk runtimes observed in the wiring test.

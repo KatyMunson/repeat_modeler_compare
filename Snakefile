@@ -206,6 +206,11 @@ rule all:
         f"{OUTDIR}/summary/class_composition.tsv",
         f"{OUTDIR}/summary/family_composition.tsv",
         f"{OUTDIR}/summary/divergence_landscape.tsv",
+        expand(
+            f"{OUTDIR}/{{arm}}/{{species}}/divergence/{{species}}.landscape.html",
+            arm=ARMS,
+            species=SPECIES_IDS,
+        ),
         f"{OUTDIR}/summary/arm_concordance.tsv",
         f"{OUTDIR}/summary/assembly_covariates.tsv",
         f"{OUTDIR}/summary/discovery_round_saturation.tsv",
@@ -1246,6 +1251,12 @@ rule gather_repeatmasker:
 
 # -----------------------------------------------------------------------------
 # 6.9 divergence
+#
+# RepeatMasker's stock .divsum / landscape .html, kept for reference only.
+# calcDivergenceFromAlign.pl sums every alignment in .align, including the
+# overlapping ones .out resolves (tandem arrays especially), so its bp can
+# exceed the genome. summary/divergence_landscape.tsv and the plot come from
+# summarize_rm.py's overlap-resolved landscape instead.
 # -----------------------------------------------------------------------------
 rule divergence:
     input:
@@ -1296,7 +1307,7 @@ rule summarize:
     input:
         out_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.out",
         tbl_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.tbl",
-        divsum=f"{OUTDIR}/{{arm}}/{{species}}/divergence/{{species}}.divsum",
+        align_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.align",
         assembly_stats=f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv",
     output:
         class_chunk=f"{OUTDIR}/{{arm}}/{{species}}/summary/class_composition.tsv",
@@ -1315,7 +1326,7 @@ rule summarize:
     shell:
         "python3 workflow/scripts/summarize_rm.py "
         "--out-file {input.out_file} --tbl-file {input.tbl_file} "
-        "--divsum-file {input.divsum} --assembly-stats {input.assembly_stats} "
+        "--align-file {input.align_file} --assembly-stats {input.assembly_stats} "
         "--arm {wildcards.arm} --species {wildcards.species} --tissue {params.tissue} "
         "--landscape-max-div {params.landscape_max_div} "
         "--class-out {output.class_chunk} --family-out {output.family_chunk} "

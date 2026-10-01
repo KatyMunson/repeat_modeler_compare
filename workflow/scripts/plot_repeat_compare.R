@@ -7,6 +7,9 @@
 # Usage: Rscript plot_repeat_compare.R <class_composition.tsv> \
 #          <divergence_landscape.tsv> <arm_concordance.tsv> \
 #          <assembly_covariates.tsv> <out_dir>
+#
+# Pass NONE for <arm_concordance.tsv> to skip plot 3 (shared-arm-only
+# report, where there is no own arm to compare against).
 
 suppressMessages({
   library(data.table)
@@ -26,7 +29,7 @@ dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 # (whose arithmetic silently breaks when bit64 isn't installed).
 class_composition <- fread(class_composition_path, integer64 = "double")
 divergence_landscape <- fread(divergence_landscape_path, integer64 = "double")
-arm_concordance <- fread(arm_concordance_path)
+has_concordance <- arm_concordance_path != "NONE"
 assembly_covariates <- fread(assembly_covariates_path, integer64 = "double")
 
 # ---------------------------------------------------------------------------
@@ -136,30 +139,32 @@ ggsave(
 # ---------------------------------------------------------------------------
 # 3. Shared vs own concordance dot plot.
 # ---------------------------------------------------------------------------
-arm_concordance <- order_classes(arm_concordance)
+if (has_concordance) {
+  arm_concordance <- order_classes(fread(arm_concordance_path, integer64 = "double"))
 
-p3 <- ggplot(arm_concordance, aes(x = pct_non_n_own, y = pct_non_n_shared, color = class)) +
-  geom_point(size = 2) +
-  class_colour() +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
-  facet_wrap(~species) +
-  labs(
-    title = "Shared-library vs own-library concordance",
-    x = "% non-N (own-library arm)",
-    y = "% non-N (shared-library arm)"
-  ) +
-  theme_minimal()
+  p3 <- ggplot(arm_concordance, aes(x = pct_non_n_own, y = pct_non_n_shared, color = class)) +
+    geom_point(size = 2) +
+    class_colour() +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
+    facet_wrap(~species) +
+    labs(
+      title = "Shared-library vs own-library concordance",
+      x = "% non-N (own-library arm)",
+      y = "% non-N (shared-library arm)"
+    ) +
+    theme_minimal()
 
-ggsave(
-  file.path(out_dir, "arm_concordance.png"),
-  plot = p3,
-  width = 8,
-  height = 6,
-  device = grDevices::png
-)
+  ggsave(
+    file.path(out_dir, "arm_concordance.png"),
+    plot = p3,
+    width = 8,
+    height = 6,
+    device = grDevices::png
+  )
+}
 
 if (interactive()) {
   print(p1)
   print(p2)
-  print(p3)
+  if (has_concordance) print(p3)
 }

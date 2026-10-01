@@ -92,11 +92,11 @@ covariate_subtitle <- paste(
     format(assembly_covariates$contig_count, big.mark = ","),
     assembly_covariates$non_n_bp / 1e9
   ),
-  collapse = "  |  "
+  collapse = "\n"
 )
 
 p1 <- ggplot(shared_composition, aes(x = species, y = pct_non_n, fill = class)) +
-  geom_col(position = "stack", colour = "white", linewidth = 0.4, width = 0.6) +
+  geom_col(position = "stack", width = 0.6) +
   class_fill() +
   labs(
     title = "Repeat class composition (shared-library arm)",
@@ -124,7 +124,7 @@ shared_landscape <- divergence_landscape[arm == "shared",
 shared_landscape <- order_classes(shared_landscape)
 
 p2 <- ggplot(shared_landscape, aes(x = kimura_bin, y = pct_non_n, fill = class)) +
-  geom_col(position = "stack", width = 1, colour = "white", linewidth = 0.1) +
+  geom_col(position = "stack", width = 1) +
   facet_wrap(~species) +
   class_fill() +
   labs(

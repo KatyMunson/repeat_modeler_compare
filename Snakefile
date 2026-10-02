@@ -1482,6 +1482,10 @@ rule tesorter_library:
         {ENV_PATH_GUARD}
         mkdir -p {params.workdir} && cd {params.workdir}
         for db in rexdb-metazoa gydb; do
+            # TEsorter silently reuses a non-empty <pre>.domtbl from an earlier
+            # run on a different FASTA (stale hits, or a KeyError on names no
+            # longer present), so start each db clean.
+            rm -rf library.$db.* tmp_$db
             TEsorter {params.fa_abs} -db $db -st nucl -p {threads} -cov {params.cov} -eval {params.evalue} \
                 -dp2 -nolib -pre library.$db -tmp tmp_$db
             [ -f library.$db.cls.tsv ] || {{ echo "[ERROR] TEsorter wrote no library.$db.cls.tsv"; ls -l; exit 1; }}
@@ -1544,6 +1548,7 @@ rule host_proteins_tesorter:
             : > annotation.rexdb-metazoa.cls.tsv; : > annotation.rexdb-metazoa.dom.tsv
             exit 0
         fi
+        rm -rf annotation.rexdb-metazoa.* tmp_prot  # no stale domtbl reuse (see tesorter_library)
         TEsorter {params.annot_abs} -db rexdb-metazoa -st prot -p {threads} -cov {params.cov} \
             -eval {params.evalue} -dp2 -nolib -pre annotation.rexdb-metazoa -tmp tmp_prot
         touch annotation.rexdb-metazoa.cls.tsv annotation.rexdb-metazoa.dom.tsv

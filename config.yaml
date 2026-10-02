@@ -133,6 +133,9 @@ summary:
   # Left-to-right species order in the plots (species_id). Empty = manifest
   # order. [Mlim, Esto] matches the collaborator's figure.
   plot_species_order: [Mlim, Esto]
+  # Optional: TSV of families that are pieces of one element (group, family
+  # columns; family_groups.py members). Adds element_groups.tsv. "" = off.
+  element_groups: ""
 
 resources:
   prep_genome:      {threads: 1,  mem: 8,  hrs: 4}

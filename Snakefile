@@ -186,6 +186,9 @@ _order = (config.get("summary", {}) or {}).get("plot_species_order") or []
 if isinstance(_order, str):
     _order = [x for x in re.split(r"[,\s\[\]]+", _order) if x]
 PLOT_SPECIES_ORDER = ",".join(list(_order) + [s for s in SPECIES_IDS if s not in _order])
+# Optional groups TSV (family_groups.py members): families that are pieces
+# of one element, summed into {summary}/element_groups.tsv.
+ELEMENT_GROUPS = config["summary"].get("element_groups", "") or ""
 
 CLASSIFY = config.get("classify", {}) or {}
 CLASSIFY_ON = _as_bool(CLASSIFY.get("enabled", False))
@@ -239,6 +242,7 @@ rule all:
         f"{OUTDIR}/summary/family_tandem.tsv",
         f"{OUTDIR}/summary/class_tandem.tsv",
         f"{OUTDIR}/summary/library_source.tsv",
+        [f"{OUTDIR}/summary/element_groups.tsv"] if ELEMENT_GROUPS else [],
         [f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
         [f"{OUTDIR}/summary/class_verification.tsv", f"{OUTDIR}/summary/class_disagreements.tsv"] if CLASSIFY_ON else [],
         expand(
@@ -311,6 +315,7 @@ rule report_shared_only:
         f"{OUTDIR}/summary_shared_only/family_tandem.tsv",
         f"{OUTDIR}/summary_shared_only/class_tandem.tsv",
         f"{OUTDIR}/summary_shared_only/library_source.tsv",
+        [f"{OUTDIR}/summary_shared_only/element_groups.tsv"] if ELEMENT_GROUPS else [],
         [f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
         [f"{OUTDIR}/summary_shared_only/class_verification.tsv",
          f"{OUTDIR}/summary_shared_only/class_disagreements.tsv"] if CLASSIFY_ON else [],
@@ -1759,6 +1764,33 @@ rule library_source:
         "python3 {SCRIPTS}/library_source.py --family-tandem {input.family_tandem} "
         "--assembly-covariates {input.assembly_covariates} --species-ids {params.species} "
         "--sep '{params.sep}' {params.matches_arg} --out {output.tsv} > {log} 2>&1"
+
+
+rule element_groups:
+    # Sum the bp of library families that are pieces of one element
+    # (summary.element_groups, from family_groups.py members). README
+    # "Element groups".
+    input:
+        groups=ELEMENT_GROUPS or [],
+        family_tandem=f"{OUTDIR}/{{sumdir}}/family_tandem.tsv",
+        assembly_covariates=f"{OUTDIR}/{{sumdir}}/assembly_covariates.tsv",
+    output:
+        tsv=f"{OUTDIR}/{{sumdir}}/element_groups.tsv",
+    wildcard_constraints:
+        sumdir="summary|summary_shared_only",
+    threads: 1
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["classify_light"]["mem"] * attempt,
+        hrs=config["resources"]["classify_light"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/summary/element_groups_{{sumdir}}.log",
+    params:
+        species=" ".join(SPECIES_IDS),
+    shell:
+        "python3 {SCRIPTS}/family_groups.py report --groups {input.groups} "
+        "--family-tandem {input.family_tandem} --assembly-covariates {input.assembly_covariates} "
+        "--species-ids {params.species} --out {output.tsv} > {log} 2>&1"
 
 
 rule verify_classes:

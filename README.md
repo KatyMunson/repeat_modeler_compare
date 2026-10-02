@@ -428,6 +428,34 @@ Caveats:
   in both species (old, partial matches, ~24% divergence), while about 11% of
   each genome was masked by the *other* species' de novo families.
 
+## Element groups (`element_groups.tsv`, optional)
+
+RepeatModeler often splits one element across several library families,
+e.g. an LTR retrotransposon whose internal region is one `rnd` family and
+whose LTRs are several `ltr` families. To report the element's whole
+footprint:
+
+1. Build a curated full-length consensus (e.g. extend the family with
+   `workflow/scripts/family_profile.py --flank 5000`, align the copies,
+   take a majority consensus).
+2. `blastn -query element.fa -db <library> -outfmt "6 qseqid sseqid pident length qstart qend sstart send qlen slen evalue bitscore" > element_vs_lib.tsv`
+3. `python3 workflow/scripts/family_groups.py members --blast element_vs_lib.tsv --group <name> --out groups.tsv`
+   lists library families with >= 80% identity over >= 50% of their own
+   length. Review the list; concatenate several elements' outputs into one
+   file.
+4. Set `summary.element_groups: groups.tsv` and rerun the report.
+
+`element_groups.tsv` has one `group` row per species and element (members
+present, `.out` hits, bp, % of masked, % non-N) and one `member` row per
+family. Each base still counts for the family that won it, so a group is the
+sum of its members' `owned_bp`, and nothing is remasked.
+
+Insertion ages of an LTR element come from the LTR-pipeline candidates:
+`workflow/scripts/ltr_ages.py` takes the pipeline's `{species}/ltr/rawLTR.scn`,
+keeps candidates whose internal region is covered by the element's
+families, and reports the 5'/3' LTR similarity of each intact copy (with
+`--rate`, ages via the Jukes-Cantor distance, T = d / 2r).
+
 ## Satellite analysis (removed)
 
 A satellite arm existed briefly. It was a satellite-only RepeatMasker

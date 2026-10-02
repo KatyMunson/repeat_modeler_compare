@@ -390,9 +390,16 @@ bp follow the same rule as `class_composition.tsv`: every base counts once,
 for its best hit, so the `total` row matches the composition total.
 
 Two caveats:
-- The table counts the family that *won* each base after the shared library
-  was clustered with cd-hit, so a Dfam entry merged into a de novo family
-  counts as de novo. `dfam_overlap.tsv` gives the stricter view.
+- Each base counts toward the family that *won* it at masking time. The Dfam
+  export is appended to the library after the de novo families are
+  clustered, so a Dfam entry and a near-identical de novo family both stay
+  in the library and compete base by base. Where the de novo consensus fits
+  better, the bp count as de novo even if Dfam has the same element.
+  `dfam_overlap.tsv` lists de novo families that match known Dfam families.
+- A family shared by both species is one cd-hit cluster, kept under its
+  longest member's name, so `denovo:<other species>` includes shared
+  families whose representative came from the other species
+  (`library_membership.tsv` has the clusters).
 - On the first *E. stoutii* / *M. limosa* run, Dfam held under 1% of masked bp
   in both species (old, partial matches, ~24% divergence), while about 11% of
   each genome was masked by the *other* species' de novo families.

@@ -17,9 +17,13 @@ One row per species and source plus a `total` row per species:
   bp_weighted_median_div  median of the families' median .out divergence,
                           weighted by owned bp (how old the matches are)
 
-Counts follow the family that won each base after the shared library was
-clustered, so a Dfam entry merged into a de novo family counts as de novo
-(dfam_overlap.tsv has the stricter view). Stdlib only."""
+Counts follow the family that won each base at masking time. Dfam entries
+are appended after the de novo families are clustered (never merged into
+them), so where a de novo consensus fits better its bp count as de novo even
+if Dfam holds the same element (dfam_overlap.tsv lists such families). A
+family shared by both species is one cd-hit cluster named after its longest
+member, so denovo:<other> includes shared families whose representative came
+from the other species (library_membership.tsv). Stdlib only."""
 
 import argparse
 import sys

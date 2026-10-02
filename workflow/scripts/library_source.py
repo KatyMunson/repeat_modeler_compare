@@ -137,7 +137,7 @@ def main():
                     n_fam, n_hits, bp, divs = agg[(sp, src, match)]
                     pct_nn = 100.0 * bp / non_n[sp] if non_n.get(sp) else float("nan")
                     out.write(f"{sp}\t{src}\t{match}\t{n_fam}\t{n_hits}\t{bp}\t"
-                              f"{100.0 * bp / masked if masked else 0.0:.2f}\t"
+                              f"{100.0 * bp / masked if masked else 0.0:.4f}\t"
                               f"{pct_nn:.4f}\t{weighted_median(divs):.1f}\n")
             own = agg.get((sp, "own_denovo", "all"), agg.get((sp, "own_denovo", "."), [0, 0, 0]))[2]
             dfam = agg.get((sp, "dfam", "."), [0, 0, 0])[2]

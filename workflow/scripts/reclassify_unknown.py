@@ -22,12 +22,22 @@ Precedence (merge), first match wins:
   1. TEsorter call at order level or finer, REXdb and GyDB not disagreeing
      on order, and >= --min-domains domains           evidence = domain
   2. Rfam hit covering >= --min-rfam-cov of the consensus  evidence = rfam
-  3. DIAMOND host hit covering >= --min-host-cov       evidence = host_protein
+  3. DIAMOND host hit covering >= --min-host-cov, and the family has
+     <= --host-max-copies .out hits in every species     evidence = host_protein
   Disagreements (REXdb vs GyDB order; a domain call AND a host hit; a domain
   call AND an Rfam hit) leave the family Unknown with `conflict` recorded.
 A domain call beats Rfam and host hits only when they don't also qualify:
 both qualifying is a conflict, not a win, because a host gene or RNA
 carrying a TE domain (a domesticated TE, a TE-derived exon) is ambiguous.
+
+Host proteins come from genome annotations, which turn many TE open reading
+frames into "uncharacterized LOC" genes that carry no recognisable TE domain
+(so the keyword and TEsorter filters miss them). A family with hundreds of
+genomic copies matching such a protein is a TE, not a host gene: above
+--host-max-copies (needs --family-tandem for copy counts) the host hit is
+ignored for labelling, the family stays Unknown with
+note = host_annotated_te_orf, and verify reports the status of the same
+name instead of a host_protein disagreement.
 
 Only families that change are relabelled, but every Unknown family gets a row
 and diamond_best / rfam_best report the best hit even below the coverage cut
@@ -284,6 +294,14 @@ def domain_evidence(fam, rex, gydb, min_domains):
     return (max(cands, key=lambda c: c.count("/")) if cands else None), ""
 
 
+def multicopy_families(paths, max_copies):
+    """Families with more than max_copies .out hits in any species."""
+    if not paths:
+        return set()
+    return {fam for per_sp in read_family_tandem(paths).values()
+            for fam, (_bp, _t, n_hits) in per_sp.items() if n_hits > max_copies}
+
+
 def cmd_merge(args):
     cons_len = {}
     for header, seq in iter_fasta(args.consensi):
@@ -302,16 +320,20 @@ def cmd_merge(args):
     # Only qualifying hits can relabel or conflict; every hit is reported.
     host = {q: h for q, h in host_all.items() if h[2] >= args.min_host_cov}
     rfam = {q: r for q, r in rfam_all.items() if r[2] >= args.min_rfam_cov}
+    multicopy = multicopy_families(args.family_tandem, args.host_max_copies)
 
     counts = {}
     with open(args.out, "w") as out:
         out.write("family\told_class\tnew_class\tevidence\ttesorter_rexdb\ttesorter_gydb\t"
-                  "diamond_best\trfam_best\tconflict\n")
+                  "diamond_best\trfam_best\tconflict\tnote\n")
         for fam in families:
             domain_class, db_conflict = domain_evidence(fam, rex, gydb, args.min_domains)
             conflict = [db_conflict] if db_conflict else []
             rna = rfam.get(fam)
             hst = host.get(fam)
+            note = ""
+            if hst and fam in multicopy:
+                hst, note = None, "host_annotated_te_orf"
             if domain_class and hst:
                 conflict.append(f"domain {domain_class} and host protein {hst[0]}")
             if domain_class and rna:
@@ -325,15 +347,15 @@ def cmd_merge(args):
                     new_class, evidence = rna[0], "rfam"
                 elif hst:
                     new_class, evidence = "Other/host_gene", "host_protein"
-            counts[evidence or ("conflict" if conflict else "none")] = \
-                counts.get(evidence or ("conflict" if conflict else "none"), 0) + 1
+            key = evidence or ("conflict" if conflict else note or "none")
+            counts[key] = counts.get(key, 0) + 1
 
             def fmt(call):
                 return "|".join(str(x) for x in call) if call else ""
             out.write(f"{fam}\tUnknown\t{new_class}\t{evidence}\t{fmt(rex.get(fam))}\t"
                       f"{fmt(gydb.get(fam))}\t{host_all[fam][3] if fam in host_all else ''}\t"
                       f"{rfam_all[fam][1] if fam in rfam_all else ''}\t"
-                      f"{'; '.join(conflict)}\n")
+                      f"{'; '.join(conflict)}\t{note}\n")
     print(f"[reclassify_unknown] {len(families)} Unknown families: "
           + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())), file=sys.stderr)
 
@@ -369,12 +391,14 @@ def verify_status(rm_cls, dom, rna, host):
     return "no_evidence"
 
 
+# host_annotated_te_orf (a multi-copy family whose only evidence is a host
+# protein) is support for a TE, not a disagreement.
 DISAGREEMENT = {"disagree_order", "retroposon_vs_line", "rfam", "host_protein",
                 "rfam_other_rna", "domain_on_rna_label", "domain_conflict"}
 
 
 def read_family_tandem(paths):
-    """{species: {family: (owned_bp, tandem_family)}} from family_tandem.tsv."""
+    """{species: {family: (owned_bp, tandem_family, n_hits)}} from family_tandem.tsv."""
     out = {}
     for path in paths:
         with open(path) as fh:
@@ -383,7 +407,8 @@ def read_family_tandem(paths):
             for line in fh:
                 f = line.rstrip("\n").split("\t")
                 tf = f[idx["tandem_family"]] == "True" if "tandem_family" in idx else False
-                out.setdefault(f[idx["species"]], {})[f[idx["family"]]] = (int(f[idx["owned_bp"]]), tf)
+                out.setdefault(f[idx["species"]], {})[f[idx["family"]]] = (
+                    int(f[idx["owned_bp"]]), tf, int(f[idx["n_hits"]]))
     return out
 
 
@@ -402,15 +427,21 @@ def cmd_verify(args):
     rfam = {q: r for q, r in rfam_all.items() if r[2] >= args.min_rfam_cov}
     bp = read_family_tandem(args.family_tandem)
     species = sorted(bp)
+    multicopy = {fam for per_sp in bp.values() for fam, v in per_sp.items() if v[2] > args.host_max_copies}
 
     rows = []
     for fam, cls in sorted(rm_class.items()):
         if cls in ("Unknown", "") or fam not in cons_len:
             continue
         dom, db_conflict = domain_evidence(fam, rex, gydb, args.min_domains)
-        status = "domain_conflict" if db_conflict else verify_status(cls, dom, rfam.get(fam), host.get(fam))
-        owned = {sp: bp[sp].get(fam, (0, False))[0] for sp in species}
-        tandem = any(bp[sp].get(fam, (0, False))[1] for sp in species)
+        hst = host.get(fam)
+        if hst and fam in multicopy:
+            hst = None
+        status = "domain_conflict" if db_conflict else verify_status(cls, dom, rfam.get(fam), hst)
+        if status == "no_evidence" and fam in host and fam in multicopy:
+            status = "host_annotated_te_orf"
+        owned = {sp: bp[sp].get(fam, (0, False, 0))[0] for sp in species}
+        tandem = any(bp[sp].get(fam, (0, False, 0))[1] for sp in species)
         rows.append((fam, cls, dom or "", status, owned, tandem, db_conflict,
                      host_all[fam][3] if fam in host_all else "",
                      rfam_all[fam][1] if fam in rfam_all else ""))
@@ -489,6 +520,10 @@ def main():
     m.add_argument("--min-host-cov", type=float, default=0.3)
     m.add_argument("--max-evalue", type=float, default=1e-10)
     m.add_argument("--min-rfam-cov", type=float, default=0.5)
+    m.add_argument("--family-tandem", nargs="*", default=[],
+                   help="per-species family_tandem.tsv (n_hits) for --host-max-copies")
+    m.add_argument("--host-max-copies", type=int, default=50,
+                   help="host_protein only for families with <= this many .out hits in every species")
     m.add_argument("--out", required=True)
     v = sub.add_parser("verify")
     v.add_argument("--consensi", required=True)
@@ -502,6 +537,7 @@ def main():
     v.add_argument("--min-host-cov", type=float, default=0.3)
     v.add_argument("--max-evalue", type=float, default=1e-10)
     v.add_argument("--min-rfam-cov", type=float, default=0.5)
+    v.add_argument("--host-max-copies", type=int, default=50)
     v.add_argument("--out", required=True, help="class_verification.tsv")
     v.add_argument("--disagreements-out", required=True, help="class_disagreements.tsv")
     args = ap.parse_args()

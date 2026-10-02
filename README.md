@@ -281,8 +281,15 @@ Precedence (first match wins; only `Unknown` families change):
    mapped to RepeatMasker names (`LTR/Gypsy`, `DNA/hAT`, `DNA/CMC-EnSpm`, ...;
    unmapped superfamilies become `<order>/<TEsorter name>`).
 3. **rfam**: the hit covers at least `min_rfam_cov` of the consensus.
-4. **host_protein**: the best host protein covers at least `min_host_cov`,
-   giving `Other/host_gene`. These are excluded from TE classes and counted in Other.
+4. **host_protein**: the best host protein covers at least `min_host_cov`
+   and the family has at most `host_max_copies` (50) `.out` hits in every
+   species, giving `Other/host_gene`. These are excluded from TE classes and
+   counted in Other. Above that copy number the match is a TE open reading
+   frame that the genome annotation called a gene ("uncharacterized LOC...",
+   no TE domain, so the keyword and TEsorter filters miss it): the family
+   stays Unknown with `note = host_annotated_te_orf`. On the first
+   *E. stoutii* / *M. limosa* run all 65 host-protein calls had >= 100 copies
+   (median ~1,400).
 
 The family stays Unknown, with the reason in `conflict`, if:
 - REXdb and GyDB disagree on order, or
@@ -347,7 +354,8 @@ the shared-arm `family_tandem.tsv`).
 | `disagree_order` | the domains point to another order, e.g. a `SINE/Alu` with Gypsy domains |
 | `retroposon_vs_line` | a `Retroposon` label with LINE domains: may be an autonomous LINE, or a non-autonomous element carrying LINE fragments |
 | `domain_conflict` | REXdb and GyDB disagree on order |
-| `host_protein` | no domain, but the consensus matches a TE-free host protein: possible gene family or contamination |
+| `host_protein` | no domain, but the consensus matches a TE-free host protein and the family has <= `host_max_copies` hits: possible gene family or contamination |
+| `host_annotated_te_orf` | no domain, matches a host protein, but > `host_max_copies` hits: a TE ORF annotated as a gene. Counts as TE support, not a disagreement |
 | `rfam` / `agree_rfam` / `rfam_other_rna` | a structured-RNA hit on a non-RNA label / on a matching RNA label / on a different RNA label |
 | `domain_on_rna_label` | an RNA label with TE domains |
 | `no_evidence` | the screens are silent |

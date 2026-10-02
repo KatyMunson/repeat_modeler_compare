@@ -115,6 +115,9 @@ classify:
                         transposon, "rnase h", "endonuclease/reverse", "piggybac", "line-1", "orf2p"]
   diamond_max_evalue: 1.0e-10
   min_host_cov: 0.3            # fraction of the consensus the best host protein's HSPs cover
+  host_max_copies: 50          # a host-protein match labels a family Other/host_gene only if it has
+                               # <= this many .out hits in every species; above it the "gene" is a TE
+                               # ORF the annotation called a gene (note/status host_annotated_te_orf)
   # Structured RNA (Infernal cmscan). Point at the download as-is; the
   # pipeline copies/gunzips it into {outdir}/classify/rfam/ and cmpress'es it.
   rfam_cm: ""                  # e.g. /path/Rfam.cm.gz (ftp.ebi.ac.uk/pub/databases/Rfam/CURRENT/)

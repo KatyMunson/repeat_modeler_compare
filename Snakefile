@@ -1683,6 +1683,8 @@ rule reclassify_unknown:
         gydb=f"{OUTDIR}/classify/tesorter/library.gydb.cls.tsv",
         diamond=[f"{OUTDIR}/classify/diamond_host.tsv"] if HOST_SCREEN_ON else [],
         rfam=[f"{OUTDIR}/classify/rfam.tblout"] if RFAM_ON else [],
+        # copy counts for classify.host_max_copies (TE ORFs annotated as genes)
+        family_tandem=expand(f"{OUTDIR}/shared/{{species}}/summary/family_tandem.tsv", species=SPECIES_IDS),
     output:
         tsv=f"{OUTDIR}/classify/unknown_reclassification.tsv",
     threads: config["resources"]["classify_light"]["threads"]
@@ -1699,12 +1701,14 @@ rule reclassify_unknown:
         min_host_cov=CLASSIFY.get("min_host_cov", 0.3),
         max_evalue=CLASSIFY.get("diamond_max_evalue", 1e-10),
         min_rfam_cov=CLASSIFY.get("min_rfam_cov", 0.5),
+        host_max_copies=CLASSIFY.get("host_max_copies", 50),
     shell:
         "python3 {SCRIPTS}/reclassify_unknown.py merge --consensi {input.fa} --classes {input.classes} "
         "--tesorter-rexdb {input.rexdb} --tesorter-gydb {input.gydb} "
         "{params.diamond_arg} {params.rfam_arg} --min-domains {params.min_domains} "
         "--min-host-cov {params.min_host_cov} --max-evalue {params.max_evalue} "
-        "--min-rfam-cov {params.min_rfam_cov} --out {output.tsv} > {log} 2>&1"
+        "--min-rfam-cov {params.min_rfam_cov} --family-tandem {input.family_tandem} "
+        "--host-max-copies {params.host_max_copies} --out {output.tsv} > {log} 2>&1"
 
 
 DFAM_MATCHES = f"{OUTDIR}/library/dfam_overlap/dfam_matches.tsv"
@@ -1788,12 +1792,14 @@ rule verify_classes:
         min_host_cov=CLASSIFY.get("min_host_cov", 0.3),
         max_evalue=CLASSIFY.get("diamond_max_evalue", 1e-10),
         min_rfam_cov=CLASSIFY.get("min_rfam_cov", 0.5),
+        host_max_copies=CLASSIFY.get("host_max_copies", 50),
     shell:
         "python3 {SCRIPTS}/reclassify_unknown.py verify --consensi {input.fa} --classes {input.classes} "
         "--tesorter-rexdb {input.rexdb} --tesorter-gydb {input.gydb} {params.diamond_arg} {params.rfam_arg} "
         "--family-tandem {input.family_tandem} --min-domains {params.min_domains} "
         "--min-host-cov {params.min_host_cov} --max-evalue {params.max_evalue} "
-        "--min-rfam-cov {params.min_rfam_cov} --out {output.verification} "
+        "--min-rfam-cov {params.min_rfam_cov} --host-max-copies {params.host_max_copies} "
+        "--out {output.verification} "
         "--disagreements-out {output.disagreements} > {log} 2>&1"
 
 

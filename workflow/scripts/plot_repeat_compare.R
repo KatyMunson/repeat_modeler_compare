@@ -8,6 +8,10 @@
 #          <divergence_landscape.tsv> <arm_concordance.tsv> \
 #          <assembly_covariates.tsv> <out_dir>
 #
+# Optional 6th argument: comma-separated species IDs giving the left-to-right
+# order of species in every plot (e.g. Mlim,Esto); unlisted species follow.
+# Default: the order species appear in the tables.
+#
 # Pass NONE for <arm_concordance.tsv> to skip plot 3 (shared-arm-only
 # report, where there is no own arm to compare against).
 
@@ -22,6 +26,7 @@ divergence_landscape_path <- args[2]
 arm_concordance_path <- args[3]
 assembly_covariates_path <- args[4]
 out_dir <- args[5]
+species_order_arg <- if (length(args) >= 6) args[6] else ""
 
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
@@ -37,6 +42,17 @@ if (!"pct_non_n" %in% names(divergence_landscape)) {
   )
 }
 has_concordance <- arm_concordance_path != "NONE"
+
+# Left-to-right species order shared by all plots (6th argument).
+species_levels <- function(present) {
+  wanted <- trimws(strsplit(species_order_arg, ",", fixed = TRUE)[[1]])
+  wanted <- wanted[wanted != ""]
+  c(intersect(wanted, present), setdiff(unique(present), wanted))
+}
+order_species <- function(dt) {
+  dt[, species := factor(species, levels = species_levels(as.character(species)))]
+  dt
+}
 assembly_covariates <- fread(assembly_covariates_path, integer64 = "double")
 
 # ---------------------------------------------------------------------------
@@ -87,8 +103,10 @@ class_colour <- function() scale_colour_manual(values = class_colors, labels = l
 # ---------------------------------------------------------------------------
 # 1. Class composition, primary "shared" arm, species side by side.
 # ---------------------------------------------------------------------------
-shared_composition <- order_classes(class_composition[arm == "shared"])
+shared_composition <- order_species(order_classes(class_composition[arm == "shared"]))
 
+assembly_covariates <- assembly_covariates[
+  order(match(species_id, species_levels(as.character(species_id))))]
 covariate_subtitle <- paste(
   sprintf(
     "%s (%s): N50=%s, %s contigs, %.2f Gb non-N",
@@ -128,7 +146,7 @@ ggsave(
 # ---------------------------------------------------------------------------
 shared_landscape <- divergence_landscape[arm == "shared",
   .(mbp = sum(bp) / 1e6), by = .(species, class, kimura_bin)]
-shared_landscape <- order_classes(shared_landscape)
+shared_landscape <- order_species(order_classes(shared_landscape))
 
 p2 <- ggplot(shared_landscape, aes(x = kimura_bin, y = mbp, fill = class)) +
   geom_col(position = "stack", width = 1) +
@@ -154,7 +172,7 @@ ggsave(
 # 3. Shared vs own concordance dot plot.
 # ---------------------------------------------------------------------------
 if (has_concordance) {
-  arm_concordance <- order_classes(fread(arm_concordance_path, integer64 = "double"))
+  arm_concordance <- order_species(order_classes(fread(arm_concordance_path, integer64 = "double")))
 
   p3 <- ggplot(arm_concordance, aes(x = pct_non_n_own, y = pct_non_n_shared, color = class)) +
     geom_point(size = 2) +

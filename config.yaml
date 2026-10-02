@@ -124,6 +124,9 @@ classify:
 summary:
   denominator: "non_n"         # non_n | total ; both are always written, this picks the headline
   landscape_max_div: 50
+  # Left-to-right species order in the plots (species_id). Empty = manifest
+  # order. [Mlim, Esto] matches the collaborator's figure.
+  plot_species_order: [Mlim, Esto]
 
 resources:
   prep_genome:      {threads: 1,  mem: 8,  hrs: 4}

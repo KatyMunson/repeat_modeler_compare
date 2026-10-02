@@ -352,6 +352,38 @@ Outputs:
   tandem families with a TE label. Sorted by bp, with each screen's best
   hit. Review this list by hand, starting from the top.
 
+## Library sources (`library_source.tsv`)
+
+`{summary}/library_source.tsv` splits each species' masked bp by where the
+family holding it came from:
+
+| source | meaning |
+|---|---|
+| `own_denovo` | families discovered in this species (`<species_id><sep>...`) |
+| `denovo:<species>` | families discovered in the other species |
+| `dfam` | the Dfam export (`library.include_dfam` / `dfam_taxon`) |
+| `rm_builtin` | RepeatMasker's own simple-repeat / low-complexity screen |
+| `total` | all of the above |
+
+Columns:
+- `n_families`: families holding any bp
+- `n_hits`: `.out` hit lines (copies and fragments), the N for a methods table
+- `owned_bp`
+- `pct_of_masked`
+- `pct_non_n`: bp over the non-N assembly length
+- `bp_weighted_median_div`: how old each source's matches are
+
+bp follow the same rule as `class_composition.tsv`: every base counts once,
+for its best hit, so the `total` row matches the composition total.
+
+Two caveats:
+- The table counts the family that *won* each base after the shared library
+  was clustered with cd-hit, so a Dfam entry merged into a de novo family
+  counts as de novo. `dfam_overlap.tsv` gives the stricter view.
+- On the first *E. stoutii* / *M. limosa* run, Dfam held under 1% of masked bp
+  in both species (old, partial matches, ~24% divergence), while about 11% of
+  each genome was masked by the *other* species' de novo families.
+
 ## Satellite analysis (removed)
 
 A satellite arm existed briefly. It was a satellite-only RepeatMasker

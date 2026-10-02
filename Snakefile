@@ -180,6 +180,13 @@ def _as_bool(value):
     return bool(value)
 
 
+# Left-to-right species order in the plots (summary.plot_species_order);
+# empty = manifest order. Passed to plot_repeat_compare.R as one argument.
+_order = (config.get("summary", {}) or {}).get("plot_species_order") or []
+if isinstance(_order, str):
+    _order = [x for x in re.split(r"[,\s\[\]]+", _order) if x]
+PLOT_SPECIES_ORDER = ",".join(list(_order) + [s for s in SPECIES_IDS if s not in _order])
+
 CLASSIFY = config.get("classify", {}) or {}
 CLASSIFY_ON = _as_bool(CLASSIFY.get("enabled", False))
 ANNOT_PROTEINS = [os.path.abspath(p) for p in (CLASSIFY.get("annotation_proteins") or [])]
@@ -231,6 +238,7 @@ rule all:
         f"{OUTDIR}/summary/divergence_landscape.tsv",
         f"{OUTDIR}/summary/family_tandem.tsv",
         f"{OUTDIR}/summary/class_tandem.tsv",
+        f"{OUTDIR}/summary/library_source.tsv",
         [f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
         [f"{OUTDIR}/summary/class_verification.tsv", f"{OUTDIR}/summary/class_disagreements.tsv"] if CLASSIFY_ON else [],
         expand(
@@ -302,6 +310,7 @@ rule report_shared_only:
         f"{OUTDIR}/summary_shared_only/assembly_covariates.tsv",
         f"{OUTDIR}/summary_shared_only/family_tandem.tsv",
         f"{OUTDIR}/summary_shared_only/class_tandem.tsv",
+        f"{OUTDIR}/summary_shared_only/library_source.tsv",
         [f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
         [f"{OUTDIR}/summary_shared_only/class_verification.tsv",
          f"{OUTDIR}/summary_shared_only/class_disagreements.tsv"] if CLASSIFY_ON else [],
@@ -1653,6 +1662,33 @@ rule reclassify_unknown:
         "--min-rfam-cov {params.min_rfam_cov} --out {output.tsv} > {log} 2>&1"
 
 
+rule library_source:
+    # How much of each species' masked bp comes from its own de novo
+    # families, the other species' de novo families, Dfam, and RepeatMasker's
+    # built-in simple-repeat screen (README "Library sources").
+    input:
+        family_tandem=f"{OUTDIR}/{{sumdir}}/family_tandem.tsv",
+        assembly_covariates=f"{OUTDIR}/{{sumdir}}/assembly_covariates.tsv",
+    output:
+        tsv=f"{OUTDIR}/{{sumdir}}/library_source.tsv",
+    wildcard_constraints:
+        sumdir="summary|summary_shared_only",
+    threads: config["resources"]["classify_light"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["classify_light"]["mem"] * attempt,
+        hrs=config["resources"]["classify_light"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/summary/library_source_{{sumdir}}.log",
+    params:
+        species=" ".join(SPECIES_IDS),
+        sep=config["library"]["species_prefix_sep"],
+    shell:
+        "python3 {SCRIPTS}/library_source.py --family-tandem {input.family_tandem} "
+        "--assembly-covariates {input.assembly_covariates} --species-ids {params.species} "
+        "--sep '{params.sep}' --out {output.tsv} > {log} 2>&1"
+
+
 rule verify_classes:
     # Report-only check of RepeatClassifier's labels on the CLASSIFIED
     # families against the same screens, bp-weighted with the shared-arm
@@ -1947,13 +1983,14 @@ rule plot:
         "workflow/envs/r_plot.yaml"
     params:
         out_dir=f"{OUTDIR}/plots",
+        species_order=PLOT_SPECIES_ORDER,
     log:
         f"{OUTDIR}/logs/summary/plot.log",
     shell:
         "Rscript workflow/scripts/plot_repeat_compare.R "
         "{input.class_composition} {input.divergence_landscape} "
         "{input.arm_concordance} {input.assembly_covariates} {params.out_dir} "
-        "> {log} 2>&1"
+        "{params.species_order} > {log} 2>&1"
 
 
 rule plot_shared_only:
@@ -1974,10 +2011,11 @@ rule plot_shared_only:
         "workflow/envs/r_plot.yaml"
     params:
         out_dir=f"{OUTDIR}/plots_shared_only",
+        species_order=PLOT_SPECIES_ORDER,
     log:
         f"{OUTDIR}/logs/summary_shared_only/plot.log",
     shell:
         "Rscript workflow/scripts/plot_repeat_compare.R "
         "{input.class_composition} {input.divergence_landscape} "
-        "NONE {input.assembly_covariates} {params.out_dir} "
+        "NONE {input.assembly_covariates} {params.out_dir} {params.species_order} "
         "> {log} 2>&1"

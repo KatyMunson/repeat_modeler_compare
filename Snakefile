@@ -1706,16 +1706,20 @@ DFAM_MATCHES = f"{OUTDIR}/library/dfam_overlap/dfam_matches.tsv"
 
 
 def library_source_dfam_matches(wildcards):
-    # summary/ (the full run) always builds dfam_overlap first; the
-    # shared-only report uses the matches only if they were already built,
-    # so report_shared_only never pulls the library-discovery chain.
-    if not INCLUDE_DFAM:
-        return []
-    if wildcards.sumdir == "summary":
-        return [DFAM_MATCHES]
-    if os.path.exists(DFAM_MATCHES):
-        return [ancient(DFAM_MATCHES)]
-    return []
+    # summary/ (the full run) builds dfam_overlap first and tracks it.
+    return [DFAM_MATCHES] if INCLUDE_DFAM and wildcards.sumdir == "summary" else []
+
+
+def library_source_matches_arg(wildcards, input):
+    # summary_shared_only/ reads the matches if they were already built but
+    # never depends on them: an input edge (even ancient()) lets a stale
+    # discovery chain be scheduled through dfam_overlap. Rebuilt matches
+    # need --forcerun library_source.
+    if input.dfam_matches:
+        return f"--dfam-matches {input.dfam_matches}"
+    if INCLUDE_DFAM and os.path.exists(DFAM_MATCHES):
+        return f"--dfam-matches {DFAM_MATCHES}"
+    return ""
 
 
 rule library_source:
@@ -1741,9 +1745,7 @@ rule library_source:
     params:
         species=" ".join(SPECIES_IDS),
         sep=config["library"]["species_prefix_sep"],
-        matches_arg=lambda wildcards, input: (
-            f"--dfam-matches {input.dfam_matches}" if input.dfam_matches else ""
-        ),
+        matches_arg=library_source_matches_arg,
     shell:
         "python3 {SCRIPTS}/library_source.py --family-tandem {input.family_tandem} "
         "--assembly-covariates {input.assembly_covariates} --species-ids {params.species} "

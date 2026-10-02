@@ -393,8 +393,9 @@ bp follow the same rule as `class_composition.tsv`: every base counts once,
 for its best hit, so the `total` row matches the composition total.
 
 The known/novel split needs `dfam_matches.tsv`. The full run (`all`) builds
-it first. `report_shared_only` does not build it, but uses it if it is
-already there, so build it once and re-run the report:
+it first. `report_shared_only` never builds or tracks it (so it can't pull
+the discovery rules), but reads it if it is already there, so build it once
+and re-run the report:
 
     ./runsnake 75 --configfile config.yaml --rerun-triggers mtime -- results_v3/library/dfam_overlap/dfam_matches.tsv
     ./runsnake 75 ... --forcerun library_source -- report_shared_only

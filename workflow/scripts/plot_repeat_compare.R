@@ -121,13 +121,14 @@ ggsave(
 # ---------------------------------------------------------------------------
 # 2. Divergence landscapes, primary "shared" arm, faceted by species,
 #    stacked by class. Overlap-resolved (each base counted once), so heights
-#    are genome fractions and a shared y-axis compares species directly.
+#    are whole-genome Mbp per 1% Kimura bin; the shared y-axis keeps the two
+#    species' absolute amounts directly comparable.
 # ---------------------------------------------------------------------------
 shared_landscape <- divergence_landscape[arm == "shared",
-  .(pct_non_n = sum(pct_non_n)), by = .(species, class, kimura_bin)]
+  .(mbp = sum(bp) / 1e6), by = .(species, class, kimura_bin)]
 shared_landscape <- order_classes(shared_landscape)
 
-p2 <- ggplot(shared_landscape, aes(x = kimura_bin, y = pct_non_n, fill = class)) +
+p2 <- ggplot(shared_landscape, aes(x = kimura_bin, y = mbp, fill = class)) +
   geom_col(position = "stack", width = 1) +
   facet_wrap(~species) +
   class_fill() +
@@ -135,7 +136,7 @@ p2 <- ggplot(shared_landscape, aes(x = kimura_bin, y = pct_non_n, fill = class))
     title = "Divergence (Kimura) landscape by class (shared-library arm)",
     subtitle = "Overlapping alignments resolved: each base counted once. Simple_repeat and Low_complexity have no divergence.",
     x = "Kimura substitution level (%)",
-    y = "% of non-N assembly length"
+    y = "Bases (Mbp)"
   ) +
   theme_minimal()
 

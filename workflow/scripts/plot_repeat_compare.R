@@ -42,27 +42,29 @@ assembly_covariates <- fread(assembly_covariates_path, integer64 = "double")
 # ---------------------------------------------------------------------------
 # One class -> color mapping shared by every plot, so a class keeps its color
 # whichever plot it's in and whichever classes a plot happens to contain.
-# Listed bottom of the stack first. The eight hues are a validated
-# categorical palette, assigned in an order where every pair adjacent in the
-# stack stays distinct for common color-vision deficiencies. Unknown_tandem
-# is a lighter violet than Satellite: satellite-like, not yet confirmed.
-# Unknown, Other and Low_complexity are deliberately neutral grays, since they carry no
-# biological identity. Classes absent from this list fall back to black, and
-# the script warns.
+# Listed bottom of the stack first. Class-level hues follow the convention of
+# RepeatMasker's landscape plots (DNA red, LINE blue, LTR green, SINE purple,
+# Unknown gray), one color per class, no per-family shades. Steps and stack
+# order were checked with a color-vision-deficiency validator: every pair of
+# neighbors stays distinct in the composition stack, in the landscape (no
+# Simple_repeat/Low_complexity) and with Retroposon absent (Mlim), where LINE
+# then touches SINE. DNA red and LTR green differ in lightness and are never
+# stacked together. Unknown, Other and Low_complexity are deliberately neutral
+# grays. Classes absent from this list fall back to black, and the script warns.
 # ---------------------------------------------------------------------------
 class_colors <- c(
-  DNA            = "#2a78d6",  # blue
-  RC             = "#eb6834",  # orange
-  LINE           = "#1baf7a",  # aqua
-  SINE           = "#eda100",  # yellow
-  Retroposon     = "#e87ba4",  # magenta
-  LTR            = "#008300",  # green
-  Satellite      = "#4a3aa7",  # violet
-  Simple_repeat  = "#e34948",  # red
+  DNA            = "#e34948",  # red    (conventional: DNA transposons)
+  RC             = "#874016",  # dark brown
+  LINE           = "#2a78d6",  # blue   (conventional)
+  Retroposon     = "#d55181",  # rose; sits between LINE and SINE in the stack
+  SINE           = "#b08ee6",  # lavender (conventional purple, lighter than LINE blue)
+  LTR            = "#1a8f3c",  # green  (conventional)
+  Satellite      = "#eda100",  # yellow
   Low_complexity = "#b0afa9",  # light gray
-  Other          = "#5f5e5a",  # dark gray
-  Unknown_tandem = "#7b6fdc",  # light violet: Unknown families in tandem arrays (family_tandem)
-  Unknown        = "#8f8e88"   # mid gray
+  Simple_repeat  = "#b5762e",  # tan
+  Other          = "#55544f",  # dark gray
+  Unknown_tandem = "#eb6834",  # orange: Unknown families in tandem arrays (family_tandem)
+  Unknown        = "#8f8e88"   # mid gray (conventional)
 )
 class_labels <- c(Unknown_tandem = "Unknown (tandem)")
 label_class <- function(x) ifelse(x %in% names(class_labels), class_labels[x], x)

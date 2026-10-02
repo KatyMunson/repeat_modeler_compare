@@ -253,8 +253,12 @@ that pipeline's own QC on the same assembly.
 
 ## Reclassifying Unknown families and verifying classes (`classify`)
 
-Three cheap, independent screens run once on every consensus in the shared
-library (`{outdir}/classify/`). They serve two purposes:
+Three cheap, independent screens run once on every **de novo** consensus in
+the shared library (`{outdir}/classify/`). These are the species-prefixed
+RepeatModeler families. Curated Dfam entries keep their labels and are left
+out of both the reclassification and the verification;
+`classify.screen_dfam: true` includes them. Their share of masked bp is in
+`library_source.tsv`. They serve two purposes:
 - For **Unknown** families, `reclassify_unknown.py merge` turns the screens
   into `unknown_reclassification.tsv`, which `summarize` applies to the
   `.out`/`.align` labels.

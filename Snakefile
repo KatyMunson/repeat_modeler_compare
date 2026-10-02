@@ -1439,9 +1439,17 @@ rule extract_consensi:
         shell_exec="bash",
     log:
         f"{OUTDIR}/logs/classify/extract_consensi.log",
+    params:
+        # De novo families only (prefixes added by prefix_library.py); curated
+        # Dfam entries keep their labels unless classify.screen_dfam is set.
+        keep=(
+            ""
+            if _as_bool(CLASSIFY.get("screen_dfam", False))
+            else " ".join(f"--keep-prefix {sp}{config['library']['species_prefix_sep']}" for sp in SPECIES_IDS)
+        ),
     shell:
         "python3 {SCRIPTS}/reclassify_unknown.py extract --library {input.library} --out {output.fa} "
-        "--classes-out {output.classes} > {log} 2>&1"
+        "--classes-out {output.classes} {params.keep} > {log} 2>&1"
 
 
 rule tesorter_library:

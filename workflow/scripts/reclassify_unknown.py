@@ -9,8 +9,9 @@ screens of their consensus sequences:
 Subcommands:
   extract   write the library's records, header = bare family name (TEsorter
             and cmscan mangle '#'), plus a family -> RepeatModeler class table.
-            All families by default (the screens run once on the whole
-            library), or only Unknown ones with --unknown-only.
+            --keep-prefix limits it to de novo families (the pipeline passes
+            each species' prefix, so curated Dfam entries are left alone);
+            --unknown-only keeps only Unknown ones.
   merge     combine the screens into one reclassification table for the
             Unknown families
   verify    report-only check of the CLASSIFIED families: does the same
@@ -104,13 +105,17 @@ def class_of(header):
 # ---------------------------------------------------------------- extract
 
 def cmd_extract(args):
-    n = n_unknown = 0
+    n = n_unknown = n_skipped = 0
+    prefixes = tuple(args.keep_prefix)
     classes = open(args.classes_out, "w") if args.classes_out else None
     if classes:
         classes.write("family\trm_class\n")
     with open(args.out, "w") as out:
         for header, seq in iter_fasta(args.library):
             cls = class_of(header)
+            if prefixes and not bare_name(header).startswith(prefixes):
+                n_skipped += 1
+                continue
             if args.unknown_only and cls != "Unknown":
                 continue
             write_fasta(out, bare_name(header), seq)
@@ -120,7 +125,9 @@ def cmd_extract(args):
             n_unknown += cls == "Unknown"
     if classes:
         classes.close()
-    print(f"[reclassify_unknown] extracted {n} consensi ({n_unknown} Unknown)", file=sys.stderr)
+    print(f"[reclassify_unknown] extracted {n} consensi ({n_unknown} Unknown)"
+          + (f"; skipped {n_skipped} without a de novo prefix {list(prefixes)} (e.g. Dfam entries)"
+             if prefixes else ""), file=sys.stderr)
 
 
 def read_classes(path):
@@ -469,6 +476,8 @@ def main():
     e.add_argument("--out", required=True)
     e.add_argument("--classes-out", default="", help="family -> RepeatModeler class TSV")
     e.add_argument("--unknown-only", action="store_true")
+    e.add_argument("--keep-prefix", action="append", default=[],
+                   help="only families whose name starts with this (repeatable), e.g. Esto_")
     m = sub.add_parser("merge")
     m.add_argument("--consensi", required=True, help="extract output")
     m.add_argument("--classes", default="", help="extract --classes-out; restricts rows to Unknown families")

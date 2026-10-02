@@ -102,6 +102,9 @@ family_tandem:
 # left empty is skipped (treated as "no evidence").
 classify:
   enabled: true
+  # Screen only the de novo families (species-prefixed); curated Dfam entries
+  # keep their labels. true = also screen/verify the Dfam export.
+  screen_dfam: false
   # Host-gene screen (DIAMOND). One TE-cleaned database serves every species.
   # Annotation proteomes are keyword- AND TEsorter-domain-filtered; Swiss-Prot
   # is keyword-filtered only. E.g. the NCBI annotation's complete.proteins.faa.

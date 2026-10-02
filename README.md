@@ -251,12 +251,16 @@ Apart from the Unknown_tandem class, nothing is relabelled. To check it against 
 pipeline, compare `satellite_like` families with the motifs that pass in
 that pipeline's own QC on the same assembly.
 
-## Reclassifying Unknown families (`classify`)
+## Reclassifying Unknown families and verifying classes (`classify`)
 
-Three cheap, independent screens run on every `#Unknown` consensus in the
-shared library (`{outdir}/classify/`). `reclassify_unknown.py` merges them
-into `unknown_reclassification.tsv`, which `summarize` applies to the
-`.out`/`.align` labels. Family names don't change, so **nothing is
+Three cheap, independent screens run once on every consensus in the shared
+library (`{outdir}/classify/`). They serve two purposes:
+- For **Unknown** families, `reclassify_unknown.py merge` turns the screens
+  into `unknown_reclassification.tsv`, which `summarize` applies to the
+  `.out`/`.align` labels.
+- For **classified** families, `verify` checks RepeatClassifier's labels
+  against the same evidence. This is report-only (see "Verifying
+  RepeatModeler's classes" below). Family names don't change, so **nothing is
 remasked**: turning `classify.enabled` on or off only reruns `summarize` and
 everything downstream of it.
 
@@ -314,6 +318,39 @@ once. The rule stops with a message if that hasn't been done.
 - To toggle from the command line, use e.g.
   `--config "classify={enabled: false}"`. Booleans passed that way arrive as
   strings and are parsed accordingly.
+
+### Verifying RepeatModeler's classes
+
+RepeatClassifier labels families by homology to Dfam and RepeatPeps. The
+screens are independent of that, so `verify` compares each classified
+family's label with them. It changes nothing; it only reports.
+Families are weighted by the bp they hold in each species (`owned_bp` from
+the shared-arm `family_tandem.tsv`).
+
+| status | meaning |
+|---|---|
+| `agree_superfamily` | the domain call matches the label (`LTR/ERV1` vs `LTR/ERV` counts) |
+| `agree_order` | same order, different or unspecified superfamily (e.g. `LTR/Gypsy` vs Copia domains) |
+| `disagree_order` | the domains point to another order, e.g. a `SINE/Alu` with Gypsy domains |
+| `retroposon_vs_line` | a `Retroposon` label with LINE domains: may be an autonomous LINE, or a non-autonomous element carrying LINE fragments |
+| `domain_conflict` | REXdb and GyDB disagree on order |
+| `host_protein` | no domain, but the consensus matches a TE-free host protein: possible gene family or contamination |
+| `rfam` / `agree_rfam` / `rfam_other_rna` | a structured-RNA hit on a non-RNA label / on a matching RNA label / on a different RNA label |
+| `domain_on_rna_label` | an RNA label with TE domains |
+| `no_evidence` | the screens are silent |
+
+**`no_evidence` is not a failure.** SINEs, MITEs, solo LTRs, satellites
+and decayed copies have no protein domains. Read it as "not confirmed",
+never as "wrong".
+
+Outputs:
+- `{summary}/class_verification.tsv`: per species, class and status, the
+  families present, the bp they hold, and that bp as a % of the class.
+- `{summary}/class_disagreements.tsv`: families with a disagreeing status
+  (`disagree_order`, `retroposon_vs_line`, `domain_conflict`,
+  `host_protein`, `rfam`, `rfam_other_rna`, `domain_on_rna_label`), plus
+  tandem families with a TE label. Sorted by bp, with each screen's best
+  hit. Review this list by hand, starting from the top.
 
 ## Satellite analysis (removed)
 

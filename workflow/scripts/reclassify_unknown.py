@@ -7,9 +7,15 @@ screens of their consensus sequences:
   DIAMOND    host proteins (TE proteins removed)      -> Other/host_gene
 
 Subcommands:
-  extract   write every #Unknown library record, header = bare family name
-            (TEsorter and cmscan mangle '#'), to a FASTA
-  merge     combine the screens into one reclassification table
+  extract   write the library's records, header = bare family name (TEsorter
+            and cmscan mangle '#'), plus a family -> RepeatModeler class table.
+            All families by default (the screens run once on the whole
+            library), or only Unknown ones with --unknown-only.
+  merge     combine the screens into one reclassification table for the
+            Unknown families
+  verify    report-only check of the CLASSIFIED families: does the same
+            independent evidence agree with RepeatClassifier's label?
+            bp-weighted with family_tandem.tsv tables (see cmd_verify)
 
 Precedence (merge), first match wins:
   1. TEsorter call at order level or finer, REXdb and GyDB not disagreeing
@@ -98,14 +104,35 @@ def class_of(header):
 # ---------------------------------------------------------------- extract
 
 def cmd_extract(args):
-    n = 0
+    n = n_unknown = 0
+    classes = open(args.classes_out, "w") if args.classes_out else None
+    if classes:
+        classes.write("family\trm_class\n")
     with open(args.out, "w") as out:
         for header, seq in iter_fasta(args.library):
-            if class_of(header) != "Unknown":
+            cls = class_of(header)
+            if args.unknown_only and cls != "Unknown":
                 continue
             write_fasta(out, bare_name(header), seq)
+            if classes:
+                classes.write(f"{bare_name(header)}\t{cls}\n")
             n += 1
-    print(f"[reclassify_unknown] extracted {n} Unknown consensi", file=sys.stderr)
+            n_unknown += cls == "Unknown"
+    if classes:
+        classes.close()
+    print(f"[reclassify_unknown] extracted {n} consensi ({n_unknown} Unknown)", file=sys.stderr)
+
+
+def read_classes(path):
+    """{family: RepeatModeler class} from extract --classes-out."""
+    out = {}
+    with open(path) as fh:
+        fh.readline()
+        for line in fh:
+            f = line.rstrip("\n").split("\t")
+            if len(f) >= 2:
+                out[f[0]] = f[1]
+    return out
 
 
 # ---------------------------------------------------------------- readers
@@ -239,10 +266,27 @@ def tesorter_to_rm(call, min_domains):
 
 # ---------------------------------------------------------------- merge
 
+def domain_evidence(fam, rex, gydb, min_domains):
+    """(domain Class/Family or None, conflict text or "") from the two
+    TEsorter databases: the more specific call, unless they disagree on order."""
+    r_call = tesorter_to_rm(rex.get(fam), min_domains)
+    g_call = tesorter_to_rm(gydb.get(fam), min_domains)
+    if r_call and g_call and r_call.split("/")[0] != g_call.split("/")[0]:
+        return None, f"REXdb {r_call} vs GyDB {g_call}"
+    cands = [c for c in (r_call, g_call) if c]
+    return (max(cands, key=lambda c: c.count("/")) if cands else None), ""
+
+
 def cmd_merge(args):
     cons_len = {}
     for header, seq in iter_fasta(args.consensi):
         cons_len[bare_name(header)] = len(seq)
+    # With --classes, the consensi are the whole library; only Unknown
+    # families get rows.
+    families = sorted(cons_len)
+    if args.classes:
+        rm_class = read_classes(args.classes)
+        families = [f for f in families if rm_class.get(f) == "Unknown"]
 
     rex = read_tesorter_cls(args.tesorter_rexdb)
     gydb = read_tesorter_cls(args.tesorter_gydb)
@@ -256,18 +300,9 @@ def cmd_merge(args):
     with open(args.out, "w") as out:
         out.write("family\told_class\tnew_class\tevidence\ttesorter_rexdb\ttesorter_gydb\t"
                   "diamond_best\trfam_best\tconflict\n")
-        for fam in sorted(cons_len):
-            r_call = tesorter_to_rm(rex.get(fam), args.min_domains)
-            g_call = tesorter_to_rm(gydb.get(fam), args.min_domains)
-            conflict = []
-            domain_class = None
-            if r_call and g_call and r_call.split("/")[0] != g_call.split("/")[0]:
-                conflict.append(f"REXdb {r_call} vs GyDB {g_call}")
-            else:
-                # prefer the more specific call (REXdb first when equal)
-                cands = [c for c in (r_call, g_call) if c]
-                if cands:
-                    domain_class = max(cands, key=lambda c: c.count("/"))
+        for fam in families:
+            domain_class, db_conflict = domain_evidence(fam, rex, gydb, args.min_domains)
+            conflict = [db_conflict] if db_conflict else []
             rna = rfam.get(fam)
             hst = host.get(fam)
             if domain_class and hst:
@@ -292,8 +327,124 @@ def cmd_merge(args):
                       f"{fmt(gydb.get(fam))}\t{host_all[fam][3] if fam in host_all else ''}\t"
                       f"{rfam_all[fam][1] if fam in rfam_all else ''}\t"
                       f"{'; '.join(conflict)}\n")
-    print(f"[reclassify_unknown] {len(cons_len)} Unknown families: "
+    print(f"[reclassify_unknown] {len(families)} Unknown families: "
           + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())), file=sys.stderr)
+
+
+RNA_CLASSES = {"rRNA", "tRNA", "snRNA", "srpRNA", "scRNA", "RNA"}
+# RepeatMasker orders treated as the same order as TEsorter's call.
+ORDER_ALIASES = {"PLE": "LINE"}
+
+
+def verify_status(rm_cls, dom, rna, host):
+    """Status of one classified family. dom: domain Class/Family or None;
+    rna: qualifying Rfam (class, ...) or None; host: qualifying host hit or None."""
+    rm_order = rm_cls.split("/", 1)[0]
+    rm_order = ORDER_ALIASES.get(rm_order, rm_order)
+    if rm_order in RNA_CLASSES:
+        if rna:
+            return "agree_rfam" if rna[0] == rm_order else "rfam_other_rna"
+        return "domain_on_rna_label" if dom else "no_evidence"
+    if dom:
+        dom_order = dom.split("/", 1)[0]
+        if rm_order == "Retroposon" and dom_order == "LINE":
+            return "retroposon_vs_line"
+        if rm_order != dom_order:
+            return "disagree_order"
+        a, b = rm_cls.lower(), dom.lower()
+        if "/" in rm_cls and "/" in dom and (a.startswith(b) or b.startswith(a)):
+            return "agree_superfamily"
+        return "agree_order"
+    if rna:
+        return "rfam"
+    if host:
+        return "host_protein"
+    return "no_evidence"
+
+
+DISAGREEMENT = {"disagree_order", "retroposon_vs_line", "rfam", "host_protein",
+                "rfam_other_rna", "domain_on_rna_label", "domain_conflict"}
+
+
+def read_family_tandem(paths):
+    """{species: {family: (owned_bp, tandem_family)}} from family_tandem.tsv."""
+    out = {}
+    for path in paths:
+        with open(path) as fh:
+            header = fh.readline().rstrip("\n").split("\t")
+            idx = {h: i for i, h in enumerate(header)}
+            for line in fh:
+                f = line.rstrip("\n").split("\t")
+                tf = f[idx["tandem_family"]] == "True" if "tandem_family" in idx else False
+                out.setdefault(f[idx["species"]], {})[f[idx["family"]]] = (int(f[idx["owned_bp"]]), tf)
+    return out
+
+
+def cmd_verify(args):
+    from summarize_rm import collapse_class
+
+    cons_len = {}
+    for header, seq in iter_fasta(args.consensi):
+        cons_len[bare_name(header)] = len(seq)
+    rm_class = read_classes(args.classes)
+    rex = read_tesorter_cls(args.tesorter_rexdb)
+    gydb = read_tesorter_cls(args.tesorter_gydb)
+    host_all = read_diamond(args.diamond, args.max_evalue)
+    rfam_all = read_rfam(args.rfam, cons_len)
+    host = {q: h for q, h in host_all.items() if h[2] >= args.min_host_cov}
+    rfam = {q: r for q, r in rfam_all.items() if r[2] >= args.min_rfam_cov}
+    bp = read_family_tandem(args.family_tandem)
+    species = sorted(bp)
+
+    rows = []
+    for fam, cls in sorted(rm_class.items()):
+        if cls in ("Unknown", "") or fam not in cons_len:
+            continue
+        dom, db_conflict = domain_evidence(fam, rex, gydb, args.min_domains)
+        status = "domain_conflict" if db_conflict else verify_status(cls, dom, rfam.get(fam), host.get(fam))
+        owned = {sp: bp[sp].get(fam, (0, False))[0] for sp in species}
+        tandem = any(bp[sp].get(fam, (0, False))[1] for sp in species)
+        rows.append((fam, cls, dom or "", status, owned, tandem, db_conflict,
+                     host_all[fam][3] if fam in host_all else "",
+                     rfam_all[fam][1] if fam in rfam_all else ""))
+
+    # per species x collapsed class x status, bp-weighted
+    agg = {}
+    class_tot = {}
+    for fam, cls, _dom, status, owned, _t, *_ in rows:
+        top = collapse_class(cls)
+        for sp in species:
+            a = agg.setdefault((sp, top, status), [0, 0])
+            a[0] += 1 if owned[sp] else 0
+            a[1] += owned[sp]
+            class_tot[(sp, top)] = class_tot.get((sp, top), 0) + owned[sp]
+    with open(args.out, "w") as out:
+        out.write("species\trm_class\tstatus\tn_families_present\towned_bp\tpct_of_class_bp\n")
+        for (sp, top, status), (n, b) in sorted(agg.items()):
+            if n == 0:
+                continue
+            tot = class_tot[(sp, top)]
+            out.write(f"{sp}\t{top}\t{status}\t{n}\t{b}\t{100.0 * b / tot if tot else 0.0:.2f}\n")
+
+    te_tops = {"DNA", "LINE", "SINE", "LTR", "RC", "Retroposon", "Other"}
+    flagged = [r for r in rows if r[3] in DISAGREEMENT
+               or (r[5] and collapse_class(r[1]) in te_tops)]
+    flagged.sort(key=lambda r: -sum(r[4].values()))
+    with open(args.disagreements_out, "w") as out:
+        out.write("family\trm_class\tdomain_call\tstatus\ttandem_family\t"
+                  + "".join(f"owned_bp_{sp}\t" for sp in species)
+                  + "tesorter_conflict\tdiamond_best\trfam_best\n")
+        for fam, cls, dom, status, owned, tandem, conf, hst, rna in flagged:
+            out.write(f"{fam}\t{cls}\t{dom}\t{status}\t{tandem}\t"
+                      + "".join(f"{owned[sp]}\t" for sp in species)
+                      + f"{conf}\t{hst}\t{rna}\n")
+
+    n_status = {}
+    for r in rows:
+        n_status[r[3]] = n_status.get(r[3], 0) + 1
+    print(f"[reclassify_unknown] verify: {len(rows)} classified families: "
+          + ", ".join(f"{k}={v}" for k, v in sorted(n_status.items()))
+          + f"; {len(flagged)} flagged", file=sys.stderr)
 
 
 def reclassified(path):
@@ -316,8 +467,11 @@ def main():
     e = sub.add_parser("extract")
     e.add_argument("--library", required=True)
     e.add_argument("--out", required=True)
+    e.add_argument("--classes-out", default="", help="family -> RepeatModeler class TSV")
+    e.add_argument("--unknown-only", action="store_true")
     m = sub.add_parser("merge")
     m.add_argument("--consensi", required=True, help="extract output")
+    m.add_argument("--classes", default="", help="extract --classes-out; restricts rows to Unknown families")
     m.add_argument("--tesorter-rexdb", default="")
     m.add_argument("--tesorter-gydb", default="")
     m.add_argument("--diamond", default="", help="DIAMOND blastx outfmt 6 (see read_diamond)")
@@ -327,8 +481,22 @@ def main():
     m.add_argument("--max-evalue", type=float, default=1e-10)
     m.add_argument("--min-rfam-cov", type=float, default=0.5)
     m.add_argument("--out", required=True)
+    v = sub.add_parser("verify")
+    v.add_argument("--consensi", required=True)
+    v.add_argument("--classes", required=True)
+    v.add_argument("--tesorter-rexdb", default="")
+    v.add_argument("--tesorter-gydb", default="")
+    v.add_argument("--diamond", default="")
+    v.add_argument("--rfam", default="")
+    v.add_argument("--family-tandem", nargs="+", required=True, help="per-species family_tandem.tsv (owned_bp)")
+    v.add_argument("--min-domains", type=int, default=1)
+    v.add_argument("--min-host-cov", type=float, default=0.3)
+    v.add_argument("--max-evalue", type=float, default=1e-10)
+    v.add_argument("--min-rfam-cov", type=float, default=0.5)
+    v.add_argument("--out", required=True, help="class_verification.tsv")
+    v.add_argument("--disagreements-out", required=True, help="class_disagreements.tsv")
     args = ap.parse_args()
-    {"extract": cmd_extract, "merge": cmd_merge}[args.cmd](args)
+    {"extract": cmd_extract, "merge": cmd_merge, "verify": cmd_verify}[args.cmd](args)
 
 
 if __name__ == "__main__":

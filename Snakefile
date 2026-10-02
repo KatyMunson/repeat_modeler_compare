@@ -232,6 +232,7 @@ rule all:
         f"{OUTDIR}/summary/family_tandem.tsv",
         f"{OUTDIR}/summary/class_tandem.tsv",
         [f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
+        [f"{OUTDIR}/summary/class_verification.tsv", f"{OUTDIR}/summary/class_disagreements.tsv"] if CLASSIFY_ON else [],
         expand(
             f"{OUTDIR}/{{arm}}/{{species}}/divergence/{{species}}.landscape.html",
             arm=ARMS,
@@ -302,6 +303,8 @@ rule report_shared_only:
         f"{OUTDIR}/summary_shared_only/family_tandem.tsv",
         f"{OUTDIR}/summary_shared_only/class_tandem.tsv",
         [f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
+        [f"{OUTDIR}/summary_shared_only/class_verification.tsv",
+         f"{OUTDIR}/summary_shared_only/class_disagreements.tsv"] if CLASSIFY_ON else [],
         f"{OUTDIR}/plots_shared_only/class_composition_shared.png",
         f"{OUTDIR}/plots_shared_only/divergence_landscape.png",
         expand(
@@ -1406,34 +1409,38 @@ rule summarize:
 
 
 # -----------------------------------------------------------------------------
-# Unknown-family reclassification (classify.*): three cheap, independent
-# screens of every Unknown consensus in the shared library -- TEsorter
+# Unknown-family reclassification and class verification (classify.*): three
+# cheap, independent screens of every consensus in the shared library -- TEsorter
 # (protein domains), Rfam (structured RNA), DIAMOND against TE-free host
 # proteins -- merged by reclassify_unknown.py into one table that summarize
 # applies to .out/.align labels. Labels only: nothing is remasked.
 # -----------------------------------------------------------------------------
-rule extract_unknown_consensi:
+rule extract_consensi:
+    # Every family (the screens run once on the whole library: Unknown
+    # families are reclassified, classified ones verified) + their classes.
     input:
         library=lambda wc: MASK_SHARED_LIBRARY or f"{OUTDIR}/library/shared_library.fa",
     output:
-        fa=f"{OUTDIR}/classify/unknown_consensi.fa",
+        fa=f"{OUTDIR}/classify/library_consensi.fa",
+        classes=f"{OUTDIR}/classify/library_classes.tsv",
     threads: config["resources"]["classify_light"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["classify_light"]["mem"] * attempt,
         hrs=config["resources"]["classify_light"]["hrs"],
         shell_exec="bash",
     log:
-        f"{OUTDIR}/logs/classify/extract_unknown_consensi.log",
+        f"{OUTDIR}/logs/classify/extract_consensi.log",
     shell:
-        "python3 {SCRIPTS}/reclassify_unknown.py extract --library {input.library} --out {output.fa} > {log} 2>&1"
+        "python3 {SCRIPTS}/reclassify_unknown.py extract --library {input.library} --out {output.fa} "
+        "--classes-out {output.classes} > {log} 2>&1"
 
 
-rule tesorter_unknown:
+rule tesorter_library:
     input:
-        fa=f"{OUTDIR}/classify/unknown_consensi.fa",
+        fa=f"{OUTDIR}/classify/library_consensi.fa",
     output:
-        rexdb=f"{OUTDIR}/classify/tesorter/unknown.rexdb-metazoa.cls.tsv",
-        gydb=f"{OUTDIR}/classify/tesorter/unknown.gydb.cls.tsv",
+        rexdb=f"{OUTDIR}/classify/tesorter/library.rexdb-metazoa.cls.tsv",
+        gydb=f"{OUTDIR}/classify/tesorter/library.gydb.cls.tsv",
     threads: config["resources"]["tesorter"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["tesorter"]["mem"] * attempt,
@@ -1442,7 +1449,7 @@ rule tesorter_unknown:
     conda:
         "workflow/envs/tesorter.yaml"
     log:
-        f"{OUTDIR}/logs/classify/tesorter_unknown.log",
+        f"{OUTDIR}/logs/classify/tesorter_library.log",
     # -dp2: no TEsorter pass 2 (BLAST similarity to already-classified
     # sequences), so every call here is domain evidence. -nolib: we don't use
     # its RepeatMasker library.
@@ -1459,8 +1466,8 @@ rule tesorter_unknown:
         mkdir -p {params.workdir} && cd {params.workdir}
         for db in rexdb-metazoa gydb; do
             TEsorter {params.fa_abs} -db $db -st nucl -p {threads} -cov {params.cov} -eval {params.evalue} \
-                -dp2 -nolib -pre unknown.$db -tmp tmp_$db
-            [ -f unknown.$db.cls.tsv ] || {{ echo "[ERROR] TEsorter wrote no unknown.$db.cls.tsv"; ls -l; exit 1; }}
+                -dp2 -nolib -pre library.$db -tmp tmp_$db
+            [ -f library.$db.cls.tsv ] || {{ echo "[ERROR] TEsorter wrote no library.$db.cls.tsv"; ls -l; exit 1; }}
             rm -rf tmp_$db
         done
         """
@@ -1560,7 +1567,7 @@ rule host_protein_db:
 
 rule diamond_host:
     input:
-        fa=f"{OUTDIR}/classify/unknown_consensi.fa",
+        fa=f"{OUTDIR}/classify/library_consensi.fa",
         dmnd=f"{OUTDIR}/classify/host/host_proteins.dmnd",
     output:
         tsv=f"{OUTDIR}/classify/diamond_host.tsv",
@@ -1588,7 +1595,7 @@ rule diamond_host:
 
 rule rfam_scan:
     input:
-        fa=f"{OUTDIR}/classify/unknown_consensi.fa",
+        fa=f"{OUTDIR}/classify/library_consensi.fa",
         cm=RFAM_CM if RFAM_CM else [],
     output:
         tblout=f"{OUTDIR}/classify/rfam.tblout",
@@ -1616,9 +1623,10 @@ rule rfam_scan:
 
 rule reclassify_unknown:
     input:
-        fa=f"{OUTDIR}/classify/unknown_consensi.fa",
-        rexdb=f"{OUTDIR}/classify/tesorter/unknown.rexdb-metazoa.cls.tsv",
-        gydb=f"{OUTDIR}/classify/tesorter/unknown.gydb.cls.tsv",
+        fa=f"{OUTDIR}/classify/library_consensi.fa",
+        classes=f"{OUTDIR}/classify/library_classes.tsv",
+        rexdb=f"{OUTDIR}/classify/tesorter/library.rexdb-metazoa.cls.tsv",
+        gydb=f"{OUTDIR}/classify/tesorter/library.gydb.cls.tsv",
         diamond=[f"{OUTDIR}/classify/diamond_host.tsv"] if HOST_SCREEN_ON else [],
         rfam=[f"{OUTDIR}/classify/rfam.tblout"] if RFAM_ON else [],
     output:
@@ -1638,11 +1646,51 @@ rule reclassify_unknown:
         max_evalue=CLASSIFY.get("diamond_max_evalue", 1e-10),
         min_rfam_cov=CLASSIFY.get("min_rfam_cov", 0.5),
     shell:
-        "python3 {SCRIPTS}/reclassify_unknown.py merge --consensi {input.fa} "
+        "python3 {SCRIPTS}/reclassify_unknown.py merge --consensi {input.fa} --classes {input.classes} "
         "--tesorter-rexdb {input.rexdb} --tesorter-gydb {input.gydb} "
         "{params.diamond_arg} {params.rfam_arg} --min-domains {params.min_domains} "
         "--min-host-cov {params.min_host_cov} --max-evalue {params.max_evalue} "
         "--min-rfam-cov {params.min_rfam_cov} --out {output.tsv} > {log} 2>&1"
+
+
+rule verify_classes:
+    # Report-only check of RepeatClassifier's labels on the CLASSIFIED
+    # families against the same screens, bp-weighted with the shared-arm
+    # family_tandem tables. Nothing is relabelled (README).
+    input:
+        fa=f"{OUTDIR}/classify/library_consensi.fa",
+        classes=f"{OUTDIR}/classify/library_classes.tsv",
+        rexdb=f"{OUTDIR}/classify/tesorter/library.rexdb-metazoa.cls.tsv",
+        gydb=f"{OUTDIR}/classify/tesorter/library.gydb.cls.tsv",
+        diamond=[f"{OUTDIR}/classify/diamond_host.tsv"] if HOST_SCREEN_ON else [],
+        rfam=[f"{OUTDIR}/classify/rfam.tblout"] if RFAM_ON else [],
+        family_tandem=expand(f"{OUTDIR}/shared/{{species}}/summary/family_tandem.tsv", species=SPECIES_IDS),
+    output:
+        verification=f"{OUTDIR}/{{sumdir}}/class_verification.tsv",
+        disagreements=f"{OUTDIR}/{{sumdir}}/class_disagreements.tsv",
+    wildcard_constraints:
+        sumdir="summary|summary_shared_only",
+    threads: config["resources"]["classify_light"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["classify_light"]["mem"] * attempt,
+        hrs=config["resources"]["classify_light"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/classify/verify_classes_{{sumdir}}.log",
+    params:
+        diamond_arg=lambda wc, input: f"--diamond {input.diamond}" if input.diamond else "",
+        rfam_arg=lambda wc, input: f"--rfam {input.rfam}" if input.rfam else "",
+        min_domains=CLASSIFY.get("tesorter_min_domains", 1),
+        min_host_cov=CLASSIFY.get("min_host_cov", 0.3),
+        max_evalue=CLASSIFY.get("diamond_max_evalue", 1e-10),
+        min_rfam_cov=CLASSIFY.get("min_rfam_cov", 0.5),
+    shell:
+        "python3 {SCRIPTS}/reclassify_unknown.py verify --consensi {input.fa} --classes {input.classes} "
+        "--tesorter-rexdb {input.rexdb} --tesorter-gydb {input.gydb} {params.diamond_arg} {params.rfam_arg} "
+        "--family-tandem {input.family_tandem} --min-domains {params.min_domains} "
+        "--min-host-cov {params.min_host_cov} --max-evalue {params.max_evalue} "
+        "--min-rfam-cov {params.min_rfam_cov} --out {output.verification} "
+        "--disagreements-out {output.disagreements} > {log} 2>&1"
 
 
 # -----------------------------------------------------------------------------

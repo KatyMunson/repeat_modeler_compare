@@ -23,7 +23,18 @@ them), so where a de novo consensus fits better its bp count as de novo even
 if Dfam holds the same element (dfam_overlap.tsv lists such families). A
 family shared by both species is one cd-hit cluster named after its longest
 member, so denovo:<other> includes shared families whose representative came
-from the other species (library_membership.tsv). Stdlib only."""
+from the other species (library_membership.tsv).
+
+With --dfam-matches (library/dfam_overlap/dfam_matches.tsv) each de novo
+source is also split by the `dfam_match` column:
+  all     every family of that source (the same numbers as without the flag)
+  known   the de novo consensus matches a Dfam entry (cd-hit-est-2d,
+          >= library.cdhit identity over coverage_short of the de novo family)
+  novel   no such match
+"known" is a lower bound on known material: diverged or partial matches
+below the coverage cut count as novel, and a shared cluster counts as known
+only if its representative (the family named in the library) matched.
+Other rows carry `.` in dfam_match. Stdlib only."""
 
 import argparse
 import sys
@@ -57,6 +68,8 @@ def main():
     ap.add_argument("--species-ids", nargs="+", required=True)
     ap.add_argument("--sep", default="_", help="library.species_prefix_sep")
     ap.add_argument("--assembly-covariates", required=True, help="assembly_covariates.tsv (species_id, non_n_bp)")
+    ap.add_argument("--dfam-matches", help="dfam_matches.tsv from dfam_overlap (optional): split de novo "
+                    "sources into known-in-Dfam and novel")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -68,7 +81,18 @@ def main():
             f = line.rstrip("\n").split("\t")
             non_n[f[idx["species_id"]]] = int(float(f[idx["non_n_bp"]]))
 
-    # (species, source) -> [n_families, n_hits, owned_bp, [(div, bp)]]
+    known = None
+    if args.dfam_matches:
+        known = set()
+        with open(args.dfam_matches) as fh:
+            header = fh.readline().rstrip("\n").split("\t")
+            i_fam = header.index("family")
+            for line in fh:
+                f = line.rstrip("\n").split("\t")
+                if len(f) > i_fam:
+                    known.add(f[i_fam].split("#", 1)[0])
+
+    # (species, source, dfam_match) -> [n_families, n_hits, owned_bp, [(div, bp)]]
     agg = {}
     with open(args.family_tandem) as fh:
         header = fh.readline().rstrip("\n").split("\t")
@@ -79,8 +103,13 @@ def main():
             if owned == 0:
                 continue
             sp = f[idx["species"]]
-            src = source_of(f[idx["family"]], f[idx["class"]], sp, args.species_ids, args.sep)
-            for key in ((sp, src), (sp, "total")):
+            family = f[idx["family"]]
+            src = source_of(family, f[idx["class"]], sp, args.species_ids, args.sep)
+            keys = [(sp, src, "." if known is None or not src.startswith(("own_denovo", "denovo:")) else "all"),
+                    (sp, "total", ".")]
+            if known is not None and keys[0][2] == "all":
+                keys.append((sp, src, "known" if family.split("#", 1)[0] in known else "novel"))
+            for key in keys:
                 a = agg.setdefault(key, [0, 0, 0, []])
                 a[0] += 1
                 a[1] += int(f[idx["n_hits"]])
@@ -91,24 +120,35 @@ def main():
                     pass
 
     order = ["own_denovo"] + [f"denovo:{s}" for s in args.species_ids] + ["dfam", "rm_builtin", "total"]
-    species = [s for s in args.species_ids if (s, "total") in agg] + \
-        sorted({s for s, _ in agg} - set(args.species_ids))
+    species = [s for s in args.species_ids if (s, "total", ".") in agg] + \
+        sorted({s for s, _src, _m in agg} - set(args.species_ids))
     with open(args.out, "w") as out:
-        out.write("species\tsource\tn_families\tn_hits\towned_bp\tpct_of_masked\tpct_non_n\t"
+        out.write("species\tsource\tdfam_match\tn_families\tn_hits\towned_bp\tpct_of_masked\tpct_non_n\t"
                   "bp_weighted_median_div\n")
         for sp in species:
-            masked = agg[(sp, "total")][2]
+            masked = agg[(sp, "total", ".")][2]
             for src in order:
-                if (sp, src) not in agg:
-                    continue
-                n_fam, n_hits, bp, divs = agg[(sp, src)]
-                pct_nn = 100.0 * bp / non_n[sp] if non_n.get(sp) else float("nan")
-                out.write(f"{sp}\t{src}\t{n_fam}\t{n_hits}\t{bp}\t{100.0 * bp / masked if masked else 0.0:.2f}\t"
-                          f"{pct_nn:.4f}\t{weighted_median(divs):.1f}\n")
-            own = agg.get((sp, "own_denovo"), [0, 0, 0])[2]
-            dfam = agg.get((sp, "dfam"), [0, 0, 0])[2]
-            print(f"[library_source] {sp}: own de novo {100.0 * own / masked:.1f}%, "
-                  f"Dfam {100.0 * dfam / masked:.1f}% of {masked:,} masked bp", file=sys.stderr)
+                for match in (".", "all", "known", "novel"):
+                    if (sp, src, match) not in agg:
+                        if match in ("known", "novel") and (sp, src, "all") in agg:
+                            agg[(sp, src, match)] = [0, 0, 0, []]
+                        else:
+                            continue
+                    n_fam, n_hits, bp, divs = agg[(sp, src, match)]
+                    pct_nn = 100.0 * bp / non_n[sp] if non_n.get(sp) else float("nan")
+                    out.write(f"{sp}\t{src}\t{match}\t{n_fam}\t{n_hits}\t{bp}\t"
+                              f"{100.0 * bp / masked if masked else 0.0:.2f}\t"
+                              f"{pct_nn:.4f}\t{weighted_median(divs):.1f}\n")
+            own = agg.get((sp, "own_denovo", "all"), agg.get((sp, "own_denovo", "."), [0, 0, 0]))[2]
+            dfam = agg.get((sp, "dfam", "."), [0, 0, 0])[2]
+            msg = (f"[library_source] {sp}: own de novo {100.0 * own / masked:.1f}%, "
+                   f"Dfam {100.0 * dfam / masked:.1f}% of {masked:,} masked bp")
+            if known is not None:
+                dn_known = sum(a[2] for (s_, src, m), a in agg.items() if s_ == sp and m == "known")
+                dn_novel = sum(a[2] for (s_, src, m), a in agg.items() if s_ == sp and m == "novel")
+                msg += (f"; de novo matching Dfam {100.0 * dn_known / masked:.1f}%, "
+                        f"novel {100.0 * dn_novel / masked:.1f}%")
+            print(msg, file=sys.stderr)
 
 
 if __name__ == "__main__":

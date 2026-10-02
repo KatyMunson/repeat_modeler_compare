@@ -1702,13 +1702,31 @@ rule reclassify_unknown:
         "--min-rfam-cov {params.min_rfam_cov} --out {output.tsv} > {log} 2>&1"
 
 
+DFAM_MATCHES = f"{OUTDIR}/library/dfam_overlap/dfam_matches.tsv"
+
+
+def library_source_dfam_matches(wildcards):
+    # summary/ (the full run) always builds dfam_overlap first; the
+    # shared-only report uses the matches only if they were already built,
+    # so report_shared_only never pulls the library-discovery chain.
+    if not INCLUDE_DFAM:
+        return []
+    if wildcards.sumdir == "summary":
+        return [DFAM_MATCHES]
+    if os.path.exists(DFAM_MATCHES):
+        return [ancient(DFAM_MATCHES)]
+    return []
+
+
 rule library_source:
     # How much of each species' masked bp comes from its own de novo
     # families, the other species' de novo families, Dfam, and RepeatMasker's
-    # built-in simple-repeat screen (README "Library sources").
+    # built-in simple-repeat screen; de novo sources split into known-in-Dfam
+    # vs novel when dfam_matches.tsv is available (README "Library sources").
     input:
         family_tandem=f"{OUTDIR}/{{sumdir}}/family_tandem.tsv",
         assembly_covariates=f"{OUTDIR}/{{sumdir}}/assembly_covariates.tsv",
+        dfam_matches=library_source_dfam_matches,
     output:
         tsv=f"{OUTDIR}/{{sumdir}}/library_source.tsv",
     wildcard_constraints:
@@ -1723,10 +1741,13 @@ rule library_source:
     params:
         species=" ".join(SPECIES_IDS),
         sep=config["library"]["species_prefix_sep"],
+        matches_arg=lambda wildcards, input: (
+            f"--dfam-matches {input.dfam_matches}" if input.dfam_matches else ""
+        ),
     shell:
         "python3 {SCRIPTS}/library_source.py --family-tandem {input.family_tandem} "
         "--assembly-covariates {input.assembly_covariates} --species-ids {params.species} "
-        "--sep '{params.sep}' --out {output.tsv} > {log} 2>&1"
+        "--sep '{params.sep}' {params.matches_arg} --out {output.tsv} > {log} 2>&1"
 
 
 rule verify_classes:

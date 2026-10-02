@@ -251,6 +251,70 @@ Apart from the Unknown_tandem class, nothing is relabelled. To check it against 
 pipeline, compare `satellite_like` families with the motifs that pass in
 that pipeline's own QC on the same assembly.
 
+## Reclassifying Unknown families (`classify`)
+
+Three cheap, independent screens run on every `#Unknown` consensus in the
+shared library (`{outdir}/classify/`). `reclassify_unknown.py` merges them
+into `unknown_reclassification.tsv`, which `summarize` applies to the
+`.out`/`.align` labels. Family names don't change, so **nothing is
+remasked**: turning `classify.enabled` on or off only reruns `summarize` and
+everything downstream of it.
+
+| screen | tool | answers | evidence |
+|---|---|---|---|
+| protein domains | TEsorter, REXdb-metazoa and GyDB, `-dp2` (domain hits only, no similarity pass) | which TE order / superfamily | `domain` |
+| structured RNA | Infernal `cmscan --rfam --cut_ga` against Rfam | rRNA / tRNA / snRNA / srpRNA | `rfam` |
+| host genes | DIAMOND blastx against TE-cleaned host proteins | is it a gene, not a TE | `host_protein` |
+
+Precedence (first match wins; only `Unknown` families change):
+
+1. **Unknown_tandem** (`family_tandem`, array evidence) always wins.
+2. **domain**: a TEsorter call with at least `tesorter_min_domains` domains,
+   mapped to RepeatMasker names (`LTR/Gypsy`, `DNA/hAT`, `DNA/CMC-EnSpm`, ...;
+   unmapped superfamilies become `<order>/<TEsorter name>`).
+3. **rfam**: the hit covers at least `min_rfam_cov` of the consensus.
+4. **host_protein**: the best host protein covers at least `min_host_cov`,
+   giving `Other/host_gene`. These are excluded from TE classes and counted in Other.
+
+The family stays Unknown, with the reason in `conflict`, if:
+- REXdb and GyDB disagree on order, or
+- a domain call coincides with a qualifying host or Rfam hit (e.g. a
+  domesticated TE gene).
+
+`diamond_best` and `rfam_best` show the best hit even below the coverage cut.
+For example, a tRNA-headed SINE shows a partial tRNA hit.
+
+`family_composition.tsv` gains `bp_from_unknown`: the bp of each
+Class/Family that came from relabelled Unknown families. Report how much
+moved with it, together with the `evidence` column.
+
+**Host proteins.**
+- `annotation_proteins` takes the species' gene annotations, e.g. NCBI's
+  `complete.proteins.faa` for Esto and the MLI protein FASTA. Not the
+  transcripts: DIAMOND needs proteins.
+- `swissprot_fasta` is optional.
+- Gene annotations still carry TE-derived models, so the proteins are
+  filtered before the DIAMOND database is built:
+  - all inputs: by `te_protein_keywords` in their descriptions
+  - annotation proteins also: by TEsorter's protein mode (any TE domain drops the protein)
+- Domesticated TE genes (PGBD, ZBED, CENP-B...) are dropped too, on purpose: a
+  family matching one keeps its TE label rather than becoming a "host gene".
+- The host log reports how many proteins each filter removed.
+
+**Rfam.** Download `Rfam.cm` (and `Rfam.clanin`), and run `cmpress Rfam.cm`
+once. The rule stops with a message if that hasn't been done.
+
+**Notes.**
+- A screen whose input is empty (`annotation_proteins`/`swissprot_fasta`, or
+  `rfam_cm`) is skipped and treated as "no evidence".
+- TEsorter always runs while `classify.enabled` is on.
+- The table comes from the shared library. In the own arm it relabels the
+  same family names, which covers most families. Own-library families that
+  were merged away during clustering keep their original label.
+- To toggle from the command line, use e.g.
+  `--config "classify={enabled: false}"`. Booleans passed that way arrive as
+  strings and are parsed accordingly.
+
 ## Satellite analysis (removed)
 
 A satellite arm existed briefly. It was a satellite-only RepeatMasker

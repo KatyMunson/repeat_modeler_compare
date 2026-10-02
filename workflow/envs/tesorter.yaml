@@ -1,0 +1,10 @@
+name: tesorter
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  # TEsorter bundles the REXdb (incl. rexdb-metazoa) and GyDB HMMs; hmmer for hmmscan.
+  - tesorter>=1.4.6
+  - hmmer
+  - python>=3.8

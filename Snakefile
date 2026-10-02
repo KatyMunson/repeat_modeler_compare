@@ -46,6 +46,7 @@
 
 import os
 import re
+import shlex
 
 configfile: "config.yaml"
 
@@ -168,6 +169,28 @@ echo "[env] CONDA_PREFIX=$CONDA_PREFIX python3=$(command -v python3) famdb.py=$(
 SCRIPTS = "workflow/scripts"
 VENDOR = "workflow/vendor"
 
+# Unknown-family reclassification (README "Reclassifying Unknown families").
+# Each screen runs only when its input is configured; an unconfigured screen
+# counts as "no evidence" in reclassify_unknown.py.
+def _as_bool(value):
+    # --config "key={a: false}" delivers nested values as strings ("false"),
+    # which bool() would treat as True; config.yaml gives real booleans.
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
+CLASSIFY = config.get("classify", {}) or {}
+CLASSIFY_ON = _as_bool(CLASSIFY.get("enabled", False))
+ANNOT_PROTEINS = [os.path.abspath(p) for p in (CLASSIFY.get("annotation_proteins") or [])]
+SWISSPROT = os.path.abspath(CLASSIFY["swissprot_fasta"]) if CLASSIFY.get("swissprot_fasta") else ""
+HOST_SCREEN_ON = CLASSIFY_ON and bool(ANNOT_PROTEINS or SWISSPROT)
+RFAM_CM = os.path.abspath(CLASSIFY["rfam_cm"]) if CLASSIFY.get("rfam_cm") else ""
+RFAM_ON = CLASSIFY_ON and bool(RFAM_CM)
+for _p in ANNOT_PROTEINS + ([SWISSPROT] if SWISSPROT else []) + ([RFAM_CM] if RFAM_CM else []):
+    if CLASSIFY_ON and not os.path.exists(_p):
+        raise ValueError(f"classify input does not exist: {_p}")
+
 
 LTR_CFG = config["ltr_discovery"]
 LTR_GROUPS = [f"g{i}" for i in range(int(LTR_CFG["n_groups"]))]
@@ -208,6 +231,7 @@ rule all:
         f"{OUTDIR}/summary/divergence_landscape.tsv",
         f"{OUTDIR}/summary/family_tandem.tsv",
         f"{OUTDIR}/summary/class_tandem.tsv",
+        [f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
         expand(
             f"{OUTDIR}/{{arm}}/{{species}}/divergence/{{species}}.landscape.html",
             arm=ARMS,
@@ -277,6 +301,7 @@ rule report_shared_only:
         f"{OUTDIR}/summary_shared_only/assembly_covariates.tsv",
         f"{OUTDIR}/summary_shared_only/family_tandem.tsv",
         f"{OUTDIR}/summary_shared_only/class_tandem.tsv",
+        [f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
         f"{OUTDIR}/plots_shared_only/class_composition_shared.png",
         f"{OUTDIR}/plots_shared_only/divergence_landscape.png",
         expand(
@@ -1350,9 +1375,10 @@ rule summarize:
         assembly_stats=f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv",
         tandem_table=(
             f"{OUTDIR}/{{arm}}/{{species}}/summary/family_tandem.tsv"
-            if config["family_tandem"].get("carve_unknown", True)
+            if _as_bool(config["family_tandem"].get("carve_unknown", True))
             else []
         ),
+        reclass_table=[f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
     output:
         class_chunk=f"{OUTDIR}/{{arm}}/{{species}}/summary/class_composition.tsv",
         family_chunk=f"{OUTDIR}/{{arm}}/{{species}}/summary/family_composition.tsv",
@@ -1368,14 +1394,255 @@ rule summarize:
         tissue=lambda wc: TISSUE_BY_SPECIES[wc.species],
         landscape_max_div=config["summary"]["landscape_max_div"],
         tandem_arg=lambda wc, input: f"--tandem-table {input.tandem_table}" if input.tandem_table else "",
+        reclass_arg=lambda wc, input: f"--reclass-table {input.reclass_table}" if input.reclass_table else "",
     shell:
         "python3 workflow/scripts/summarize_rm.py "
         "--out-file {input.out_file} --tbl-file {input.tbl_file} "
         "--align-file {input.align_file} --assembly-stats {input.assembly_stats} "
         "--arm {wildcards.arm} --species {wildcards.species} --tissue {params.tissue} "
-        "--landscape-max-div {params.landscape_max_div} {params.tandem_arg} "
+        "--landscape-max-div {params.landscape_max_div} {params.tandem_arg} {params.reclass_arg} "
         "--class-out {output.class_chunk} --family-out {output.family_chunk} "
         "--divergence-out {output.divergence_chunk} > {log} 2>&1"
+
+
+# -----------------------------------------------------------------------------
+# Unknown-family reclassification (classify.*): three cheap, independent
+# screens of every Unknown consensus in the shared library -- TEsorter
+# (protein domains), Rfam (structured RNA), DIAMOND against TE-free host
+# proteins -- merged by reclassify_unknown.py into one table that summarize
+# applies to .out/.align labels. Labels only: nothing is remasked.
+# -----------------------------------------------------------------------------
+rule extract_unknown_consensi:
+    input:
+        library=lambda wc: MASK_SHARED_LIBRARY or f"{OUTDIR}/library/shared_library.fa",
+    output:
+        fa=f"{OUTDIR}/classify/unknown_consensi.fa",
+    threads: config["resources"]["classify_light"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["classify_light"]["mem"] * attempt,
+        hrs=config["resources"]["classify_light"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/classify/extract_unknown_consensi.log",
+    shell:
+        "python3 {SCRIPTS}/reclassify_unknown.py extract --library {input.library} --out {output.fa} > {log} 2>&1"
+
+
+rule tesorter_unknown:
+    input:
+        fa=f"{OUTDIR}/classify/unknown_consensi.fa",
+    output:
+        rexdb=f"{OUTDIR}/classify/tesorter/unknown.rexdb-metazoa.cls.tsv",
+        gydb=f"{OUTDIR}/classify/tesorter/unknown.gydb.cls.tsv",
+    threads: config["resources"]["tesorter"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["tesorter"]["mem"] * attempt,
+        hrs=config["resources"]["tesorter"]["hrs"],
+        shell_exec="bash",
+    conda:
+        "workflow/envs/tesorter.yaml"
+    log:
+        f"{OUTDIR}/logs/classify/tesorter_unknown.log",
+    # -dp2: no TEsorter pass 2 (BLAST similarity to already-classified
+    # sequences), so every call here is domain evidence. -nolib: we don't use
+    # its RepeatMasker library.
+    params:
+        workdir=f"{OUTDIR}/classify/tesorter",
+        fa_abs=lambda wc, input: os.path.abspath(input.fa),
+        cov=CLASSIFY.get("tesorter_min_cov", 20),
+        evalue=CLASSIFY.get("tesorter_max_evalue", 1e-3),
+    shell:
+        """
+        exec > {log} 2>&1
+        set -euo pipefail
+        {ENV_PATH_GUARD}
+        mkdir -p {params.workdir} && cd {params.workdir}
+        for db in rexdb-metazoa gydb; do
+            TEsorter {params.fa_abs} -db $db -st nucl -p {threads} -cov {params.cov} -eval {params.evalue} \
+                -dp2 -nolib -pre unknown.$db -tmp tmp_$db
+            [ -f unknown.$db.cls.tsv ] || {{ echo "[ERROR] TEsorter wrote no unknown.$db.cls.tsv"; ls -l; exit 1; }}
+            rm -rf tmp_$db
+        done
+        """
+
+
+rule host_proteins_prep:
+    input:
+        annotation=ANNOT_PROTEINS,
+        swissprot=[SWISSPROT] if SWISSPROT else [],
+    output:
+        annot=f"{OUTDIR}/classify/host/annotation_proteins.kwfiltered.faa",
+        sprot=f"{OUTDIR}/classify/host/swissprot.kwfiltered.faa",
+    threads: config["resources"]["classify_light"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["classify_light"]["mem"] * attempt,
+        hrs=config["resources"]["classify_light"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/classify/host_proteins_prep.log",
+    params:
+        sprot_arg=f"--swissprot {SWISSPROT}" if SWISSPROT else "",
+        keywords=" ".join(f"--keyword {shlex.quote(k)}" for k in CLASSIFY.get("te_protein_keywords", [])),
+    shell:
+        "python3 {SCRIPTS}/host_proteins.py prep --annotation {input.annotation} {params.sprot_arg} "
+        "{params.keywords} --annot-out {output.annot} --sprot-out {output.sprot} > {log} 2>&1"
+
+
+rule host_proteins_tesorter:
+    # TE-domain screen of the annotation proteins (Swiss-Prot: keywords only).
+    input:
+        annot=f"{OUTDIR}/classify/host/annotation_proteins.kwfiltered.faa",
+    output:
+        cls=f"{OUTDIR}/classify/host/annotation.rexdb-metazoa.cls.tsv",
+        dom=f"{OUTDIR}/classify/host/annotation.rexdb-metazoa.dom.tsv",
+    threads: config["resources"]["tesorter"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["tesorter"]["mem"] * attempt,
+        hrs=config["resources"]["tesorter"]["hrs"],
+        shell_exec="bash",
+    conda:
+        "workflow/envs/tesorter.yaml"
+    log:
+        f"{OUTDIR}/logs/classify/host_proteins_tesorter.log",
+    params:
+        workdir=f"{OUTDIR}/classify/host",
+        annot_abs=lambda wc, input: os.path.abspath(input.annot),
+        cov=CLASSIFY.get("tesorter_min_cov", 20),
+        evalue=CLASSIFY.get("tesorter_max_evalue", 1e-3),
+    shell:
+        """
+        exec > {log} 2>&1
+        set -euo pipefail
+        {ENV_PATH_GUARD}
+        cd {params.workdir}
+        if [ ! -s {params.annot_abs} ]; then
+            echo "no annotation proteins: nothing to screen"
+            : > annotation.rexdb-metazoa.cls.tsv; : > annotation.rexdb-metazoa.dom.tsv
+            exit 0
+        fi
+        TEsorter {params.annot_abs} -db rexdb-metazoa -st prot -p {threads} -cov {params.cov} \
+            -eval {params.evalue} -dp2 -nolib -pre annotation.rexdb-metazoa -tmp tmp_prot
+        touch annotation.rexdb-metazoa.cls.tsv annotation.rexdb-metazoa.dom.tsv
+        rm -rf tmp_prot
+        """
+
+
+rule host_protein_db:
+    input:
+        annot=f"{OUTDIR}/classify/host/annotation_proteins.kwfiltered.faa",
+        sprot=f"{OUTDIR}/classify/host/swissprot.kwfiltered.faa",
+        cls=f"{OUTDIR}/classify/host/annotation.rexdb-metazoa.cls.tsv",
+        dom=f"{OUTDIR}/classify/host/annotation.rexdb-metazoa.dom.tsv",
+    output:
+        faa=f"{OUTDIR}/classify/host/host_proteins.faa",
+        dmnd=f"{OUTDIR}/classify/host/host_proteins.dmnd",
+    threads: config["resources"]["diamond"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["diamond"]["mem"] * attempt,
+        hrs=config["resources"]["diamond"]["hrs"],
+        shell_exec="bash",
+    conda:
+        "workflow/envs/diamond.yaml"
+    log:
+        f"{OUTDIR}/logs/classify/host_protein_db.log",
+    params:
+        db_prefix=lambda wc, output: output.dmnd[: -len(".dmnd")],
+    shell:
+        """
+        exec > {log} 2>&1
+        set -euo pipefail
+        {ENV_PATH_GUARD}
+        python3 {SCRIPTS}/host_proteins.py finalize --annot {input.annot} --sprot {input.sprot} \
+            --tesorter {input.cls} {input.dom} --out {output.faa}
+        diamond makedb --in {output.faa} -d {params.db_prefix} -p {threads}
+        """
+
+
+rule diamond_host:
+    input:
+        fa=f"{OUTDIR}/classify/unknown_consensi.fa",
+        dmnd=f"{OUTDIR}/classify/host/host_proteins.dmnd",
+    output:
+        tsv=f"{OUTDIR}/classify/diamond_host.tsv",
+    threads: config["resources"]["diamond"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["diamond"]["mem"] * attempt,
+        hrs=config["resources"]["diamond"]["hrs"],
+        shell_exec="bash",
+    conda:
+        "workflow/envs/diamond.yaml"
+    log:
+        f"{OUTDIR}/logs/classify/diamond_host.log",
+    params:
+        evalue=CLASSIFY.get("diamond_max_evalue", 1e-10),
+    shell:
+        """
+        exec > {log} 2>&1
+        set -euo pipefail
+        {ENV_PATH_GUARD}
+        diamond blastx -q {input.fa} -d {input.dmnd} -o {output.tsv} --more-sensitive \
+            -e {params.evalue} -k 25 -p {threads} \
+            --outfmt 6 qseqid sseqid pident length qstart qend qlen evalue bitscore stitle
+        """
+
+
+rule rfam_scan:
+    input:
+        fa=f"{OUTDIR}/classify/unknown_consensi.fa",
+        cm=RFAM_CM if RFAM_CM else [],
+    output:
+        tblout=f"{OUTDIR}/classify/rfam.tblout",
+    threads: config["resources"]["rfam_scan"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["rfam_scan"]["mem"] * attempt,
+        hrs=config["resources"]["rfam_scan"]["hrs"],
+        shell_exec="bash",
+    conda:
+        "workflow/envs/infernal.yaml"
+    log:
+        f"{OUTDIR}/logs/classify/rfam_scan.log",
+    params:
+        clanin=f"--clanin {os.path.abspath(CLASSIFY['rfam_clanin'])}" if CLASSIFY.get("rfam_clanin") else "",
+    shell:
+        """
+        exec > {log} 2>&1
+        set -euo pipefail
+        {ENV_PATH_GUARD}
+        [ -s {input.cm}.i1m ] || {{ echo "[ERROR] {input.cm} is not cmpress'd: run 'cmpress {input.cm}' once"; exit 1; }}
+        cmscan --rfam --cut_ga --nohmmonly --cpu {threads} {params.clanin} --tblout {output.tblout} \
+            {input.cm} {input.fa} > /dev/null
+        """
+
+
+rule reclassify_unknown:
+    input:
+        fa=f"{OUTDIR}/classify/unknown_consensi.fa",
+        rexdb=f"{OUTDIR}/classify/tesorter/unknown.rexdb-metazoa.cls.tsv",
+        gydb=f"{OUTDIR}/classify/tesorter/unknown.gydb.cls.tsv",
+        diamond=[f"{OUTDIR}/classify/diamond_host.tsv"] if HOST_SCREEN_ON else [],
+        rfam=[f"{OUTDIR}/classify/rfam.tblout"] if RFAM_ON else [],
+    output:
+        tsv=f"{OUTDIR}/classify/unknown_reclassification.tsv",
+    threads: config["resources"]["classify_light"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["classify_light"]["mem"] * attempt,
+        hrs=config["resources"]["classify_light"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/classify/reclassify_unknown.log",
+    params:
+        diamond_arg=lambda wc, input: f"--diamond {input.diamond}" if input.diamond else "",
+        rfam_arg=lambda wc, input: f"--rfam {input.rfam}" if input.rfam else "",
+        min_domains=CLASSIFY.get("tesorter_min_domains", 1),
+        min_host_cov=CLASSIFY.get("min_host_cov", 0.3),
+        max_evalue=CLASSIFY.get("diamond_max_evalue", 1e-10),
+        min_rfam_cov=CLASSIFY.get("min_rfam_cov", 0.5),
+    shell:
+        "python3 {SCRIPTS}/reclassify_unknown.py merge --consensi {input.fa} "
+        "--tesorter-rexdb {input.rexdb} --tesorter-gydb {input.gydb} "
+        "{params.diamond_arg} {params.rfam_arg} --min-domains {params.min_domains} "
+        "--min-host-cov {params.min_host_cov} --max-evalue {params.max_evalue} "
+        "--min-rfam-cov {params.min_rfam_cov} --out {output.tsv} > {log} 2>&1"
 
 
 # -----------------------------------------------------------------------------

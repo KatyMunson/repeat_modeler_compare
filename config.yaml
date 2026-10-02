@@ -96,6 +96,31 @@ family_tandem:
   major_min_copies: 1000       # copy_tier "major": >= this many copies ...
   major_min_bp: 100000         # ... or >= this many bp
 
+# Reclassify Unknown families (README "Reclassifying Unknown families").
+# Three cheap screens of every Unknown consensus in the shared library; labels
+# are applied at summarize time, nothing is remasked. A screen whose input is
+# left empty is skipped (treated as "no evidence").
+classify:
+  enabled: true
+  # Host-gene screen (DIAMOND). One TE-cleaned database serves every species.
+  # Annotation proteomes are keyword- AND TEsorter-domain-filtered; Swiss-Prot
+  # is keyword-filtered only. E.g. the NCBI annotation's complete.proteins.faa.
+  annotation_proteins: []      # [/path/Esto/complete.proteins.faa, /path/MLI_proteins.faa]
+  swissprot_fasta: ""          # optional: uniprot_sprot.fasta
+  te_protein_keywords: [transposase, "reverse transcriptase", integrase, "retrovirus-related",
+                        "gag protein", "gag-pol", "pol polyprotein", "transposable element",
+                        transposon, "rnase h", "endonuclease/reverse", "piggybac", "line-1", "orf2p"]
+  diamond_max_evalue: 1.0e-10
+  min_host_cov: 0.3            # fraction of the consensus the best host protein's HSPs cover
+  # Structured RNA (Infernal cmscan). Rfam.cm must be cmpress'd once.
+  rfam_cm: ""                  # e.g. /path/Rfam.cm
+  rfam_clanin: ""              # optional Rfam.clanin
+  min_rfam_cov: 0.5            # fraction of the consensus the Rfam hit covers
+  # Protein domains (TEsorter; REXdb metazoa + GyDB, bundled with TEsorter)
+  tesorter_min_cov: 20         # TEsorter -cov (% of the domain HMM)
+  tesorter_max_evalue: 1.0e-3  # TEsorter -eval
+  tesorter_min_domains: 1      # domains a call needs to be used
+
 summary:
   denominator: "non_n"         # non_n | total ; both are always written, this picks the headline
   landscape_max_div: 50
@@ -125,6 +150,10 @@ resources:
   divergence:       {threads: 1,  mem: 16, hrs: 8}
   summarize:        {threads: 1,  mem: 16, hrs: 6}   # parses the multi-Gb .align for the landscape
   family_tandem:    {threads: 1,  mem: 16, hrs: 4}
+  classify_light:   {threads: 1,  mem: 4,  hrs: 1}    # extract / host_proteins_prep / reclassify_unknown
+  tesorter:         {threads: 16, mem: 1,  hrs: 12}   # Unknown consensi (fast) and annotation proteins (hours)
+  diamond:          {threads: 16, mem: 2,  hrs: 6}
+  rfam_scan:        {threads: 16, mem: 1,  hrs: 6}
   combine_summaries: {threads: 1, mem: 8,  hrs: 1}
   provenance:       {threads: 1,  mem: 2,  hrs: 1}
   plot:             {threads: 1,  mem: 8,  hrs: 1}

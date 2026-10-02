@@ -62,6 +62,8 @@ def collapse_class(raw_class_family):
     class_part = raw_class_family.split("/", 1)[0]
     if class_part in CANONICAL_CLASSES:
         return class_part
+    if class_part == "Other":  # e.g. Other/host_gene from reclassify_unknown.py
+        return "Other"
     if raw_class_family not in _warned_unmapped:
         _warned_unmapped.add(raw_class_family)
         print(
@@ -71,15 +73,23 @@ def collapse_class(raw_class_family):
     return "Other"
 
 
-def relabel(family, class_family, tandem):
-    """class_family, or Unknown_tandem for an Unknown family in `tandem`."""
-    if class_family == "Unknown" and family in tandem:
-        return TANDEM_CLASS
-    return class_family
+def relabel(family, class_family, tandem, reclass=None):
+    """Class/Family for a hit of `family`. Only Unknown families change:
+    array evidence first (Unknown_tandem, from family_tandem.py), then the
+    reclassification table (reclassify_unknown.py: domain / Rfam / host
+    protein). Returns (class_family, reclassified_from or "")."""
+    if class_family != "Unknown":
+        return class_family, ""
+    if family in tandem:
+        return TANDEM_CLASS, ""
+    if reclass and family in reclass:
+        return reclass[family], "Unknown"
+    return class_family, ""
 
 
-def parse_out_file(path, tandem=frozenset()):
-    """Yield (query_seq, begin, end, score, class_family) for every hit line."""
+def parse_out_file(path, tandem=frozenset(), reclass=None):
+    """Yield (query_seq, begin, end, score, (class_family, reclassified_from))
+    for every hit line."""
     with open(path) as fh:
         for line in fh:
             fields = line.split()
@@ -93,7 +103,7 @@ def parse_out_file(path, tandem=frozenset()):
                 end = int(fields[6])
             except ValueError:
                 continue
-            class_family = relabel(fields[9], fields[10], tandem)
+            class_family = relabel(fields[9], fields[10], tandem, reclass)
             if begin > end:
                 begin, end = end, begin
             yield query_seq, begin, end, int(fields[0]), class_family
@@ -144,12 +154,16 @@ def owned_segments(records):
 
 
 def owned_bp_by_family(hits):
-    """hits: (contig, begin, end, score, class_family). Returns
-    {class_family: bp}, each base counted once, for its best hit."""
+    """hits: (contig, begin, end, score, (class_family, reclassified_from)).
+    Returns ({class_family: bp}, {class_family: bp reclassified from
+    Unknown}), each base counted once, for its best hit."""
     bp = {}
-    for seg_bp, class_family in owned_segments(hits):
+    from_unknown = {}
+    for seg_bp, (class_family, reclassified_from) in owned_segments(hits):
         bp[class_family] = bp.get(class_family, 0) + seg_bp
-    return bp
+        if reclassified_from:
+            from_unknown[class_family] = from_unknown.get(class_family, 0) + seg_bp
+    return bp, from_unknown
 
 
 def total_masked_bp(hits):
@@ -230,7 +244,7 @@ def _well_characterized(query_seq, subject_seq):
     return len(query_seq) - (len(query_seq) - _acgt_count(query_seq)) - (len(subject_seq) - _acgt_count(subject_seq))
 
 
-def parse_align_file(path, tandem=frozenset()):
+def parse_align_file(path, tandem=frozenset(), reclass=None):
     """Yield (contig, begin, end, score, class_family, kimura_pct_or_None)
     for every alignment in a RepeatMasker .align file (-a output)."""
     try:
@@ -259,7 +273,7 @@ def parse_align_file(path, tandem=frozenset()):
                 for tok in fields[8:]:
                     if "#" in tok:
                         family, class_family = tok.split("#", 1)
-                        class_family = relabel(family, class_family, tandem)
+                        class_family = relabel(family, class_family, tandem, reclass)[0]
                         break
                 if class_family is None:
                     if not missing_class_warned:
@@ -327,6 +341,7 @@ def main():
     ap.add_argument("--tissue", required=True)
     ap.add_argument("--landscape-max-div", type=int, default=50)
     ap.add_argument("--tandem-table", help="family_tandem.tsv: report its tandem Unknown families as Unknown_tandem")
+    ap.add_argument("--reclass-table", help="unknown_reclassification.tsv: relabel Unknown families it classifies")
     ap.add_argument("--class-out", required=True)
     ap.add_argument("--family-out", required=True)
     ap.add_argument("--divergence-out", required=True)
@@ -336,10 +351,14 @@ def main():
     if args.tandem_table:
         from family_tandem import tandem_families
         tandem = frozenset(tandem_families(args.tandem_table))
-    hits = list(parse_out_file(args.out_file, tandem))
+    reclass = {}
+    if args.reclass_table:
+        from reclassify_unknown import reclassified
+        reclass = reclassified(args.reclass_table)
+    hits = list(parse_out_file(args.out_file, tandem, reclass))
     total_bp, non_n_bp = read_assembly_stats(args.assembly_stats)
 
-    family_bp = owned_bp_by_family(hits)
+    family_bp, family_bp_from_unknown = owned_bp_by_family(hits)
     class_bp = {}
     for class_family, bp in family_bp.items():
         cls = collapse_class(class_family)
@@ -368,15 +387,18 @@ def main():
             fh.write(f"{args.arm}\t{args.species}\t{args.tissue}\t{cls}\t{bp}\t{pct_total:.4f}\t{pct_non_n:.4f}\n")
 
     with open(args.family_out, "w") as fh:
-        fh.write("arm\tspecies\ttissue\tclass_family\tbp\tpct_total\tpct_non_n\n")
+        # bp_from_unknown: the part of bp held by Unknown families that the
+        # reclassification table relabelled into this Class/Family.
+        fh.write("arm\tspecies\ttissue\tclass_family\tbp\tpct_total\tpct_non_n\tbp_from_unknown\n")
         for cf, bp in sorted(family_bp.items()):
             pct_total = 100.0 * bp / total_bp if total_bp else 0.0
             pct_non_n = 100.0 * bp / non_n_bp if non_n_bp else 0.0
-            fh.write(f"{args.arm}\t{args.species}\t{args.tissue}\t{cf}\t{bp}\t{pct_total:.4f}\t{pct_non_n:.4f}\n")
+            fh.write(f"{args.arm}\t{args.species}\t{args.tissue}\t{cf}\t{bp}\t{pct_total:.4f}\t{pct_non_n:.4f}\t"
+                     f"{family_bp_from_unknown.get(cf, 0)}\n")
 
     del hits
     landscape, resolved_by_class = resolve_landscape(
-        parse_align_file(args.align_file, tandem), args.landscape_max_div
+        parse_align_file(args.align_file, tandem, reclass), args.landscape_max_div
     )
     for cls, resolved_bp in sorted(resolved_by_class.items()):
         out_bp = class_bp.get(cls, 0)

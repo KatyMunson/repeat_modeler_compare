@@ -5,12 +5,21 @@ scripts import this instead of adding more copies. Python puts a script's
 own directory on sys.path, so `from fasta_utils import ...` works when a
 script is run as `python3 workflow/scripts/<name>.py`.)"""
 
+import gzip
+
+
+def open_maybe_gz(path):
+    """Open a text file for reading, transparently gunzipping *.gz."""
+    if path.endswith(".gz"):
+        return gzip.open(path, "rt")
+    return open(path)
+
 
 def iter_fasta(path):
-    """Yield (header_without_gt, sequence) for every record."""
+    """Yield (header_without_gt, sequence) for every record (plain or .gz)."""
     header = None
     seq_chunks = []
-    with open(path) as fh:
+    with open_maybe_gz(path) as fh:
         for line in fh:
             line = line.rstrip("\n")
             if not line:

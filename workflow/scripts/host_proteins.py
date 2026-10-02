@@ -26,7 +26,9 @@ from fasta_utils import iter_fasta, write_fasta
 
 def stem(path):
     base = os.path.basename(path)
-    for ext in (".gz", ".faa", ".fasta", ".fa", ".pep", ".aa"):
+    if base.endswith(".gz"):
+        base = base[:-3]
+    for ext in (".faa", ".fasta", ".fa", ".pep", ".aa"):
         if base.endswith(ext):
             base = base[: -len(ext)]
     return base.replace(" ", "_")

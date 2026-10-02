@@ -305,8 +305,17 @@ moved with it, together with the `evidence` column.
   family matching one keeps its TE label rather than becoming a "host gene".
 - The host log reports how many proteins each filter removed.
 
-**Rfam.** Download `Rfam.cm` (and `Rfam.clanin`), and run `cmpress Rfam.cm`
-once. The rule stops with a message if that hasn't been done.
+**Reference downloads.** Nothing needs installing: `--use-conda` builds the
+TEsorter, DIAMOND and Infernal environments. TEsorter's HMM databases ship
+with the package. Point the config at the downloads exactly as they come;
+`.gz` is fine for every FASTA and for `Rfam.cm`:
+- Swiss-Prot: `https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz`
+- Rfam: `https://ftp.ebi.ac.uk/pub/databases/Rfam/CURRENT/Rfam.cm.gz` (no
+  `Rfam.clanin` needed: only each consensus's best hit is used)
+
+`rfam_prep` copies or gunzips `Rfam.cm` into `{outdir}/classify/rfam/` and runs
+`cmpress` there, in the pipeline's own Infernal environment. Nothing is
+written next to your reference files.
 
 **Notes.**
 - A screen whose input is empty (`annotation_proteins`/`swissprot_fasta`, or

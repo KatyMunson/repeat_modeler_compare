@@ -1602,10 +1602,42 @@ rule diamond_host:
         """
 
 
+RFAM_PREP_CM = f"{OUTDIR}/classify/rfam/Rfam.cm"
+
+
+rule rfam_prep:
+    # Copy (or gunzip) the configured Rfam models into the run and cmpress
+    # them in the pipeline's own Infernal env, so the user only downloads
+    # Rfam.cm(.gz) -- nothing is written next to the original.
+    input:
+        cm=RFAM_CM if RFAM_CM else [],
+    output:
+        cm=RFAM_PREP_CM,
+        idx=multiext(RFAM_PREP_CM, ".i1f", ".i1i", ".i1m", ".i1p"),
+    threads: 1
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["rfam_scan"]["mem"] * attempt,
+        hrs=config["resources"]["rfam_scan"]["hrs"],
+        shell_exec="bash",
+    conda:
+        "workflow/envs/infernal.yaml"
+    log:
+        f"{OUTDIR}/logs/classify/rfam_prep.log",
+    shell:
+        """
+        exec > {log} 2>&1
+        set -euo pipefail
+        {ENV_PATH_GUARD}
+        case {input.cm} in *.gz) gzip -dc {input.cm} > {output.cm} ;; *) cp {input.cm} {output.cm} ;; esac
+        cmpress -F {output.cm}
+        """
+
+
 rule rfam_scan:
     input:
         fa=f"{OUTDIR}/classify/library_consensi.fa",
-        cm=RFAM_CM if RFAM_CM else [],
+        cm=RFAM_PREP_CM,
+        idx=multiext(RFAM_PREP_CM, ".i1f", ".i1i", ".i1m", ".i1p"),
     output:
         tblout=f"{OUTDIR}/classify/rfam.tblout",
     threads: config["resources"]["rfam_scan"]["threads"]
@@ -1617,15 +1649,15 @@ rule rfam_scan:
         "workflow/envs/infernal.yaml"
     log:
         f"{OUTDIR}/logs/classify/rfam_scan.log",
-    params:
-        clanin=f"--clanin {os.path.abspath(CLASSIFY['rfam_clanin'])}" if CLASSIFY.get("rfam_clanin") else "",
+    # No --clanin: it requires --fmt 2, which changes the tblout columns
+    # reclassify_unknown.py reads, and the parser keeps only each consensus's
+    # best-scoring hit anyway, so clan-overlap filtering adds nothing here.
     shell:
         """
         exec > {log} 2>&1
         set -euo pipefail
         {ENV_PATH_GUARD}
-        [ -s {input.cm}.i1m ] || {{ echo "[ERROR] {input.cm} is not cmpress'd: run 'cmpress {input.cm}' once"; exit 1; }}
-        cmscan --rfam --cut_ga --nohmmonly --cpu {threads} {params.clanin} --tblout {output.tblout} \
+        cmscan --rfam --cut_ga --nohmmonly --cpu {threads} --tblout {output.tblout} \
             {input.cm} {input.fa} > /dev/null
         """
 

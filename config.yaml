@@ -136,6 +136,11 @@ summary:
   # Optional: TSV of families that are pieces of one element (group, family
   # columns; family_groups.py members). Adds element_groups.tsv. "" = off.
   element_groups: ""
+  # curation_candidates.tsv: families holding >= this % of a species' masked
+  # bp that are Unknown, too long for their label, flagged by verify_classes,
+  # or younger than curation_young_div (median .out divergence %).
+  curation_min_pct_masked: 0.1
+  curation_young_div: 3.0
 
 resources:
   prep_genome:      {threads: 1,  mem: 8,  hrs: 4}

@@ -428,6 +428,31 @@ Caveats:
   in both species (old, partial matches, ~24% divergence), while about 11% of
   each genome was masked by the *other* species' de novo families.
 
+## Curating a family (`curation_candidates.tsv`)
+
+`{summary}/curation_candidates.tsv` ranks families worth a manual recheck:
+those holding >= `summary.curation_min_pct_masked` (0.1%) of a species'
+masked bp and flagged as
+- `unknown` / `unknown_tandem`: still Unknown after the classify screens
+- `long_for_class(len>max)`: consensus longer than plausible for its label
+  (e.g. > 1.5 kb for a SINE, > 5 kb for Tc1/hAT/PiggyBac, > 9 kb for a LINE),
+  usually a chimeric consensus or a wrong label
+- `verify:<status>`: a class_disagreements.tsv status (Maverick
+  `domain_conflict` is expected and not flagged)
+- `young(div%)`: median `.out` divergence < `summary.curation_young_div`
+  (3%), a recent burst whose near-identical copies are easy to curate
+
+Families already in `summary.element_groups` are listed last with their
+group. The recheck that resolved `Esto_rnd-1_family-332` (a non-autonomous
+LTR element split across 26 families):
+1. `workflow/scripts/family_profile.py` (consensus structure, copy
+   coverage, full-length copies, TSDs), then again with `--flank 5000`
+   to see whether copies continue past the consensus ends
+2. align the extended copies and build a consensus (e.g. abPOA, or MAFFT
+   plus a gap-aware majority consensus)
+3. `family_groups.py members` to list the library families that are pieces
+   of it; `ltr_ages.py` for LTR elements
+
 ## Element groups (`element_groups.tsv`, optional)
 
 RepeatModeler often splits one element across several library families,

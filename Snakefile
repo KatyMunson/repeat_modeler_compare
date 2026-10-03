@@ -243,6 +243,7 @@ rule all:
         f"{OUTDIR}/summary/class_tandem.tsv",
         f"{OUTDIR}/summary/library_source.tsv",
         [f"{OUTDIR}/summary/element_groups.tsv"] if ELEMENT_GROUPS else [],
+        f"{OUTDIR}/summary/curation_candidates.tsv",
         [f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
         [f"{OUTDIR}/summary/class_verification.tsv", f"{OUTDIR}/summary/class_disagreements.tsv"] if CLASSIFY_ON else [],
         expand(
@@ -316,6 +317,7 @@ rule report_shared_only:
         f"{OUTDIR}/summary_shared_only/class_tandem.tsv",
         f"{OUTDIR}/summary_shared_only/library_source.tsv",
         [f"{OUTDIR}/summary_shared_only/element_groups.tsv"] if ELEMENT_GROUPS else [],
+        f"{OUTDIR}/summary_shared_only/curation_candidates.tsv",
         [f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
         [f"{OUTDIR}/summary_shared_only/class_verification.tsv",
          f"{OUTDIR}/summary_shared_only/class_disagreements.tsv"] if CLASSIFY_ON else [],
@@ -1791,6 +1793,41 @@ rule element_groups:
         "python3 {SCRIPTS}/family_groups.py report --groups {input.groups} "
         "--family-tandem {input.family_tandem} --assembly-covariates {input.assembly_covariates} "
         "--species-ids {params.species} --out {output.tsv} > {log} 2>&1"
+
+
+rule curation_candidates:
+    # Families worth a manual recheck: large and Unknown, consensus too long
+    # for their label, flagged by verify_classes, or very young (README
+    # "Curating a family").
+    input:
+        family_tandem=f"{OUTDIR}/{{sumdir}}/family_tandem.tsv",
+        reclass=[f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
+        disagreements=[f"{OUTDIR}/{{sumdir}}/class_disagreements.tsv"] if CLASSIFY_ON else [],
+        groups=ELEMENT_GROUPS or [],
+    output:
+        tsv=f"{OUTDIR}/{{sumdir}}/curation_candidates.tsv",
+    wildcard_constraints:
+        sumdir="summary|summary_shared_only",
+    threads: 1
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["classify_light"]["mem"] * attempt,
+        hrs=config["resources"]["classify_light"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/summary/curation_candidates_{{sumdir}}.log",
+    params:
+        species=" ".join(SPECIES_IDS),
+        opt=lambda wc, input: " ".join(
+            ([f"--reclass {input.reclass}"] if input.reclass else [])
+            + ([f"--disagreements {input.disagreements}"] if input.disagreements else [])
+            + ([f"--groups {input.groups}"] if input.groups else [])
+        ),
+        min_pct=config["summary"].get("curation_min_pct_masked", 0.1),
+        young=config["summary"].get("curation_young_div", 3.0),
+    shell:
+        "python3 {SCRIPTS}/curation_candidates.py --family-tandem {input.family_tandem} {params.opt} "
+        "--species-ids {params.species} --min-pct-masked {params.min_pct} --young-div {params.young} "
+        "--out {output.tsv} > {log} 2>&1"
 
 
 rule verify_classes:

@@ -292,7 +292,10 @@ Precedence (first match wins; only `Unknown` families change):
    (median ~1,400).
 
 The family stays Unknown, with the reason in `conflict`, if:
-- REXdb and GyDB disagree on order, or
+- REXdb and GyDB disagree on order (except a REXdb Maverick/Polinton call
+  against a GyDB LTR call: GyDB has no Maverick models and calls the
+  Maverick integrase Gypsy-like, so REXdb's call is kept; verification
+  treats it the same way), or
 - a domain call coincides with a qualifying host or Rfam hit (e.g. a
   domesticated TE gene).
 
@@ -441,9 +444,12 @@ masked bp and flagged as
   `domain_conflict` is expected and not flagged)
 - `young(div%)`: median `.out` divergence < `summary.curation_young_div`
   (3%), a recent burst whose near-identical copies are easy to curate
+- `ltr_pipeline_dna_label`: found by the LTR pipeline (`<sp>_ltr-N_family-M`,
+  a structural LTR candidate) but labelled `DNA/...`; the label is probably
+  wrong
 
-Families already in `summary.element_groups` are listed last with their
-group. The recheck that resolved `Esto_rnd-1_family-332` (a non-autonomous
+Families already in `summary.element_groups` or `classify.curated_families`
+are listed last with their element. The recheck that resolved `Esto_rnd-1_family-332` (a non-autonomous
 LTR element split across 26 families):
 1. `workflow/scripts/family_profile.py` (consensus structure, copy
    coverage, full-length copies, TSDs), then again with `--flank 5000`
@@ -452,6 +458,42 @@ LTR element split across 26 families):
    plus a gap-aware majority consensus)
 3. `family_groups.py members` to list the library families that are pieces
    of it; `ltr_ages.py` for LTR elements
+4. name it (below) and add its rows to `classify.curated_families`
+
+## Naming curated elements
+
+Curated elements follow the Dfam / RepBase convention:
+
+    <Superfamily>-<n>[N]_<species>      e.g. Gypsy-1_Esto, Gypsy-N1_Esto, hAT-N2_Esto
+
+- `<Superfamily>`: the RepeatMasker superfamily (Gypsy, Copia, ERV1, CR1,
+  RTE, hAT, TcMar, PiggyBac, Maverick, Helitron, ...), or the class when
+  the superfamily is not established (`LTR-N1_Esto`)
+- `<n>`: running number per superfamily and species, in the order elements
+  are curated; never reused
+- `N`: non-autonomous (no coding capacity of its own; mobilised in trans),
+  as in RepBase's `hAT-N1_DR`
+- `_<species>`: the pipeline's species ID (`_Esto`, `_Mlim`), matching
+  Dfam's `Naiad_Ebur` style
+- LTR elements: the curated library entries are `<name>-LTR` and `<name>-I`
+  (internal region), as RepeatMasker libraries store them; the table's
+  `part` column records which library families are which
+- satellites: `SAT-<n>_<species>` (Dfam style), with the monomer length in
+  `note`
+
+The curated-families table maps the original library families (kept as the
+permanent IDs for traceability) to the element and its RepeatMasker
+`class_family` (`LTR/Gypsy`, never the element name): the format of
+`family_groups.py members` output, with `class_family` filled
+(`members --class-family LTR/Gypsy --ltr-len 1695`). Rows from several
+elements go in one file. Set `classify.curated_families` to it:
+- `summarize_rm.py` labels every member family's hits with `class_family`,
+  over RepeatClassifier, the tandem carve-out and the classify screens
+  (`family_composition.tsv` column `bp_curated` shows how much)
+- `element_groups.tsv` sums each element's members
+- `curation_candidates.tsv` lists them as curated
+Nothing is remasked; rerun the report with `--forcerun summarize` after
+editing the table.
 
 ## Element groups (`element_groups.tsv`, optional)
 
@@ -468,7 +510,9 @@ footprint:
    lists library families with >= 80% identity over >= 50% of their own
    length. Review the list; concatenate several elements' outputs into one
    file.
-4. Set `summary.element_groups: groups.tsv` and rerun the report.
+4. Set `summary.element_groups: groups.tsv` and rerun the report. (For a
+   named element with a curated class, use `classify.curated_families`
+   instead: it also relabels, and its elements are grouped the same way.)
 
 `element_groups.tsv` has one `group` row per species and element (members
 present, `.out` hits, bp, % of masked, % non-N) and one `member` row per

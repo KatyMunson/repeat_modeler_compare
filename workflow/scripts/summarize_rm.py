@@ -73,11 +73,15 @@ def collapse_class(raw_class_family):
     return "Other"
 
 
-def relabel(family, class_family, tandem, reclass=None):
-    """Class/Family for a hit of `family`. Only Unknown families change:
-    array evidence first (Unknown_tandem, from family_tandem.py), then the
-    reclassification table (reclassify_unknown.py: domain / Rfam / host
-    protein). Returns (class_family, reclassified_from or "")."""
+def relabel(family, class_family, tandem, reclass=None, curated=None):
+    """Class/Family for a hit of `family`. A curated label (classify.
+    curated_families, any original class) wins; otherwise only Unknown
+    families change: array evidence first (Unknown_tandem, from
+    family_tandem.py), then the reclassification table (reclassify_unknown.py:
+    domain / Rfam / host protein). Returns (class_family, origin) with origin
+    "curated", "Unknown" (relabelled by the screens) or ""."""
+    if curated and family in curated:
+        return curated[family], "curated"
     if class_family != "Unknown":
         return class_family, ""
     if family in tandem:
@@ -87,7 +91,7 @@ def relabel(family, class_family, tandem, reclass=None):
     return class_family, ""
 
 
-def parse_out_file(path, tandem=frozenset(), reclass=None):
+def parse_out_file(path, tandem=frozenset(), reclass=None, curated=None):
     """Yield (query_seq, begin, end, score, (class_family, reclassified_from))
     for every hit line."""
     with open(path) as fh:
@@ -103,7 +107,7 @@ def parse_out_file(path, tandem=frozenset(), reclass=None):
                 end = int(fields[6])
             except ValueError:
                 continue
-            class_family = relabel(fields[9], fields[10], tandem, reclass)
+            class_family = relabel(fields[9], fields[10], tandem, reclass, curated)
             if begin > end:
                 begin, end = end, begin
             yield query_seq, begin, end, int(fields[0]), class_family
@@ -154,16 +158,20 @@ def owned_segments(records):
 
 
 def owned_bp_by_family(hits):
-    """hits: (contig, begin, end, score, (class_family, reclassified_from)).
-    Returns ({class_family: bp}, {class_family: bp reclassified from
-    Unknown}), each base counted once, for its best hit."""
+    """hits: (contig, begin, end, score, (class_family, origin)).
+    Returns ({class_family: bp}, {class_family: bp relabelled from Unknown by
+    the screens}, {class_family: bp labelled by the curated table}), each
+    base counted once, for its best hit."""
     bp = {}
     from_unknown = {}
-    for seg_bp, (class_family, reclassified_from) in owned_segments(hits):
+    curated = {}
+    for seg_bp, (class_family, origin) in owned_segments(hits):
         bp[class_family] = bp.get(class_family, 0) + seg_bp
-        if reclassified_from:
+        if origin == "Unknown":
             from_unknown[class_family] = from_unknown.get(class_family, 0) + seg_bp
-    return bp, from_unknown
+        elif origin == "curated":
+            curated[class_family] = curated.get(class_family, 0) + seg_bp
+    return bp, from_unknown, curated
 
 
 def total_masked_bp(hits):
@@ -244,7 +252,7 @@ def _well_characterized(query_seq, subject_seq):
     return len(query_seq) - (len(query_seq) - _acgt_count(query_seq)) - (len(subject_seq) - _acgt_count(subject_seq))
 
 
-def parse_align_file(path, tandem=frozenset(), reclass=None):
+def parse_align_file(path, tandem=frozenset(), reclass=None, curated=None):
     """Yield (contig, begin, end, score, class_family, kimura_pct_or_None)
     for every alignment in a RepeatMasker .align file (-a output)."""
     try:
@@ -273,7 +281,7 @@ def parse_align_file(path, tandem=frozenset(), reclass=None):
                 for tok in fields[8:]:
                     if "#" in tok:
                         family, class_family = tok.split("#", 1)
-                        class_family = relabel(family, class_family, tandem, reclass)[0]
+                        class_family = relabel(family, class_family, tandem, reclass, curated)[0]
                         break
                 if class_family is None:
                     if not missing_class_warned:
@@ -342,6 +350,7 @@ def main():
     ap.add_argument("--landscape-max-div", type=int, default=50)
     ap.add_argument("--tandem-table", help="family_tandem.tsv: report its tandem Unknown families as Unknown_tandem")
     ap.add_argument("--reclass-table", help="unknown_reclassification.tsv: relabel Unknown families it classifies")
+    ap.add_argument("--curated-table", help="curated families TSV (family, class_family): labels that win")
     ap.add_argument("--class-out", required=True)
     ap.add_argument("--family-out", required=True)
     ap.add_argument("--divergence-out", required=True)
@@ -355,10 +364,14 @@ def main():
     if args.reclass_table:
         from reclassify_unknown import reclassified
         reclass = reclassified(args.reclass_table)
-    hits = list(parse_out_file(args.out_file, tandem, reclass))
+    curated = {}
+    if args.curated_table:
+        from family_groups import curated_classes
+        curated = curated_classes(args.curated_table)
+    hits = list(parse_out_file(args.out_file, tandem, reclass, curated))
     total_bp, non_n_bp = read_assembly_stats(args.assembly_stats)
 
-    family_bp, family_bp_from_unknown = owned_bp_by_family(hits)
+    family_bp, family_bp_from_unknown, family_bp_curated = owned_bp_by_family(hits)
     class_bp = {}
     for class_family, bp in family_bp.items():
         cls = collapse_class(class_family)
@@ -388,17 +401,18 @@ def main():
 
     with open(args.family_out, "w") as fh:
         # bp_from_unknown: the part of bp held by Unknown families that the
-        # reclassification table relabelled into this Class/Family.
-        fh.write("arm\tspecies\ttissue\tclass_family\tbp\tpct_total\tpct_non_n\tbp_from_unknown\n")
+        # reclassification table relabelled into this Class/Family;
+        # bp_curated: the part labelled by the curated-families table.
+        fh.write("arm\tspecies\ttissue\tclass_family\tbp\tpct_total\tpct_non_n\tbp_from_unknown\tbp_curated\n")
         for cf, bp in sorted(family_bp.items()):
             pct_total = 100.0 * bp / total_bp if total_bp else 0.0
             pct_non_n = 100.0 * bp / non_n_bp if non_n_bp else 0.0
             fh.write(f"{args.arm}\t{args.species}\t{args.tissue}\t{cf}\t{bp}\t{pct_total:.4f}\t{pct_non_n:.4f}\t"
-                     f"{family_bp_from_unknown.get(cf, 0)}\n")
+                     f"{family_bp_from_unknown.get(cf, 0)}\t{family_bp_curated.get(cf, 0)}\n")
 
     del hits
     landscape, resolved_by_class = resolve_landscape(
-        parse_align_file(args.align_file, tandem, reclass), args.landscape_max_div
+        parse_align_file(args.align_file, tandem, reclass, curated), args.landscape_max_div
     )
     for cls, resolved_bp in sorted(resolved_by_class.items()):
         out_bp = class_bp.get(cls, 0)

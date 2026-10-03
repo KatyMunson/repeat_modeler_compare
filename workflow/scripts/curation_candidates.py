@@ -17,13 +17,22 @@ masked bp (owned_bp, combined family_tandem.tsv) AND at least one flag:
   young            median .out divergence < --young-div: a recent burst,
                    biologically interesting and the easiest to curate
                    (near-identical copies)
+  ltr_pipeline_dna_label
+                   found by the LTR pipeline (<sp>_ltr-N_family-M: a
+                   structural LTR candidate) but labelled DNA/...: the label
+                   is probably wrong
 
 Families already in an element group (--groups, summary.element_groups) are
 listed with curated=<group> and ranked last, so finished work drops out.
 Ranked by the largest pct_of_masked across species. Stdlib only."""
 
 import argparse
+import re
 import sys
+
+from family_groups import curated_classes, read_groups
+
+LTR_PIPELINE = re.compile(r"_ltr-\d+_family-")
 
 # Longest-prefix match on class_family. Generous upper bounds for an
 # autonomous element of each type; a consensus above them is suspect.
@@ -74,7 +83,8 @@ def main():
     ap.add_argument("--family-tandem", required=True, help="combined family_tandem.tsv")
     ap.add_argument("--reclass", default="", help="unknown_reclassification.tsv")
     ap.add_argument("--disagreements", default="", help="class_disagreements.tsv")
-    ap.add_argument("--groups", default="", help="element groups TSV (group, family)")
+    ap.add_argument("--groups", nargs="*", default=[],
+                    help="element groups / curated-families TSVs (group or element, family[, class_family])")
     ap.add_argument("--species-ids", nargs="*", default=[])
     ap.add_argument("--min-pct-masked", type=float, default=0.1)
     ap.add_argument("--young-div", type=float, default=3.0)
@@ -100,15 +110,17 @@ def main():
         for r in read_tsv(args.disagreements):
             status[r["family"]] = (r["status"], r.get("domain_call", ""))
     group = {}
-    if args.groups:
-        for r in read_tsv(args.groups):
-            group[r["family"].split("#", 1)[0]] = r["group"]
+    curated = {}
+    for path in args.groups:
+        for g, fam, _row in read_groups(path):
+            group[fam] = g
+        curated.update(curated_classes(path))
 
     rows = []
     for fam, by_sp in per.items():
         any_row = next(iter(by_sp.values()))
         orig = any_row["class_family"]
-        cls = new_class.get(fam, orig)
+        cls = curated.get(fam, new_class.get(fam, orig))
         pcts = {sp: 100.0 * int(by_sp[sp]["owned_bp"]) / masked[sp] if sp in by_sp else 0.0 for sp in species}
         top = max(pcts.values()) if pcts else 0.0
         if top < args.min_pct_masked:
@@ -132,6 +144,8 @@ def main():
             flags.append(f"verify:{st[0]}" + (f"({st[1]})" if st[1] else ""))
         if div == div and div < args.young_div:
             flags.append(f"young({div:.1f}%)")
+        if LTR_PIPELINE.search(fam) and cls.startswith("DNA") and fam not in curated:
+            flags.append("ltr_pipeline_dna_label")
         if not flags:
             continue
         rows.append((fam in group, -top, fam, orig, cls, cons_len, flags, by_sp, pcts, div,

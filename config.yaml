@@ -118,6 +118,11 @@ classify:
   host_max_copies: 50          # a host-protein match labels a family Other/host_gene only if it has
                                # <= this many .out hits in every species; above it the "gene" is a TE
                                # ORF the annotation called a gene (note/status host_annotated_te_orf)
+  # Curated families (README "Naming curated elements"): a TSV in the
+  # family_groups.py format with class_family filled. Its labels win over
+  # RepeatClassifier and the screens in every summary; its elements are also
+  # summed in element_groups.tsv. "" = none.
+  curated_families: ""
   # Structured RNA (Infernal cmscan). Point at the download as-is; the
   # pipeline copies/gunzips it into {outdir}/classify/rfam/ and cmpress'es it.
   rfam_cm: ""                  # e.g. /path/Rfam.cm.gz (ftp.ebi.ac.uk/pub/databases/Rfam/CURRENT/)

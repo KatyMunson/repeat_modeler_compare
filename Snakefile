@@ -189,6 +189,10 @@ PLOT_SPECIES_ORDER = ",".join(list(_order) + [s for s in SPECIES_IDS if s not in
 # Optional groups TSV (family_groups.py members): families that are pieces
 # of one element, summed into {summary}/element_groups.tsv.
 ELEMENT_GROUPS = config["summary"].get("element_groups", "") or ""
+# Optional curated-families table (same format, class_family filled):
+# its labels win in summarize, and its elements are grouped too.
+CURATED_FAMILIES = (config.get("classify", {}) or {}).get("curated_families", "") or ""
+GROUP_TABLES = [p for p in (ELEMENT_GROUPS, CURATED_FAMILIES) if p]
 
 CLASSIFY = config.get("classify", {}) or {}
 CLASSIFY_ON = _as_bool(CLASSIFY.get("enabled", False))
@@ -242,7 +246,7 @@ rule all:
         f"{OUTDIR}/summary/family_tandem.tsv",
         f"{OUTDIR}/summary/class_tandem.tsv",
         f"{OUTDIR}/summary/library_source.tsv",
-        [f"{OUTDIR}/summary/element_groups.tsv"] if ELEMENT_GROUPS else [],
+        [f"{OUTDIR}/summary/element_groups.tsv"] if GROUP_TABLES else [],
         f"{OUTDIR}/summary/curation_candidates.tsv",
         [f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
         [f"{OUTDIR}/summary/class_verification.tsv", f"{OUTDIR}/summary/class_disagreements.tsv"] if CLASSIFY_ON else [],
@@ -316,7 +320,7 @@ rule report_shared_only:
         f"{OUTDIR}/summary_shared_only/family_tandem.tsv",
         f"{OUTDIR}/summary_shared_only/class_tandem.tsv",
         f"{OUTDIR}/summary_shared_only/library_source.tsv",
-        [f"{OUTDIR}/summary_shared_only/element_groups.tsv"] if ELEMENT_GROUPS else [],
+        [f"{OUTDIR}/summary_shared_only/element_groups.tsv"] if GROUP_TABLES else [],
         f"{OUTDIR}/summary_shared_only/curation_candidates.tsv",
         [f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
         [f"{OUTDIR}/summary_shared_only/class_verification.tsv",
@@ -1398,6 +1402,7 @@ rule summarize:
             else []
         ),
         reclass_table=[f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
+        curated_table=[CURATED_FAMILIES] if CURATED_FAMILIES else [],
     output:
         class_chunk=f"{OUTDIR}/{{arm}}/{{species}}/summary/class_composition.tsv",
         family_chunk=f"{OUTDIR}/{{arm}}/{{species}}/summary/family_composition.tsv",
@@ -1414,13 +1419,14 @@ rule summarize:
         landscape_max_div=config["summary"]["landscape_max_div"],
         tandem_arg=lambda wc, input: f"--tandem-table {input.tandem_table}" if input.tandem_table else "",
         reclass_arg=lambda wc, input: f"--reclass-table {input.reclass_table}" if input.reclass_table else "",
+        curated_arg=lambda wc, input: f"--curated-table {input.curated_table}" if input.curated_table else "",
     shell:
         "python3 workflow/scripts/summarize_rm.py "
         "--out-file {input.out_file} --tbl-file {input.tbl_file} "
         "--align-file {input.align_file} --assembly-stats {input.assembly_stats} "
         "--arm {wildcards.arm} --species {wildcards.species} --tissue {params.tissue} "
         "--landscape-max-div {params.landscape_max_div} {params.tandem_arg} {params.reclass_arg} "
-        "--class-out {output.class_chunk} --family-out {output.family_chunk} "
+        "{params.curated_arg} --class-out {output.class_chunk} --family-out {output.family_chunk} "
         "--divergence-out {output.divergence_chunk} > {log} 2>&1"
 
 
@@ -1773,7 +1779,7 @@ rule element_groups:
     # (summary.element_groups, from family_groups.py members). README
     # "Element groups".
     input:
-        groups=ELEMENT_GROUPS or [],
+        groups=GROUP_TABLES,
         family_tandem=f"{OUTDIR}/{{sumdir}}/family_tandem.tsv",
         assembly_covariates=f"{OUTDIR}/{{sumdir}}/assembly_covariates.tsv",
     output:
@@ -1803,7 +1809,7 @@ rule curation_candidates:
         family_tandem=f"{OUTDIR}/{{sumdir}}/family_tandem.tsv",
         reclass=[f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
         disagreements=[f"{OUTDIR}/{{sumdir}}/class_disagreements.tsv"] if CLASSIFY_ON else [],
-        groups=ELEMENT_GROUPS or [],
+        groups=GROUP_TABLES,
     output:
         tsv=f"{OUTDIR}/{{sumdir}}/curation_candidates.tsv",
     wildcard_constraints:

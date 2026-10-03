@@ -5,12 +5,25 @@ its LTRs) and report the element's total masked footprint. Reporting only:
 nothing is remasked, and each base still belongs to the one family that won
 it (family_tandem.tsv owned_bp), so a group's bp is the sum of its members'.
 
+The groups TSV doubles as the curated-families table (classify.
+curated_families): when its class_family column is filled, summarize_rm.py
+labels every member family with it, over any automatic label. Columns:
+  group          curated element name (README "Naming curated elements",
+                 e.g. Gypsy-N1_Esto); `element` is accepted as a synonym
+  family         library family (original RepeatModeler / LTR-pipeline ID)
+  class_family   RepeatMasker Class/Superfamily to report (LTR/Gypsy, ...);
+                 empty or "." = group only, no relabel
+  part           LTR / I (internal) / full / mixed / . (informational)
+  evidence, note free text (how the element was curated)
+  pident, family_cov, element_start, element_end   from `members`
+
 Subcommands:
   members   from a blastn of a curated element consensus (query) against
             the library (subject), list library families that are pieces
             of it: >= --min-id identity over >= --min-cov of the library
-            family's own length (merged HSPs). Writes a groups TSV:
-              group  family  pident  family_cov  element_start  element_end
+            family's own length (merged HSPs). With --ltr-len, `part` says
+            whether a family matches only the LTRs, only the internal
+            region, or both. --class-family fills class_family.
             blastn -query elem.fa -db library -outfmt \\
               "6 qseqid sseqid pident length qstart qend sstart send qlen slen evalue bitscore"
   report    sum owned_bp per species and group from the combined
@@ -44,8 +57,51 @@ def merged_len(ivs):
     return total
 
 
+GROUP_COLS = ("group", "element")
+
+
+def read_groups(path):
+    """[(group, family, row)] from a groups / curated-families TSV."""
+    out = []
+    with open(path) as fh:
+        header = fh.readline().rstrip("\n").split("\t")
+        ig = next((header.index(c) for c in GROUP_COLS if c in header), None)
+        if ig is None or "family" not in header:
+            sys.exit(f"{path}: needs a group (or element) and a family column")
+        ifam = header.index("family")
+        for line in fh:
+            f = line.rstrip("\n").split("\t")
+            if len(f) <= max(ig, ifam) or not f[ifam] or f[0].startswith("#"):
+                continue
+            out.append((f[ig], bare(f[ifam]), dict(zip(header, f))))
+    return out
+
+
+def curated_classes(path):
+    """{family: class_family} for rows of a curated-families TSV whose
+    class_family is filled (reader for summarize_rm.py)."""
+    out = {}
+    for _g, fam, row in read_groups(path):
+        cf = row.get("class_family", "").strip()
+        if cf and cf != ".":
+            if fam in out and out[fam] != cf:
+                sys.exit(f"{path}: {fam} has two curated classes ({out[fam]}, {cf})")
+            out[fam] = cf
+    return out
+
+
+def part_of(hsps, qlen, ltr_len):
+    """LTR / I / mixed for a family's query (element) spans."""
+    if not ltr_len:
+        return "."
+    in_ltr = all(e <= ltr_len or s > qlen - ltr_len for _p, _l, s, e, *_ in hsps)
+    in_int = all(s > ltr_len and e <= qlen - ltr_len for _p, _l, s, e, *_ in hsps)
+    return "LTR" if in_ltr else "I" if in_int else "mixed"
+
+
 def cmd_members(args):
     hsps = defaultdict(list)
+    qlen = 0
     with open(args.blast) as fh:
         for line in fh:
             f = line.rstrip("\n").split("\t")
@@ -53,6 +109,7 @@ def cmd_members(args):
                 continue
             pid, length = float(f[2]), int(f[3])
             qs, qe, ss, se, slen = int(f[4]), int(f[5]), int(f[6]), int(f[7]), int(f[9])
+            qlen = int(f[8])
             hsps[bare(f[1])].append((pid, length, min(qs, qe), max(qs, qe), min(ss, se), max(ss, se), slen))
     rows = []
     for fam, hs in hsps.items():
@@ -64,12 +121,15 @@ def cmd_members(args):
         if cov < args.min_cov:
             continue
         pid = sum(h[0] * h[1] for h in good) / sum(h[1] for h in good)
-        rows.append((fam, pid, cov, min(h[2] for h in good), max(h[3] for h in good)))
+        rows.append((fam, pid, cov, min(h[2] for h in good), max(h[3] for h in good),
+                     part_of(good, qlen, args.ltr_len)))
     rows.sort(key=lambda r: (r[3], -r[2]))
     with open(args.out, "w") as out:
-        out.write("group\tfamily\tpident\tfamily_cov\telement_start\telement_end\n")
-        for fam, pid, cov, a, b in rows:
-            out.write(f"{args.group}\t{fam}\t{pid:.1f}\t{cov:.2f}\t{a}\t{b}\n")
+        out.write("group\tfamily\tclass_family\tpart\tpident\tfamily_cov\telement_start\telement_end\t"
+                  "evidence\tnote\n")
+        for fam, pid, cov, a, b, part in rows:
+            out.write(f"{args.group}\t{fam}\t{args.class_family or '.'}\t{part}\t{pid:.1f}\t{cov:.2f}\t"
+                      f"{a}\t{b}\tblastn vs {args.group} consensus\t.\n")
     print(f"[family_groups] {args.group}: {len(rows)} library families >= {args.min_id}% identity over "
           f">= {args.min_cov:.0%} of their length", file=sys.stderr)
 
@@ -77,15 +137,11 @@ def cmd_members(args):
 def cmd_report(args):
     members = defaultdict(list)
     seen = defaultdict(list)
-    with open(args.groups) as fh:
-        header = fh.readline().rstrip("\n").split("\t")
-        ig, ifam = header.index("group"), header.index("family")
-        for line in fh:
-            f = line.rstrip("\n").split("\t")
-            if len(f) <= max(ig, ifam) or not f[ifam]:
-                continue
-            members[f[ig]].append(bare(f[ifam]))
-            seen[bare(f[ifam])].append(f[ig])
+    for path in args.groups:
+        for group, fam, _row in read_groups(path):
+            if fam not in members[group]:
+                members[group].append(fam)
+                seen[fam].append(group)
     for fam, gs in seen.items():
         if len(set(gs)) > 1:
             print(f"[family_groups] WARNING {fam} is in groups {sorted(set(gs))}; counted in each", file=sys.stderr)
@@ -140,9 +196,12 @@ def main():
     m.add_argument("--group", required=True, help="name for the element")
     m.add_argument("--min-id", type=float, default=80.0)
     m.add_argument("--min-cov", type=float, default=0.5, help="fraction of the library family's length")
+    m.add_argument("--ltr-len", type=int, default=0, help="LTR length in the consensus: fills `part`")
+    m.add_argument("--class-family", default="", help="Class/Superfamily for every member (curated label)")
     m.add_argument("--out", required=True)
     r = sub.add_parser("report")
-    r.add_argument("--groups", required=True, help="members output (group, family columns)")
+    r.add_argument("--groups", nargs="+", required=True,
+                   help="groups / curated-families TSVs (group or element, family columns)")
     r.add_argument("--family-tandem", required=True, help="combined family_tandem.tsv")
     r.add_argument("--assembly-covariates", default="")
     r.add_argument("--species-ids", nargs="*", default=[])

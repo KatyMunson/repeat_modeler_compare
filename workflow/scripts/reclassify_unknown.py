@@ -283,12 +283,24 @@ def tesorter_to_rm(call, min_domains):
 
 # ---------------------------------------------------------------- merge
 
+# Mavericks/Polintons carry a retroviral-like integrase. GyDB has no
+# Maverick models, so it calls that domain LTR (Gypsy / Retroviridae);
+# REXdb's Maverick call (which rests on the other Maverick domains too) wins
+# instead of a conflict. Ginger (also a Gypsy-like integrase) stays a
+# conflict: a REXdb Ginger call alone is weaker evidence.
+INTEGRASE_LIKE_DNA = ("DNA/Maverick", "DNA/Polinton")
+
+
 def domain_evidence(fam, rex, gydb, min_domains):
     """(domain Class/Family or None, conflict text or "") from the two
-    TEsorter databases: the more specific call, unless they disagree on order."""
+    TEsorter databases: the more specific call, unless they disagree on order
+    (a REXdb Maverick/Polinton call against a GyDB LTR call is not a
+    disagreement: see INTEGRASE_LIKE_DNA)."""
     r_call = tesorter_to_rm(rex.get(fam), min_domains)
     g_call = tesorter_to_rm(gydb.get(fam), min_domains)
     if r_call and g_call and r_call.split("/")[0] != g_call.split("/")[0]:
+        if r_call.startswith(INTEGRASE_LIKE_DNA) and g_call.split("/")[0] == "LTR":
+            return r_call, ""
         return None, f"REXdb {r_call} vs GyDB {g_call}"
     cands = [c for c in (r_call, g_call) if c]
     return (max(cands, key=lambda c: c.count("/")) if cands else None), ""

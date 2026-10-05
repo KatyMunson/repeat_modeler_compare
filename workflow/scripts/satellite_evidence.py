@@ -479,6 +479,11 @@ def cmd_report(args):
                 if not ta or not tb:
                     per.append(f"{s}:NA")
                     continue
+                # A family with only a sprinkle of bp in this sample's TRCs would
+                # score 1.00 (overlap coefficient); require real arrays in both.
+                if min(sum(ta.values()), sum(tb.values())) < t.min_shared_trc_bp:
+                    per.append(f"{s}:low_bp({sum(ta.values())}/{sum(tb.values())})")
+                    continue
                 v = sum(min(ta[k], tb[k]) for k in set(ta) & set(tb)) / min(sum(ta.values()), sum(tb.values()))
                 shared.append(v)
                 by_s[s] = v
@@ -585,6 +590,7 @@ def main():
     r.add_argument("--independent-max-cov", type=float, default=0.2)
     r.add_argument("--min-tandem-frac-long", type=float, default=0.9)
     r.add_argument("--partial-trc-cov", type=float, default=0.3)
+    r.add_argument("--min-shared-trc-bp", type=int, default=50000)
     r.add_argument("--tc-params", nargs="*", default=[], help="tidecluster_regions.py --params tables")
     r.add_argument("--min-shared-trc-frac", type=float, default=0.5)
     r.add_argument("--max-independent-shared-frac", type=float, default=0.1)

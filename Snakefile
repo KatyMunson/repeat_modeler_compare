@@ -2229,6 +2229,7 @@ rule satellite_evidence:
         "--min-pair-id {params.x[min_pair_id]} --min-pair-cov {params.x[min_pair_cov]} "
         "--related-min-id {params.x[related_min_id]} --independent-max-cov {params.x[independent_max_cov]} "
         "--min-tandem-frac-long {params.x[min_tandem_frac_long]} --partial-trc-cov {params.x[partial_trc_cov]} "
+        "--min-shared-trc-bp {params.x[min_shared_trc_bp]} "
         "--min-shared-trc-frac {params.x[min_shared_trc_frac]} "
         "--max-independent-shared-frac {params.x[max_independent_shared_frac]} "
         "--monomer-tol {params.x[monomer_tol]} "

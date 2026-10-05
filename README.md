@@ -641,6 +641,9 @@ each other. The verdicts:
   - consensus identity ≥ `min_pair_id` over ≥ `min_pair_cov`;
   - TRC sharing ≥ `min_shared_trc_frac`. The overlap coefficient is
     Σ min(a_t, b_t) / min(Σa, Σb) over TRCs t;
+    only samples where both families hold ≥ `min_shared_trc_bp` in TRCs
+    count. Otherwise a sprinkle of hits inside another satellite's arrays
+    scores 1.00; such samples show as `low_bp(a/b)`;
   - monomers within `monomer_tol`, or an integer multiple (HOR-like).
 - `same_satellite_diverged`: the same arrays and monomer, but the consensi
   only reach `related_min_id` (not `min_pair_id`). These are likely

@@ -137,8 +137,10 @@ def monomer_match(a, b, tol):
     lo, hi = sorted((a, b))
     if abs(hi - lo) <= tol * hi:
         return "same"
+    # HOR-like: hi is k copies of lo, within tol of the *shorter* unit (a
+    # tolerance on hi would make any long period a "multiple" at large k)
     k = round(hi / lo)
-    if k >= 2 and abs(hi - k * lo) <= tol * hi:
+    if k >= 2 and abs(hi - k * lo) <= tol * lo:
         return f"multiple_x{k}"
     return "different"
 
@@ -201,8 +203,12 @@ def cmd_report(args):
                 "top_trc": x.get("top_trc", "NA"), "top_trc_bp": x.get("top_trc_bp", "0"),
                 "trc_superfamily": ti.get("superfamily", "NA"), "trc_rdna_flag": ti.get("rdna_flag", "NA"),
                 "tarean_monomer_len": ti.get("tarean_monomer_len", "NA"),
+                "tidehunter_bp": x.get("tidehunter_bp", "0"),
                 "th_monomer_median": x.get("th_monomer_median", "NA"),
                 "th_monomer_support": x.get("th_monomer_support", "NA"),
+                "kite_founder": x.get("kite_founder_median", "NA"),
+                "kite_founder_support": x.get("kite_founder_support", "NA"),
+                "trc_kite_founder": ti.get("kite_founder_median", "NA"),
             })
     ev_cols = list(ev_rows[0].keys()) if ev_rows else ["family"]
     with open(t.evidence_out, "w") as out:
@@ -270,8 +276,13 @@ def cmd_report(args):
                            f"samples ({','.join(passed)})")
             elif elig and len(passed) + len(beyond) == len(elig):
                 prop, conf = "Satellite", "medium"
-                why.append(f"repeat unit longer than TideHunter's max period in {','.join(beyond)} "
-                           f"(no TRC possible); tandem by RepeatMasker arrays (family_tandem) there"
+                lim = ",".join(f"{s}:-P {max_period.get(s, 3000)}" for s in beyond)
+                found = ",".join(
+                    f"{s}:{(num(rows[s]['tidehunter_bp'], int) or 0) / max(num(rows[s]['owned_bp'], int) or 1, 1):.2f}"
+                    for s in beyond)
+                why.append(f"unit longer than TideHunter's detection limit ({lim}): its arrays are only found "
+                           f"where a sub-period <= that exists (share of its bp in TideHunter arrays: {found}); "
+                           f"tandem by RepeatMasker arrays (family_tandem)"
                            + (f"; TRC support in {','.join(passed)}" if passed else ""))
             elif passed or weak:
                 prop, conf = "Satellite", "medium" if passed else "low"
@@ -296,8 +307,16 @@ def cmd_report(args):
         return {k: int(v) for k, v in (kv.rsplit(":", 1) for kv in x["trc_bp"].split(";"))}
 
     def monomer(fam):
-        best_s = max(tc_samples, key=lambda s: num(xc.get(fam, {}).get(s, {}).get("tidehunter_bp"), int) or 0,
-                     default=None)
+        """Repeat unit: KITE founder (sample with the most TRC bp), else the
+        TideHunter median (sample with the most TideHunter bp), else the
+        consensus self-period."""
+        def top(col):
+            return max(tc_samples, key=lambda s: num(xc.get(fam, {}).get(s, {}).get(col), int) or 0, default=None)
+        s_k = top("in_trc_bp")
+        m = num(xc.get(fam, {}).get(s_k, {}).get("kite_founder_median")) if s_k else None
+        if m:
+            return m, f"kite:{s_k}"
+        best_s = top("tidehunter_bp")
         m = num(xc.get(fam, {}).get(best_s, {}).get("th_monomer_median")) if best_s else None
         if m:
             return m, f"tidehunter:{best_s}"

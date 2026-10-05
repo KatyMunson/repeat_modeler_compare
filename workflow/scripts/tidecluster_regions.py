@@ -16,14 +16,25 @@ Inputs, all `{dir}/{prefix}_*`:
                          is recognisable (optional; logged)
   trc_superfamilies.csv  TRC -> superfamily (optional)
   rdna.tsv               TRCs TideCluster flags as rDNA (optional)
+  kite/monomer_size_top3_estimats.csv
+                         KITE per-array founder period (tab-separated;
+                         TRC_ID, seqid, start, end, array_length,
+                         founder_period, ...). Unlike TideHunter's -P, which
+                         limits which arrays are *found*, KITE re-measures each
+                         found array's own period up to 10 kb (25 kb when
+                         extended), so founders > -P are normal (optional)
   cmd_args.json          TideHunter's maximum repeat-unit length (-P, or
                          25000 with --long; TideCluster default 3000) ->
                          --params. Arrays of longer units are not in any TRC.
 
 Writes:
   --regions  contig, start, end (0-based half-open), source (trc |
-             tidehunter | tidehunter_short), id, monomer_len, copy_number
+             tidehunter | tidehunter_short | kite), id, monomer_len, copy_number
+             (kite rows: id = TRC, monomer_len = founder_period,
+             copy_number = multiplicity)
   --trc-info trc, n_arrays, array_bp, consensus_len, tarean_monomer_len,
+             kite_founder_median (array-length-weighted; the x-axis of
+             TideCluster's cluster-overview plot), kite_founder_n,
              superfamily, rdna_flag
   --consensus  TRC consensi renamed <sample>:TRC_n
 Parsing of the optional tables is deliberately tolerant (their layout
@@ -161,6 +172,46 @@ def read_tarean_monomers(path):
     return out
 
 
+def read_kite(path):
+    """KITE per-array rows: [(seqid, start0, end, trc, founder, multiplicity, length)]."""
+    rows = []
+    if not path:
+        return rows
+    with open(path) as fh:
+        header = [h.strip().strip('"') for h in fh.readline().rstrip("\n").split("\t")]
+        need = ("TRC_ID", "seqid", "start", "end", "founder_period")
+        if any(c not in header for c in need):
+            print(f"[tidecluster_regions] note: KITE table lacks {[c for c in need if c not in header]}; "
+                  f"columns are {header[:8]}...; not used", file=sys.stderr)
+            return rows
+        ix = {h: i for i, h in enumerate(header)}
+        for line in fh:
+            f = [x.strip().strip('"') for x in line.rstrip("\n").split("\t")]
+            if len(f) < len(header):
+                f += [""] * (len(header) - len(f))
+            try:
+                start, end = int(f[ix["start"]]), int(f[ix["end"]])
+                founder = float(f[ix["founder_period"]])
+            except ValueError:
+                continue  # NA founder (below KITE's size threshold)
+            mult = f[ix["multiplicity"]] if "multiplicity" in ix and f[ix["multiplicity"]] else "NA"
+            length = end - start + 1
+            rows.append((f[ix["seqid"]], start - 1, end, f[ix["TRC_ID"]], founder, mult, length))
+    print(f"[tidecluster_regions] KITE: {len(rows)} arrays with a founder period", file=sys.stderr)
+    return rows
+
+
+def weighted_median(pairs):
+    pairs = sorted(pairs)
+    total = sum(w for _, w in pairs)
+    acc = 0
+    for v, w in pairs:
+        acc += w
+        if acc >= total / 2:
+            return v
+    return None
+
+
 def tidehunter_max_period(path):
     """Longest repeat unit TideHunter looked for: TideCluster's -T/--tidehunter_arguments
     -P (default 3000), or 25000 with --long. Returns (period, how it was found)."""
@@ -244,6 +295,15 @@ def main():
                 continue
             regions.append((c, s, e, source, a.get("ID", "."),
                             a.get("consensus_length", "NA"), a.get("copy_number", "NA")))
+    kite_by_trc = {}
+    for seqid, s, e, trc, founder, mult, length in read_kite(
+            path_for(d, pre, "kite/monomer_size_top3_estimats.csv", required=False)):
+        c = ours(seqid)
+        if c is None:
+            dropped += 1
+            continue
+        regions.append((c, s, e, "kite", trc, f"{founder:g}", mult))
+        kite_by_trc.setdefault(trc, []).append((founder, length))
     if dropped:
         print(f"[tidecluster_regions] dropped {dropped} features on unmatched contigs or without a TRC id",
               file=sys.stderr)
@@ -276,15 +336,21 @@ def main():
     with open(args.params, "w") as out:
         out.write(f"species\ttidehunter_max_period\tsource\n{args.species}\t{max_p}\t{how}\n")
 
+    def kmed(trc):
+        m = weighted_median(kite_by_trc.get(trc, []))
+        return "NA" if m is None else f"{m:g}"
+
     def trc_key(t):
         return int(t.split("_")[1])
 
     with open(args.trc_info, "w") as out:
-        out.write("species\ttrc\tn_arrays\tarray_bp\tconsensus_len\ttarean_monomer_len\tsuperfamily\trdna_flag\n")
+        out.write("species\ttrc\tn_arrays\tarray_bp\tconsensus_len\ttarean_monomer_len\t"
+                  "kite_founder_median\tkite_founder_n\tsuperfamily\trdna_flag\n")
         for trc in sorted(set(trc_arrays) | set(cons_len), key=trc_key):
             sf = superfam.get(trc)
             out.write(f"{args.species}\t{trc}\t{trc_arrays.get(trc, 0)}\t{trc_bp.get(trc, 0)}\t"
                       f"{cons_len.get(trc, 'NA')}\t{monomer.get(trc, 'NA')}\t"
+                      f"{kmed(trc)}\t{len(kite_by_trc.get(trc, []))}\t"
                       f"{sf[0] if sf else 'NA'}\t{'True' if trc in rdna else 'False'}\n")
     print(f"[tidecluster_regions] {len(trc_arrays)} TRCs, {sum(trc_arrays.values())} arrays, "
           f"{sum(trc_bp.values())} bp; {len(cons_len)} consensi", file=sys.stderr)

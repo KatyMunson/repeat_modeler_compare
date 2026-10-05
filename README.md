@@ -597,7 +597,21 @@ With `external_annotations` set, `all` builds it too.
      ≥ `family_tandem.major_min_bp`;
    - **medium:** only some of those samples pass;
    - **low:** TRC support only in samples below that size.
-   - **TideHunter's unit limit:** TideHunter only looks for repeat units up to
+   - **Two different period limits in TideCluster:**
+     - TideHunter's `-P` limits which arrays are *found*: 3000 by default
+       (TideCluster `-T`), 25000 with `--long`.
+     - KITE (`{prefix}_kite/monomer_size_top3_estimats.csv`) then re-measures
+       each found array's own *founder period*, up to 10 kb (25 kb when
+       extended). That is the x-axis of TideCluster's cluster-overview plot,
+       and why founders > 3 kb appear. Such arrays were found through a
+       sub-period ≤ `-P`, e.g. a HOR's basic monomer.
+     - A unit with no internal period ≤ `-P` is never found.
+     - KITE founders are read into `trc_info.tsv`
+       (`kite_founder_median`, weighted by array length) and per family
+       (`kite_founder_median`). The pair `monomer_match` uses them first,
+       then the TideHunter median, then the consensus self-period. A
+       "multiple" must be within `monomer_tol` of the shorter unit.
+   - **TideHunter's detection limit:** TideHunter only looks for repeat units up to
      `-P` bp, which is 3000 by default (TideCluster `-T`) or 25000 with
      `--long`. The limit is read from `cmd_args.json` into
      `shared/{species}/satellite/tidecluster_params.tsv`. A tandem family

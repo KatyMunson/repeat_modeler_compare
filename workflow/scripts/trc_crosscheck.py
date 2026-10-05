@@ -25,6 +25,10 @@ arrays:
                                 bp-weighted median TideHunter monomer length
                                 over those arrays, and the share of that bp
                                 whose monomer is within 5% of it
+  kite_founder_median, kite_founder_support
+                                the same over KITE's per-array founder periods
+                                (the better unit estimate; can exceed
+                                TideHunter's -P)
 Stdlib only."""
 
 import argparse
@@ -36,7 +40,9 @@ from summarize_rm import owned_segments
 
 
 def read_regions(path):
-    trc, th = {}, {}
+    """TRC arrays, TideHunter arrays and KITE arrays (with founder period),
+    each {contig: disjoint [(start, end, tag)]}."""
+    trc, th, kite = {}, {}, {}
     with open(path) as fh:
         header = fh.readline().rstrip("\n").split("\t")
         ix = {h: i for i, h in enumerate(header)}
@@ -45,11 +51,12 @@ def read_regions(path):
             c, s, e, src = f[ix["contig"]], int(f[ix["start"]]), int(f[ix["end"]]), f[ix["source"]]
             if src == "trc":
                 trc.setdefault(c, []).append((s, e, f[ix["id"]]))
+            elif src == "kite":
+                kite.setdefault(c, []).append((s, e, float(f[ix["monomer_len"]])))
             else:
                 ml = f[ix["monomer_len"]]
                 th.setdefault(c, []).append((s, e, float(ml) if ml not in ("NA", "") else None))
-    return ({c: make_disjoint(v) for c, v in trc.items()},
-            {c: make_disjoint(v) for c, v in th.items()})
+    return tuple({c: make_disjoint(v) for c, v in d.items()} for d in (trc, th, kite))
 
 
 def read_family_table(path):
@@ -122,7 +129,7 @@ def main():
     fams = read_family_table(args.tandem_table)
     tandem = frozenset(f for f, v in fams.items() if v["tandem_family"] == "True")
     hits = read_out_hits(args.out_file, tandem)
-    trc_regions, th_regions = read_regions(args.regions)
+    trc_regions, th_regions, kite_regions = read_regions(args.regions)
     print(f"[trc_crosscheck] {len(hits)} hits; {sum(map(len, trc_regions.values()))} TRC arrays, "
           f"{sum(map(len, th_regions.values()))} TideHunter arrays (de-overlapped)", file=sys.stderr)
 
@@ -171,10 +178,25 @@ def main():
         fam_th.setdefault(family, []).append((mono_of[(c, i)], bp))
         cls_of.setdefault(family, cls_th[family])
 
+    in_kite, cls_k, _ = owned_by_region(hits, kite_regions)
+    founder_of = {(c, i): r[2] for c, rs in kite_regions.items() for i, r in enumerate(rs)}
+    fam_kite = {}
+    for (family, c, i), bp in in_kite.items():
+        fam_kite.setdefault(family, []).append((founder_of[(c, i)], bp))
+        cls_of.setdefault(family, cls_k[family])
+
+    def median_support(pairs):
+        med = weighted_median(pairs) if pairs else None
+        if not med:
+            return "NA", "NA"
+        sup = sum(bp for m, bp in pairs if abs(m - med) <= 0.05 * med) / sum(bp for _, bp in pairs)
+        return f"{med:g}", f"{sup:.2f}"
+
     with open(args.family_out, "w") as out:
         out.write("species\tfamily\tclass_family\tclass\ttandem_family\towned_bp\tin_trc_bp\tfrac_in_trc\t"
-                  "n_trcs\ttop_trc\ttop_trc_bp\ttrc_bp\ttidehunter_bp\tth_monomer_median\tth_monomer_support\n")
-        for family in sorted(set(fam_trc) | set(fam_th)):
+                  "n_trcs\ttop_trc\ttop_trc_bp\ttrc_bp\ttidehunter_bp\tth_monomer_median\tth_monomer_support\t"
+                  "kite_founder_median\tkite_founder_support\n")
+        for family in sorted(set(fam_trc) | set(fam_th) | set(fam_kite)):
             meta = fams.get(family, {"class_family": "NA", "tandem_family": "NA", "owned_bp": 0})
             d = fam_trc.get(family, {})
             in_bp = sum(d.values())
@@ -191,7 +213,8 @@ def main():
                       f"{meta['tandem_family']}\t{owned}\t{in_bp}\t{frac:.3f}\t{len(d)}\t"
                       f"{ordered[0][0] if ordered else 'NA'}\t{ordered[0][1] if ordered else 0}\t"
                       f"{';'.join(keep) or '.'}\t{th_bp}\t"
-                      f"{'NA' if med is None else f'{med:g}'}\t{'NA' if sup is None else f'{sup:.2f}'}\n")
+                      f"{'NA' if med is None else f'{med:g}'}\t{'NA' if sup is None else f'{sup:.2f}'}\t"
+                      + "\t".join(median_support(fam_kite.get(family, []))) + "\n")
 
 
 if __name__ == "__main__":

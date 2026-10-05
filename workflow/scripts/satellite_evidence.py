@@ -160,6 +160,10 @@ def cmd_report(args):
     for path in t.trc_info or []:
         for r in read_tsv(path):
             trc_info[(r["species"], r["trc"])] = r
+    max_period = {}
+    for path in t.tc_params or []:
+        for r in read_tsv(path):
+            max_period[r["species"]] = int(r["tidehunter_max_period"])
     infer = dict(x.split("=", 1) for x in (t.infer or []))  # target=donor
     focus = list(t.focus or [])
     expected_independent = {frozenset(x.split(",")) for x in (t.expected_independent or [])}
@@ -212,23 +216,32 @@ def cmd_report(args):
     # ---- per-family calls
     calls = {}
     with open(t.calls_out, "w") as out:
-        out.write("family\tclass_family\tsat_samples_pass\tsat_samples_eligible\tinferred_support\t"
+        out.write("family\tclass_family\tsat_samples_pass\tsat_samples_eligible\tbeyond_tidehunter\tinferred_support\t"
                   "best_trc_hit\trdna_cov\trdna_id\tmito_cov\tmito_id\tproposed_class_family\t"
                   "confidence\treason\n")
         for fam in families:
             rows = ev[fam]
             cf = next(iter(rows.values()))["class_family"] if rows else "NA"
-            elig, passed, weak = [], [], []
+            elig, passed, weak, beyond = [], [], [], []
             for s in tc_samples:
                 r = rows.get(s)
                 if not r:
                     continue
                 owned, frac = num(r["owned_bp"], int) or 0, num(r["frac_in_trc"]) or 0.0
                 ok = r["tandem_family"] == "True" and frac >= t.min_trc_cov
+                # A tandem family whose repeat unit is longer than TideHunter looked
+                # for can't be in a TRC: no TideCluster evidence either way.
+                ftr = ft.get(fam, {}).get(s, {})
+                unit = num(ftr.get("monomer_period")) or num(ftr.get("cons_len")) or 0
+                too_long = (not ok and r["tandem_family"] == "True"
+                            and (num(ftr.get("tandem_frac")) or 0) >= t.min_tandem_frac_long
+                            and unit > max_period.get(s, 3000))
                 if owned >= t.major_min_bp:
                     elig.append(s)
                     if ok:
                         passed.append(s)
+                    elif too_long:
+                        beyond.append(s)
                 elif ok or frac >= 0.3:
                     weak.append(s)
             inferred = []
@@ -251,10 +264,15 @@ def cmd_report(args):
             elif b_mt and b_mt[0] >= t.mito_min_cov:
                 prop, conf = "Other/NUMT", "high"
                 why.append(f"{b_mt[0]:.2f} of consensus matches mitogenome {strip(b_mt[2])} at {b_mt[1]:.1f}%")
-            elif elig and len(passed) == len(elig):
+            elif elig and passed and len(passed) == len(elig):
                 prop, conf = "Satellite", "high"
                 why.append(f"tandem and >= {t.min_trc_cov} of its bp in TRC arrays in all eligible "
                            f"samples ({','.join(passed)})")
+            elif elig and len(passed) + len(beyond) == len(elig):
+                prop, conf = "Satellite", "medium"
+                why.append(f"repeat unit longer than TideHunter's max period in {','.join(beyond)} "
+                           f"(no TRC possible); tandem by RepeatMasker arrays (family_tandem) there"
+                           + (f"; TRC support in {','.join(passed)}" if passed else ""))
             elif passed or weak:
                 prop, conf = "Satellite", "medium" if passed else "low"
                 why.append(f"TRC support in {','.join(passed + weak)} of eligible {','.join(elig) or 'none'}")
@@ -264,7 +282,7 @@ def cmd_report(args):
             if prop != "NA" and cf not in ("NA", "Unknown", prop) and not cf.startswith(prop):
                 why.append(f"currently {cf} ({cf}-derived)")
             calls[fam] = {"class_family": cf, "prop": prop, "conf": conf}
-            out.write(f"{fam}\t{cf}\t{len(passed)}\t{len(elig)}\t{','.join(inferred) or '.'}\t"
+            out.write(f"{fam}\t{cf}\t{len(passed)}\t{len(elig)}\t{','.join(beyond) or '.'}\t{','.join(inferred) or '.'}\t"
                       + (f"{strip(b_trc[2])}:cov={b_trc[0]:.2f}:id={b_trc[1]:.1f}" if b_trc else "NA") + "\t"
                       + (f"{b_rd[0]:.2f}\t{b_rd[1]:.1f}" if b_rd else "NA\tNA") + "\t"
                       + (f"{b_mt[0]:.2f}\t{b_mt[1]:.1f}" if b_mt else "NA\tNA") + "\t"
@@ -295,7 +313,9 @@ def cmd_report(args):
                 out.add((s, r["trc_superfamily"]))
         return out
 
-    tandemish = {f for f in families if calls[f]["prop"] in ("Satellite", "rRNA") or f in focus}
+    tandemish = {f for f in families
+                 if (calls[f]["prop"] in ("Satellite", "rRNA") and calls[f]["conf"] in ("high", "medium"))
+                 or f in focus}
     pairs = set()
     for i, a in enumerate(focus):
         for b in focus[i + 1:]:
@@ -346,17 +366,24 @@ def cmd_report(args):
             mm = monomer_match(ma, mb, t.monomer_tol)
             sfa, sfb = superfam(a), superfam(b)
             same_sf = "NA" if not (sfa and sfb) else str(bool(sfa & sfb))
-            sim = ident >= t.min_pair_id and max(cov_ab, cov_ba) >= t.min_pair_cov
+            cov = max(cov_ab, cov_ba)
+            sim = ident >= t.min_pair_id and cov >= t.min_pair_cov
+            related = ident >= t.related_min_id and cov >= t.min_pair_cov
             co = mx is not None and mx >= t.min_shared_trc_frac
-            if sim and co and (mm == "same" or mm.startswith("multiple")):
+            mono_ok = mm == "same" or mm.startswith("multiple")
+            if co and sim and mono_ok:
                 verdict = "same_satellite"
-            elif sim and co:
-                verdict = "undetermined"  # similar and co-located, but no monomer to compare
+            elif co and related and mono_ok:
+                verdict = "same_satellite_diverged"  # same arrays + monomer, consensi < min_pair_id
+            elif co and related:
+                verdict = "co_located_related" if mm == "different" else "undetermined"
             elif co:
                 verdict = "co_located_distinct"
-            elif sim:
-                verdict = "similar_not_co_located"
-            elif mx is not None and mx <= t.max_independent_shared_frac:
+            elif related and mx is not None:
+                verdict = "related_not_co_located"
+            elif related:
+                verdict = "related_no_shared_sample"
+            elif mx is not None and mx <= t.max_independent_shared_frac and cov < t.independent_max_cov:
                 verdict = "independent"
             else:
                 verdict = "undetermined"
@@ -418,6 +445,10 @@ def main():
     r.add_argument("--major-min-bp", type=int, default=100000)
     r.add_argument("--min-pair-id", type=float, default=80.0)
     r.add_argument("--min-pair-cov", type=float, default=0.5)
+    r.add_argument("--related-min-id", type=float, default=65.0)
+    r.add_argument("--independent-max-cov", type=float, default=0.2)
+    r.add_argument("--min-tandem-frac-long", type=float, default=0.9)
+    r.add_argument("--tc-params", nargs="*", default=[], help="tidecluster_regions.py --params tables")
     r.add_argument("--min-shared-trc-frac", type=float, default=0.5)
     r.add_argument("--max-independent-shared-frac", type=float, default=0.1)
     r.add_argument("--monomer-tol", type=float, default=0.05)

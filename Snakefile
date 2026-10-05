@@ -2084,6 +2084,7 @@ rule trc_regions:
         regions=f"{OUTDIR}/shared/{{species}}/satellite/trc_regions.tsv",
         trc_info=f"{OUTDIR}/shared/{{species}}/satellite/trc_info.tsv",
         consensus=f"{OUTDIR}/shared/{{species}}/satellite/trc_consensus.fa",
+        params=f"{OUTDIR}/shared/{{species}}/satellite/tidecluster_params.tsv",
     wildcard_constraints:
         species=TC_CONSTRAINT,
     threads: config["resources"]["trc_regions"]["threads"]
@@ -2105,7 +2106,7 @@ rule trc_regions:
         python3 {SCRIPTS}/tidecluster_regions.py --dir {params.tc_dir} --prefix {params.tc_prefix} \
             --species {wildcards.species} --name-map {input.name_map} --fingerprint {input.fingerprint} \
             {params.allow} --regions {output.regions} --trc-info {output.trc_info} \
-            --consensus {output.consensus}
+            --consensus {output.consensus} --params {output.params}
         # TideCluster's own run record, for provenance
         for f in cmd_args.json pipeline_stats.json; do
             if [ -e {params.tc_dir}/{params.tc_prefix}_$f ]; then
@@ -2197,6 +2198,7 @@ rule satellite_evidence:
         family_tandem=f"{OUTDIR}/summary/family_tandem.tsv",
         crosscheck=expand(f"{OUTDIR}/shared/{{species}}/satellite/trc_crosscheck.family.tsv", species=TC_SAMPLES),
         trc_info=expand(f"{OUTDIR}/shared/{{species}}/satellite/trc_info.tsv", species=TC_SAMPLES),
+        tc_params=expand(f"{OUTDIR}/shared/{{species}}/satellite/tidecluster_params.tsv", species=TC_SAMPLES),
         sat=f"{SATDIR}/blast/satellite_all_vs_all.tsv",
         ref=f"{SATDIR}/blast/library_vs_refs.tsv",
     output:
@@ -2219,11 +2221,13 @@ rule satellite_evidence:
         major_min_bp=config["family_tandem"]["major_min_bp"],
     shell:
         "python3 {SCRIPTS}/satellite_evidence.py report --family-tandem {input.family_tandem} "
-        "--crosscheck {input.crosscheck} --trc-info {input.trc_info} "
+        "--crosscheck {input.crosscheck} --trc-info {input.trc_info} --tc-params {input.tc_params} "
         "--sat-blast {input.sat} --ref-blast {input.ref} --infer {params.infer} "
         "--focus {params.focus} --expected-independent {params.indep} "
         "--min-trc-cov {params.x[min_trc_cov]} --major-min-bp {params.major_min_bp} "
         "--min-pair-id {params.x[min_pair_id]} --min-pair-cov {params.x[min_pair_cov]} "
+        "--related-min-id {params.x[related_min_id]} --independent-max-cov {params.x[independent_max_cov]} "
+        "--min-tandem-frac-long {params.x[min_tandem_frac_long]} "
         "--min-shared-trc-frac {params.x[min_shared_trc_frac]} "
         "--max-independent-shared-frac {params.x[max_independent_shared_frac]} "
         "--monomer-tol {params.x[monomer_tol]} "

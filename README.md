@@ -597,6 +597,16 @@ With `external_annotations` set, `all` builds it too.
      ≥ `family_tandem.major_min_bp`;
    - **medium:** only some of those samples pass;
    - **low:** TRC support only in samples below that size.
+   - **TideHunter's unit limit:** TideHunter only looks for repeat units up to
+     `-P` bp, which is 3000 by default (TideCluster `-T`) or 25000 with
+     `--long`. The limit is read from `cmd_args.json` into
+     `shared/{species}/satellite/tidecluster_params.tsv`. A tandem family
+     whose unit (`monomer_period`, else the consensus length) is longer than
+     that cannot be in a TRC, so in that sample it neither passes nor fails;
+     it is listed under `beyond_tidehunter`. If its `tandem_frac` is
+     ≥ `min_tandem_frac_long`, it gets `Satellite` (medium) on the
+     RepeatMasker arrays alone. Rerunning TideCluster with `--long` turns
+     these into a real TRC test.
    - A TRC that TideCluster flags as rDNA turns a Satellite call into
      `rRNA` (medium).
 
@@ -612,11 +622,21 @@ each other. The verdicts:
   - TRC sharing ≥ `min_shared_trc_frac`. The overlap coefficient is
     Σ min(a_t, b_t) / min(Σa, Σb) over TRCs t;
   - monomers within `monomer_tol`, or an integer multiple (HOR-like).
-- `co_located_distinct`: they share arrays but the consensi differ.
-- `similar_not_co_located`: similar consensi, different arrays.
-- `independent`: neither similar nor sharing more than
-  `max_independent_shared_frac` of their arrays.
+- `same_satellite_diverged`: the same arrays and monomer, but the consensi
+  only reach `related_min_id` (not `min_pair_id`). These are likely
+  variants or subfamilies of one satellite. They are reported, not grouped.
+- `co_located_related`: shared arrays and related consensi, but different
+  monomers, so possibly a composite array.
+- `co_located_distinct`: shared arrays, unrelated consensi.
+- `related_not_co_located`: related consensi (≥ `related_min_id`) in
+  different arrays.
+- `related_no_shared_sample`: related consensi, but no TideCluster sample
+  holds both.
+- `independent`: consensi overlap < `independent_max_cov`, and TRC sharing
+  ≤ `max_independent_shared_frac`.
 - `undetermined`: anything else.
+
+Pairs are only formed among medium/high calls and `focus_families`.
 
 A pair listed in `expected_independent` is never grouped. If the test calls
 it `same_satellite`, it is flagged `CONTRADICTS expected_independent` for a

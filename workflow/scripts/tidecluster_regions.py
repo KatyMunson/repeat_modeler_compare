@@ -16,6 +16,9 @@ Inputs, all `{dir}/{prefix}_*`:
                          is recognisable (optional; logged)
   trc_superfamilies.csv  TRC -> superfamily (optional)
   rdna.tsv               TRCs TideCluster flags as rDNA (optional)
+  cmd_args.json          TideHunter's maximum repeat-unit length (-P, or
+                         25000 with --long; TideCluster default 3000) ->
+                         --params. Arrays of longer units are not in any TRC.
 
 Writes:
   --regions  contig, start, end (0-based half-open), source (trc |
@@ -120,7 +123,7 @@ def read_trc_table(path, label):
     sep = "," if path.endswith(".csv") else "\t"
     lines = [l for l in text.splitlines() if l.strip()]
     for line in lines:
-        f = [x.strip() for x in line.split(sep)]
+        f = [x.strip().strip('"') for x in line.split(sep)]
         ids = [x for x in f if TRC_RE.fullmatch(x)]
         if ids:
             rows[ids[0]] = [x for x in f if x != ids[0]]
@@ -134,8 +137,8 @@ def read_tarean_monomers(path):
     if not path:
         return {}
     with open(path) as fh:
-        header = fh.readline().rstrip("\n").split("\t")
-        rows = [l.rstrip("\n").split("\t") for l in fh if l.strip()]
+        header = [h.strip('"') for h in fh.readline().rstrip("\n").split("\t")]
+        rows = [[x.strip('"') for x in l.rstrip("\n").split("\t")] for l in fh if l.strip()]
     print(f"[tidecluster_regions] tarean_report columns: {header}", file=sys.stderr)
     low = [h.lower() for h in header]
     i_len = next((i for i, h in enumerate(low) if "monomer" in h and ("len" in h or "size" in h)), None)
@@ -158,6 +161,28 @@ def read_tarean_monomers(path):
     return out
 
 
+def tidehunter_max_period(path):
+    """Longest repeat unit TideHunter looked for: TideCluster's -T/--tidehunter_arguments
+    -P (default 3000), or 25000 with --long. Returns (period, how it was found)."""
+    import json
+    if not path:
+        return 3000, "cmd_args.json missing; TideCluster default -P 3000 assumed"
+    with open(path) as fh:
+        try:
+            args = json.load(fh)
+        except ValueError:
+            return 3000, "cmd_args.json unreadable; TideCluster default -P 3000 assumed"
+    if not isinstance(args, dict):
+        args = {}
+    if args.get("long") is True:
+        return 25000, "--long (three TideHunter rounds up to 25000)"
+    th = args.get("tidehunter_arguments")
+    m = re.search(r"-P\s+(\d+)", th) if isinstance(th, str) else None
+    if m:
+        return int(m.group(1)), f"tidehunter_arguments '{th}'"
+    return 3000, "no -P in cmd_args.json; TideCluster default -P 3000 assumed"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dir", required=True)
@@ -169,6 +194,7 @@ def main():
     ap.add_argument("--regions", required=True)
     ap.add_argument("--trc-info", required=True)
     ap.add_argument("--consensus", required=True)
+    ap.add_argument("--params", required=True, help="species, tidehunter_max_period, source")
     args = ap.parse_args()
 
     d, pre = args.dir, args.prefix
@@ -244,6 +270,11 @@ def main():
     monomer = read_tarean_monomers(path_for(d, pre, "tarean_report.tsv", required=False))
     superfam = read_trc_table(path_for(d, pre, "trc_superfamilies.csv", required=False), "trc_superfamilies")
     rdna = read_trc_table(path_for(d, pre, "rdna.tsv", required=False), "rdna")
+
+    max_p, how = tidehunter_max_period(path_for(d, pre, "cmd_args.json", required=False))
+    print(f"[tidecluster_regions] TideHunter max period {max_p} ({how})", file=sys.stderr)
+    with open(args.params, "w") as out:
+        out.write(f"species\ttidehunter_max_period\tsource\n{args.species}\t{max_p}\t{how}\n")
 
     def trc_key(t):
         return int(t.split("_")[1])

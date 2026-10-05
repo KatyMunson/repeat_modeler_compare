@@ -32,9 +32,9 @@ have found LTR candidates in anyway; a region that is mostly dispersed
 LTR bp is discovery that was actually lost. Stdlib only."""
 
 import argparse
-import bisect
 
 from family_tandem import tandem_families
+from intervals import clip
 from summarize_rm import collapse_class, owned_segments, read_assembly_stats, relabel
 
 
@@ -72,24 +72,6 @@ def read_out_hits(path, tandem):
             cls = collapse_class(relabel(family, f[10], tandem)[0])
             hits.append((f[4], begin, end, int(f[0]), (cls, family, family in tandem)))
     return hits
-
-
-def clip(hits, by_contig):
-    """Hits cut down to the parts inside by_contig's 0-based half-open
-    intervals (assumed disjoint and sorted), still 1-based inclusive."""
-    starts = {c: [s for s, _ in iv] for c, iv in by_contig.items()}
-    for contig, begin, end, score, payload in hits:
-        intervals = by_contig.get(contig)
-        if not intervals:
-            continue
-        b0, e0 = begin - 1, end  # half-open
-        i = max(bisect.bisect_right(starts[contig], b0) - 1, 0)
-        while i < len(intervals) and intervals[i][0] < e0:
-            s, e = intervals[i]
-            lo, hi = max(b0, s), min(e0, e)
-            if lo < hi:
-                yield contig, lo + 1, hi, score, payload
-            i += 1
 
 
 def tally(segments):

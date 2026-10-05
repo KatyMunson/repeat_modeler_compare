@@ -538,6 +538,91 @@ keeps candidates whose internal region is covered by the element's
 families, and reports the 5'/3' LTR similarity of each intact copy (with
 `--rate`, ages via the Jukes-Cantor distance, T = d / 2r).
 
+## Satellite, rDNA and mito cross-check (`satellite_crosscheck`)
+
+`family_tandem` infers arrays from RepeatMasker hits alone. This
+cross-check tests library families against three independent tools:
+- TideCluster (tandem-repeat arrays clustered into TRCs);
+- ribotin (rDNA unit models);
+- MitoHiFi (mitogenomes).
+
+It is **report-only**: it writes evidence and proposals, and nothing is
+relabelled or merged.
+
+**Inputs.** Point `satellite_crosscheck.external_annotations` at a TSV with
+the header `sample_id tidecluster_dir tidecluster_prefix ribotin_fa
+mitohifi_fa` (see `external_annotations.example.tsv`).
+- `sample_id` is the manifest's `species_id`.
+- Every cell needs a value. `.`, `NA`, `na`, `no`, `false` and `none` mean
+  "not provided"; blanks and spaces are refused.
+- From `{tidecluster_dir}/{tidecluster_prefix}_*` (TideCluster 1.21.3
+  `run_all`), the pipeline reads:
+  - required: `clustering.gff3`, `seqid_lengths.tsv`,
+    `consensus_dimer_library.fasta`;
+  - if present: `tidehunter.gff3` / `tidehunter_short.gff3` (per-array
+    monomers), `tarean_report.tsv` (TRC monomer length),
+    `trc_superfamilies.csv` and `rdna.tsv`.
+- **Same assembly required.** TideCluster must have run on the same
+  assembly as the manifest FASTA. `trc_regions` compares
+  `seqid_lengths.tsv` with the pipeline's `fingerprint.tsv` (through
+  `name_map.tsv`) and stops on any mismatch. To skip the check, set
+  `allow_seqid_mismatch: true`; the mismatched contigs are then dropped.
+
+**Run it on finished results** without redoing anything upstream:
+
+    snakemake satellite_crosscheck_only --rerun-triggers mtime -n   # should list only the new jobs
+    snakemake satellite_crosscheck_only --rerun-triggers mtime ...  # usual runsnake arguments
+
+With `external_annotations` set, `all` builds it too.
+
+**Outputs:**
+
+| file | content |
+|---|---|
+| `shared/{species}/satellite/trc_crosscheck.trc.tsv` | per TRC: arrays, bp, bp RepeatMasker masks / misses, the families holding it. Row `ALL`: total array bp the library misses, and TideHunter arrays outside any TRC |
+| `shared/{species}/satellite/trc_crosscheck.family.tsv` | per family: share of its bp inside TRC arrays, which TRCs, median TideHunter monomer length of the arrays it sits in |
+| `summary/satellite_family_evidence.tsv` | family × sample. Samples without TideCluster listed in `infer_from` get the donor's TRC evidence, marked `inferred:<donor>` |
+| `summary/satellite_family_calls.tsv` | one row per family: proposed class, confidence, reason |
+| `summary/satellite_family_pairs.tsv` | pairs of tandem families: consensus similarity, shared-TRC fraction, monomers, verdict |
+| `summary/satellite_proposals.tsv` | `classify.curated_families` format; high and medium rows only |
+
+**Calls**, in priority order:
+1. `rRNA` (high): ≥ `rdna_min_cov` of the consensus matches a ribotin model
+   at ≥ `rdna_min_id` %.
+2. `Other/NUMT` (high): the same test against the mitogenome, with the
+   `mito_*` thresholds.
+3. `Satellite`:
+   - **high:** the family is `tandem_family`, with ≥ `min_trc_cov` of its bp
+     in TRC arrays, in every TideCluster sample where it holds
+     ≥ `family_tandem.major_min_bp`;
+   - **medium:** only some of those samples pass;
+   - **low:** TRC support only in samples below that size.
+   - A TRC that TideCluster flags as rDNA turns a Satellite call into
+     `rRNA` (medium).
+
+A family currently under a TE label keeps that label in its `reason` / `note`
+(e.g. `LTR/ERVK-derived`). Inferred samples can confirm a call (`ind8:confirms`)
+but never make one.
+
+**Pair verdicts.** Pairs are tested from three sources: all pairs in
+`focus_families`, families sharing a TRC, and families whose consensi hit
+each other. The verdicts:
+- `same_satellite` needs all three of these:
+  - consensus identity ≥ `min_pair_id` over ≥ `min_pair_cov`;
+  - TRC sharing ≥ `min_shared_trc_frac`. The overlap coefficient is
+    Σ min(a_t, b_t) / min(Σa, Σb) over TRCs t;
+  - monomers within `monomer_tol`, or an integer multiple (HOR-like).
+- `co_located_distinct`: they share arrays but the consensi differ.
+- `similar_not_co_located`: similar consensi, different arrays.
+- `independent`: neither similar nor sharing more than
+  `max_independent_shared_frac` of their arrays.
+- `undetermined`: anything else.
+
+A pair listed in `expected_independent` is never grouped. If the test calls
+it `same_satellite`, it is flagged `CONTRADICTS expected_independent` for a
+manual look. Only `same_satellite` pairs share a `group` name in the
+proposals file. Merging is never done automatically.
+
 ## Satellite analysis (removed)
 
 A satellite arm existed briefly. It was a satellite-only RepeatMasker

@@ -147,6 +147,38 @@ summary:
   curation_min_pct_masked: 0.1
   curation_young_div: 3.0
 
+# Satellite / rDNA / mito cross-check (README "Satellite, rDNA and mito
+# cross-check"). Report-only for now: writes summary/satellite_*.tsv,
+# nothing is relabelled. "" = off. Run alone with the
+# satellite_crosscheck_only target (+ --rerun-triggers mtime).
+satellite_crosscheck:
+  # TSV, header: sample_id tidecluster_dir tidecluster_prefix ribotin_fa mitohifi_fa
+  # (example: external_annotations.example.tsv). No blank cells: "." / NA = not provided.
+  external_annotations: ""
+  # Samples without TideCluster whose evidence is inferred from another
+  # individual of the same species, e.g. {ind8: ind6}. Inferred evidence can
+  # confirm a call made from the donor, never create one.
+  infer_from: {}
+  # Always evaluated in the pair table (full library names).
+  focus_families: []
+  # Pairs a previous analysis judged independent: flagged if the pair test
+  # says otherwise, and never grouped. e.g. [[famA, famB]]
+  expected_independent: []
+  allow_seqid_mismatch: false  # true = keep going when TideCluster's assembly differs (drops those contigs)
+  candidate_min_trc_bp: 10000  # library families with this much bp in TRC arrays enter the blastn
+  blast_evalue: 1.0e-10
+  min_trc_cov: 0.7             # Satellite: >= this fraction of the family's bp in TRC arrays ...
+                               # ... in every TideCluster sample where it holds >= family_tandem.major_min_bp
+  min_pair_id: 80              # same_satellite: consensus identity (%) ...
+  min_pair_cov: 0.5            # ... over this fraction of one consensus ...
+  min_shared_trc_frac: 0.5     # ... AND sharing TRCs (overlap coefficient of their TRC bp) ...
+  monomer_tol: 0.05            # ... AND monomers within 5% (or an integer multiple: HOR-like)
+  max_independent_shared_frac: 0.1   # independent: no similarity and <= this TRC sharing
+  rdna_min_cov: 0.5            # rRNA: this fraction of the consensus matches a ribotin model ...
+  rdna_min_id: 90              # ... at >= this % identity
+  mito_min_cov: 0.5            # Other/NUMT: same against the MitoHiFi mitogenome
+  mito_min_id: 80
+
 resources:
   prep_genome:      {threads: 1,  mem: 8,  hrs: 4}
   genome_fingerprint: {threads: 1, mem: 8, hrs: 2}
@@ -179,6 +211,11 @@ resources:
   combine_summaries: {threads: 1, mem: 8,  hrs: 1}
   provenance:       {threads: 1,  mem: 2,  hrs: 1}
   plot:             {threads: 1,  mem: 8,  hrs: 1}
+  # --- satellite cross-check ---
+  trc_regions:      {threads: 1,  mem: 8,  hrs: 1}
+  trc_crosscheck:   {threads: 1,  mem: 16, hrs: 4}   # parses the shared-arm .out
+  satellite_blast:  {threads: 8,  mem: 1,  hrs: 4}
+  satellite_evidence: {threads: 1, mem: 8, hrs: 1}
   # --- LTR side pipeline ---
   ltr_group_genome: {threads: 1,  mem: 16, hrs: 2}
   # per group; threads must be >= 2 (see Snakefile). mem is per slot.

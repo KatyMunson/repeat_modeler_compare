@@ -1,0 +1,11 @@
+# satellite_crosscheck.external_annotations -- one row per sample (manifest species_id).
+# Every cell needs a value: "." or NA = not provided. No spaces.
+# tidecluster_dir + tidecluster_prefix: a TideCluster run_all output directory and the
+#   prefix of its files ({prefix}_clustering.gff3, {prefix}_consensus_dimer_library.fasta, ...).
+#   TideCluster must have run on the same assembly as the manifest's FASTA (checked).
+# ribotin_fa: ribotin rDNA model (consensus.fa); mitohifi_fa: final_mitogenome.fasta.
+sample_id	tidecluster_dir	tidecluster_prefix	ribotin_fa	mitohifi_fa
+ind6	/path/to/ind6/tidecluster	ind6_newverkko.verkko.unphased	/path/to/ind6/ribotin/consensus.fa	/path/to/ind6/mitohifi/final_mitogenome.fasta
+ind8	.	.	.	/path/to/ind8/mitohifi/final_mitogenome.fasta
+bAgePho1	/path/to/bAgePho1/tidecluster	bAgePho1_prefix	/path/to/bAgePho1/ribotin/consensus.fa	.
+bTaeGut7	/path/to/bTaeGut7/tidecluster	bTaeGut7_prefix	.	.

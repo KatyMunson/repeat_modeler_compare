@@ -206,6 +206,82 @@ for _p in ANNOT_PROTEINS + ([SWISSPROT] if SWISSPROT else []) + ([RFAM_CM] if RF
         raise ValueError(f"classify input does not exist: {_p}")
 
 
+# Satellite / rDNA / mito cross-check (README "Satellite, rDNA and mito
+# cross-check"). Optional per-sample inputs come from a header-driven TSV:
+# sample_id, tidecluster_dir, tidecluster_prefix, ribotin_fa, mitohifi_fa.
+# Every cell must hold a value; ".", "NA", "na", "no", "false", "none" mean
+# "not provided" (case-insensitive). Report-only for now (Phase 1).
+SATX = config.get("satellite_crosscheck", {}) or {}
+SATX_MISSING = {".", "na", "no", "false", "none"}
+SATX_COLS = ("sample_id", "tidecluster_dir", "tidecluster_prefix", "ribotin_fa", "mitohifi_fa")
+
+
+def parse_external_annotations(path):
+    rows = {}
+    if not path:
+        return rows
+    header = None
+    with open(path) as fh:
+        for lineno, raw in enumerate(fh, 1):
+            line = raw.rstrip("\n")
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            fields = line.split("\t")
+            if header is None:
+                header = fields
+                missing = [c for c in SATX_COLS if c not in header]
+                if missing:
+                    raise ValueError(f"{path}:{lineno}: header lacks column(s) {missing}; expected {list(SATX_COLS)}")
+                continue
+            if len(fields) != len(header):
+                raise ValueError(f"{path}:{lineno}: {len(fields)} fields, header has {len(header)}")
+            for col, val in zip(header, fields):
+                if val == "" or val != val.strip() or " " in val:
+                    raise ValueError(f"{path}:{lineno}: column '{col}' is blank or contains spaces "
+                                     f"(use '.' or NA for 'not provided')")
+            row = {c: (None if v.lower() in SATX_MISSING else v) for c, v in zip(header, fields)}
+            sid = row["sample_id"]
+            if sid not in SPECIES_IDS:
+                raise ValueError(f"{path}:{lineno}: sample_id '{sid}' is not in the manifest")
+            if sid in rows:
+                raise ValueError(f"{path}:{lineno}: duplicate sample_id '{sid}'")
+            if bool(row["tidecluster_dir"]) != bool(row["tidecluster_prefix"]):
+                raise ValueError(f"{path}:{lineno}: tidecluster_dir and tidecluster_prefix go together")
+            for col in ("tidecluster_dir", "ribotin_fa", "mitohifi_fa"):
+                if row[col] and not os.path.exists(row[col]):
+                    raise ValueError(f"{path}:{lineno}: {col} does not exist: {row[col]}")
+            rows[sid] = row
+    return rows
+
+
+SATX_ANNOT = parse_external_annotations(SATX.get("external_annotations", "") or "")
+SATX_ON = bool(SATX_ANNOT)
+TC_SAMPLES = [s for s in SPECIES_IDS if SATX_ANNOT.get(s, {}).get("tidecluster_dir")]
+SATX_INFER = {str(k): str(v) for k, v in (SATX.get("infer_from") or {}).items()}
+for _t, _d in SATX_INFER.items():
+    if _t not in SPECIES_IDS or _d not in TC_SAMPLES:
+        raise ValueError(f"satellite_crosscheck.infer_from {_t}: {_d} -- target must be in the manifest "
+                         f"and donor must have TideCluster inputs ({TC_SAMPLES})")
+if SATX_ON:
+    if not TC_SAMPLES:
+        raise ValueError("satellite_crosscheck.external_annotations has no sample with TideCluster inputs")
+    for _s in SPECIES_IDS:
+        _r = SATX_ANNOT.get(_s, {})
+        _mode = ("tidecluster" if _s in TC_SAMPLES
+                 else f"inferred from {SATX_INFER[_s]}" if _s in SATX_INFER else "library-level only")
+        print(f"[satellite_crosscheck] {_s}: {_mode}; ribotin={'yes' if _r.get('ribotin_fa') else 'no'}; "
+              f"mitohifi={'yes' if _r.get('mitohifi_fa') else 'no'}")
+
+
+def _tc_file(sample, suffix):
+    r = SATX_ANNOT[sample]
+    return os.path.join(r["tidecluster_dir"], f"{r['tidecluster_prefix']}_{suffix}")
+
+
+SATX_REFS = [f"{lab}={SATX_ANNOT[s][col]}" for s in SPECIES_IDS if s in SATX_ANNOT
+             for lab, col in (("rdna", "ribotin_fa"), ("mito", "mitohifi_fa")) if SATX_ANNOT[s][col]]
+
+
 LTR_CFG = config["ltr_discovery"]
 LTR_GROUPS = [f"g{i}" for i in range(int(LTR_CFG["n_groups"]))]
 if config["resources"]["ltr_harvest_group"]["threads"] < 2 or config["resources"]["ltr_finder_group"]["threads"] < 2:
@@ -260,6 +336,7 @@ rule all:
         f"{OUTDIR}/summary/discovery_round_saturation.tsv",
         f"{OUTDIR}/summary/ltr_discovery.tsv",
         f"{OUTDIR}/summary/ltr_skipped_composition.tsv",
+        [f"{OUTDIR}/summary/satellite_family_calls.tsv"] if SATX_ON else [],
         f"{OUTDIR}/summary/provenance.txt",
         f"{OUTDIR}/library/library_membership.tsv",
         f"{OUTDIR}/summary/discovery_summary.tsv",
@@ -1981,6 +2058,189 @@ rule ltr_skipped_composition:
         "--out-file {input.out_file} --tandem-table {input.tandem_table} "
         "--assembly-stats {input.assembly_stats} --species {wildcards.species} "
         "--out {output} > {log} 2>&1"
+
+
+# -----------------------------------------------------------------------------
+# Satellite / rDNA / mito cross-check (satellite_crosscheck.*; README
+# "Satellite, rDNA and mito cross-check"). Report-only: it reads existing
+# shared-arm results and writes evidence + proposals; nothing is relabelled.
+# Run on its own with the satellite_crosscheck_only target.
+# -----------------------------------------------------------------------------
+TC_CONSTRAINT = "|".join(re.escape(s) for s in TC_SAMPLES) or "__no_tidecluster_samples__"
+SATDIR = f"{OUTDIR}/satellite_crosscheck"
+
+
+rule trc_regions:
+    # TideCluster arrays -> pipeline contig names, after checking TideCluster
+    # ran on the same assembly (seqid_lengths.tsv vs fingerprint.tsv).
+    input:
+        name_map=f"{OUTDIR}/{{species}}/genome/{{species}}.name_map.tsv",
+        fingerprint=f"{OUTDIR}/{{species}}/genome/{{species}}.fingerprint.tsv",
+        clustering=lambda wc: _tc_file(wc.species, "clustering.gff3"),
+        seqid_lengths=lambda wc: _tc_file(wc.species, "seqid_lengths.tsv"),
+        consensus=lambda wc: _tc_file(wc.species, "consensus_dimer_library.fasta"),
+    output:
+        regions=f"{OUTDIR}/shared/{{species}}/satellite/trc_regions.tsv",
+        trc_info=f"{OUTDIR}/shared/{{species}}/satellite/trc_info.tsv",
+        consensus=f"{OUTDIR}/shared/{{species}}/satellite/trc_consensus.fa",
+    wildcard_constraints:
+        species=TC_CONSTRAINT,
+    threads: config["resources"]["trc_regions"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["trc_regions"]["mem"] * attempt,
+        hrs=config["resources"]["trc_regions"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/shared/{{species}}/trc_regions.log",
+    params:
+        tc_dir=lambda wc: SATX_ANNOT[wc.species]["tidecluster_dir"],
+        tc_prefix=lambda wc: SATX_ANNOT[wc.species]["tidecluster_prefix"],
+        outdir=lambda wc, output: os.path.dirname(output.regions),
+        allow=lambda wc: "--allow-seqid-mismatch" if _as_bool(SATX.get("allow_seqid_mismatch", False)) else "",
+    shell:
+        """
+        exec > {log} 2>&1
+        set -euo pipefail
+        python3 {SCRIPTS}/tidecluster_regions.py --dir {params.tc_dir} --prefix {params.tc_prefix} \
+            --species {wildcards.species} --name-map {input.name_map} --fingerprint {input.fingerprint} \
+            {params.allow} --regions {output.regions} --trc-info {output.trc_info} \
+            --consensus {output.consensus}
+        # TideCluster's own run record, for provenance
+        for f in cmd_args.json pipeline_stats.json; do
+            if [ -e {params.tc_dir}/{params.tc_prefix}_$f ]; then
+                cp {params.tc_dir}/{params.tc_prefix}_$f {params.outdir}/tidecluster_$f
+            fi
+        done
+        """
+
+
+rule trc_crosscheck:
+    # Which library families hold the TRC arrays, how much of each family
+    # sits in them, and how much array sequence the library misses.
+    input:
+        out_file=f"{OUTDIR}/shared/{{species}}/repeatmasker/{{species}}.fa.out",
+        tandem_table=f"{OUTDIR}/shared/{{species}}/summary/family_tandem.tsv",
+        regions=f"{OUTDIR}/shared/{{species}}/satellite/trc_regions.tsv",
+    output:
+        trc=f"{OUTDIR}/shared/{{species}}/satellite/trc_crosscheck.trc.tsv",
+        family=f"{OUTDIR}/shared/{{species}}/satellite/trc_crosscheck.family.tsv",
+    wildcard_constraints:
+        species=TC_CONSTRAINT,
+    threads: config["resources"]["trc_crosscheck"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["trc_crosscheck"]["mem"] * attempt,
+        hrs=config["resources"]["trc_crosscheck"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/shared/{{species}}/trc_crosscheck.log",
+    shell:
+        "python3 {SCRIPTS}/trc_crosscheck.py --out-file {input.out_file} "
+        "--tandem-table {input.tandem_table} --regions {input.regions} --species {wildcards.species} "
+        "--trc-out {output.trc} --family-out {output.family} > {log} 2>&1"
+
+
+rule satellite_consensus_blast:
+    # Candidate library consensi x TRC consensi x ribotin x mito, all-vs-all;
+    # plus the whole library against ribotin + mito only.
+    input:
+        library=lambda wc: MASK_SHARED_LIBRARY or f"{OUTDIR}/library/shared_library.fa",
+        family_tandem=f"{OUTDIR}/summary/family_tandem.tsv",
+        crosscheck=expand(f"{OUTDIR}/shared/{{species}}/satellite/trc_crosscheck.family.tsv", species=TC_SAMPLES),
+        trc_consensus=expand(f"{OUTDIR}/shared/{{species}}/satellite/trc_consensus.fa", species=TC_SAMPLES),
+        refs=[r.split("=", 1)[1] for r in SATX_REFS],
+    output:
+        db_fa=f"{SATDIR}/blast/satellite_db.fa",
+        refs_fa=f"{SATDIR}/blast/refs.fa",
+        sat=f"{SATDIR}/blast/satellite_all_vs_all.tsv",
+        ref=f"{SATDIR}/blast/library_vs_refs.tsv",
+    threads: config["resources"]["satellite_blast"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["satellite_blast"]["mem"] * attempt,
+        hrs=config["resources"]["satellite_blast"]["hrs"],
+        shell_exec="bash",
+    conda:
+        "workflow/envs/blast.yaml"
+    log:
+        f"{OUTDIR}/logs/satellite_crosscheck/satellite_consensus_blast.log",
+    params:
+        refs=" ".join(SATX_REFS),
+        focus=" ".join(SATX.get("focus_families") or []),
+        min_trc_bp=SATX.get("candidate_min_trc_bp", 10000),
+        evalue=SATX.get("blast_evalue", 1e-10),
+        fmt="6 qseqid sseqid pident length qstart qend sstart send qlen slen evalue bitscore",
+    shell:
+        """
+        exec > {log} 2>&1
+        set -euo pipefail
+        {ENV_PATH_GUARD}
+        d=$(dirname {output.db_fa})
+        python3 {SCRIPTS}/satellite_evidence.py select --library {input.library} \
+            --family-tandem {input.family_tandem} --crosscheck {input.crosscheck} \
+            --trc-consensus {input.trc_consensus} --ref {params.refs} --focus {params.focus} \
+            --min-trc-bp {params.min_trc_bp} --db-fasta {output.db_fa} --refs-fasta {output.refs_fa}
+        makeblastdb -in {output.db_fa} -dbtype nucl -out $d/satellite_db
+        blastn -task blastn -query {output.db_fa} -db $d/satellite_db -evalue {params.evalue} \
+            -dust no -num_threads {threads} -max_target_seqs 500 -outfmt "{params.fmt}" -out {output.sat}
+        if [ -s {output.refs_fa} ]; then
+            makeblastdb -in {output.refs_fa} -dbtype nucl -out $d/refs
+            blastn -task dc-megablast -query {input.library} -db $d/refs -evalue {params.evalue} \
+                -num_threads {threads} -max_target_seqs 50 -outfmt "{params.fmt}" -out {output.ref}
+        else
+            : > {output.ref}
+        fi
+        """
+
+
+rule satellite_evidence:
+    input:
+        family_tandem=f"{OUTDIR}/summary/family_tandem.tsv",
+        crosscheck=expand(f"{OUTDIR}/shared/{{species}}/satellite/trc_crosscheck.family.tsv", species=TC_SAMPLES),
+        trc_info=expand(f"{OUTDIR}/shared/{{species}}/satellite/trc_info.tsv", species=TC_SAMPLES),
+        sat=f"{SATDIR}/blast/satellite_all_vs_all.tsv",
+        ref=f"{SATDIR}/blast/library_vs_refs.tsv",
+    output:
+        evidence=f"{OUTDIR}/summary/satellite_family_evidence.tsv",
+        calls=f"{OUTDIR}/summary/satellite_family_calls.tsv",
+        pairs=f"{OUTDIR}/summary/satellite_family_pairs.tsv",
+        proposals=f"{OUTDIR}/summary/satellite_proposals.tsv",
+    threads: config["resources"]["satellite_evidence"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["satellite_evidence"]["mem"] * attempt,
+        hrs=config["resources"]["satellite_evidence"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/satellite_crosscheck/satellite_evidence.log",
+    params:
+        infer=" ".join(f"{t}={d}" for t, d in SATX_INFER.items()),
+        focus=" ".join(SATX.get("focus_families") or []),
+        indep=" ".join(",".join(p) for p in (SATX.get("expected_independent") or [])),
+        x=SATX,
+        major_min_bp=config["family_tandem"]["major_min_bp"],
+    shell:
+        "python3 {SCRIPTS}/satellite_evidence.py report --family-tandem {input.family_tandem} "
+        "--crosscheck {input.crosscheck} --trc-info {input.trc_info} "
+        "--sat-blast {input.sat} --ref-blast {input.ref} --infer {params.infer} "
+        "--focus {params.focus} --expected-independent {params.indep} "
+        "--min-trc-cov {params.x[min_trc_cov]} --major-min-bp {params.major_min_bp} "
+        "--min-pair-id {params.x[min_pair_id]} --min-pair-cov {params.x[min_pair_cov]} "
+        "--min-shared-trc-frac {params.x[min_shared_trc_frac]} "
+        "--max-independent-shared-frac {params.x[max_independent_shared_frac]} "
+        "--monomer-tol {params.x[monomer_tol]} "
+        "--rdna-min-cov {params.x[rdna_min_cov]} --rdna-min-id {params.x[rdna_min_id]} "
+        "--mito-min-cov {params.x[mito_min_cov]} --mito-min-id {params.x[mito_min_id]} "
+        "--evidence-out {output.evidence} --calls-out {output.calls} "
+        "--pairs-out {output.pairs} --proposals-out {output.proposals} > {log} 2>&1"
+
+
+rule satellite_crosscheck_only:
+    # Phase 1 entry point: the cross-check on existing results only. Run with
+    # --rerun-triggers mtime so finished upstream jobs aren't redone.
+    input:
+        f"{OUTDIR}/summary/satellite_family_calls.tsv" if SATX_ON else [],
+        expand(f"{OUTDIR}/shared/{{species}}/satellite/trc_crosscheck.trc.tsv", species=TC_SAMPLES),
+    run:
+        if not SATX_ON:
+            raise ValueError("set satellite_crosscheck.external_annotations in config.yaml first")
 
 
 # -----------------------------------------------------------------------------

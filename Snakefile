@@ -47,6 +47,7 @@
 import os
 import re
 import shlex
+import sys
 
 configfile: "config.yaml"
 
@@ -2232,15 +2233,19 @@ rule satellite_evidence:
         "--pairs-out {output.pairs} --proposals-out {output.proposals} > {log} 2>&1"
 
 
+# Input-only target (no run/shell), like library_only: a target with a body
+# becomes a cluster job and needs resources.
+if "satellite_crosscheck_only" in sys.argv and not SATX_ON:
+    print("[satellite_crosscheck] WARNING: satellite_crosscheck.external_annotations is not set; "
+          "satellite_crosscheck_only has nothing to do.")
+
+
 rule satellite_crosscheck_only:
     # Phase 1 entry point: the cross-check on existing results only. Run with
     # --rerun-triggers mtime so finished upstream jobs aren't redone.
     input:
         f"{OUTDIR}/summary/satellite_family_calls.tsv" if SATX_ON else [],
         expand(f"{OUTDIR}/shared/{{species}}/satellite/trc_crosscheck.trc.tsv", species=TC_SAMPLES),
-    run:
-        if not SATX_ON:
-            raise ValueError("set satellite_crosscheck.external_annotations in config.yaml first")
 
 
 # -----------------------------------------------------------------------------

@@ -596,6 +596,9 @@ With `external_annotations` set, `all` builds it too.
      in TRC arrays, in every TideCluster sample where it holds
      ≥ `family_tandem.major_min_bp`;
    - **medium:** only some of those samples pass;
+   - **medium (partial):** tandem, with between `partial_trc_cov` and
+     `min_trc_cov` of its bp in TRCs. Typically these are arrays only partly
+     clustered by TideCluster.
    - **low:** TRC support only in samples below that size.
    - **Two different period limits in TideCluster:**
      - TideHunter's `-P` limits which arrays are *found*: 3000 by default
@@ -618,8 +621,10 @@ With `external_annotations` set, `all` builds it too.
      whose unit (`monomer_period`, else the consensus length) is longer than
      that cannot be in a TRC, so in that sample it neither passes nor fails;
      it is listed under `beyond_tidehunter`. If its `tandem_frac` is
-     ≥ `min_tandem_frac_long`, it gets `Satellite` (medium) on the
-     RepeatMasker arrays alone. Rerunning TideCluster with `--long` turns
+     ≥ `min_tandem_frac_long`, it gets `Satellite` on the RepeatMasker arrays alone:
+     medium for `Unknown` families, low for TE-labelled ones, since those may
+     be tandem segmental copies of the TE. The unit is the KITE founder
+     when there is one. Rerunning TideCluster with `--long` turns
      these into a real TRC test.
    - A TRC that TideCluster flags as rDNA turns a Satellite call into
      `rRNA` (medium).
@@ -641,6 +646,9 @@ each other. The verdicts:
   variants or subfamilies of one satellite. They are reported, not grouped.
 - `co_located_related`: shared arrays and related consensi, but different
   monomers, so possibly a composite array.
+- `same_arrays_same_monomer`: shared arrays and the same founder, but
+  consensi that blastn can't align. Probably one satellite with very
+  diverged consensi; check it by hand. These are never grouped.
 - `co_located_distinct`: shared arrays, unrelated consensi.
 - `related_not_co_located`: related consensi (≥ `related_min_id`) in
   different arrays.

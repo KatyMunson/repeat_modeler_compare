@@ -228,7 +228,11 @@ def cmd_report(args):
         for fam in families:
             rows = ev[fam]
             cf = next(iter(rows.values()))["class_family"] if rows else "NA"
-            elig, passed, weak, beyond = [], [], [], []
+            elig, passed, weak, beyond, partial = [], [], [], [], []
+            # Repeat unit for the TideHunter-limit test: KITE founder (any
+            # TideCluster sample) > consensus self-period > consensus length.
+            kite_unit = next((num(xc.get(fam, {}).get(s, {}).get("kite_founder_median")) for s in tc_samples
+                              if num(xc.get(fam, {}).get(s, {}).get("kite_founder_median"))), None)
             for s in tc_samples:
                 r = rows.get(s)
                 if not r:
@@ -238,7 +242,7 @@ def cmd_report(args):
                 # A tandem family whose repeat unit is longer than TideHunter looked
                 # for can't be in a TRC: no TideCluster evidence either way.
                 ftr = ft.get(fam, {}).get(s, {})
-                unit = num(ftr.get("monomer_period")) or num(ftr.get("cons_len")) or 0
+                unit = kite_unit or num(ftr.get("monomer_period")) or num(ftr.get("cons_len")) or 0
                 too_long = (not ok and r["tandem_family"] == "True"
                             and (num(ftr.get("tandem_frac")) or 0) >= t.min_tandem_frac_long
                             and unit > max_period.get(s, 3000))
@@ -248,6 +252,8 @@ def cmd_report(args):
                         passed.append(s)
                     elif too_long:
                         beyond.append(s)
+                    elif r["tandem_family"] == "True" and frac >= t.partial_trc_cov:
+                        partial.append(s)
                 elif ok or frac >= 0.3:
                     weak.append(s)
             inferred = []
@@ -274,8 +280,10 @@ def cmd_report(args):
                 prop, conf = "Satellite", "high"
                 why.append(f"tandem and >= {t.min_trc_cov} of its bp in TRC arrays in all eligible "
                            f"samples ({','.join(passed)})")
-            elif elig and len(passed) + len(beyond) == len(elig):
-                prop, conf = "Satellite", "medium"
+            elif elig and beyond and len(passed) + len(beyond) == len(elig):
+                # TE-labelled families in arrays may be tandem segmental copies of
+                # the TE: RepeatMasker arrays alone only earn them "low".
+                prop, conf = "Satellite", "medium" if cf in ("Unknown", "NA") or cf.startswith("Satellite") else "low"
                 lim = ",".join(f"{s}:-P {max_period.get(s, 3000)}" for s in beyond)
                 found = ",".join(
                     f"{s}:{(num(rows[s]['tidehunter_bp'], int) or 0) / max(num(rows[s]['owned_bp'], int) or 1, 1):.2f}"
@@ -283,7 +291,13 @@ def cmd_report(args):
                 why.append(f"unit longer than TideHunter's detection limit ({lim}): its arrays are only found "
                            f"where a sub-period <= that exists (share of its bp in TideHunter arrays: {found}); "
                            f"tandem by RepeatMasker arrays (family_tandem)"
-                           + (f"; TRC support in {','.join(passed)}" if passed else ""))
+                           + (f"; TRC support in {','.join(passed)}" if passed else "")
+                           + ("" if conf == "medium" else "; tandemly arrayed TE (segmental copies?)"))
+            elif elig and partial and len(passed) + len(partial) + len(beyond) == len(elig):
+                prop, conf = "Satellite", "medium"
+                fr = ",".join(f"{s}:{rows[s]['frac_in_trc']}" for s in partial)
+                why.append(f"partial TRC support (frac_in_trc {fr}; >= {t.partial_trc_cov}, < {t.min_trc_cov})"
+                           + (f"; full TRC support in {','.join(passed)}" if passed else ""))
             elif passed or weak:
                 prop, conf = "Satellite", "medium" if passed else "low"
                 why.append(f"TRC support in {','.join(passed + weak)} of eligible {','.join(elig) or 'none'}")
@@ -396,6 +410,8 @@ def cmd_report(args):
                 verdict = "same_satellite_diverged"  # same arrays + monomer, consensi < min_pair_id
             elif co and related:
                 verdict = "co_located_related" if mm == "different" else "undetermined"
+            elif co and mono_ok and mm != "NA":
+                verdict = "same_arrays_same_monomer"  # consensi don't align: check by hand
             elif co:
                 verdict = "co_located_distinct"
             elif related and mx is not None:
@@ -467,6 +483,7 @@ def main():
     r.add_argument("--related-min-id", type=float, default=65.0)
     r.add_argument("--independent-max-cov", type=float, default=0.2)
     r.add_argument("--min-tandem-frac-long", type=float, default=0.9)
+    r.add_argument("--partial-trc-cov", type=float, default=0.3)
     r.add_argument("--tc-params", nargs="*", default=[], help="tidecluster_regions.py --params tables")
     r.add_argument("--min-shared-trc-frac", type=float, default=0.5)
     r.add_argument("--max-independent-shared-frac", type=float, default=0.1)

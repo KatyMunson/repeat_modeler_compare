@@ -585,6 +585,7 @@ With `external_annotations` set, `all` builds it too.
 | `summary/satellite_family_calls.tsv` | one row per family: proposed class, confidence, reason |
 | `summary/satellite_family_pairs.tsv` | pairs of tandem families: consensus similarity, shared-TRC fraction, monomers, verdict |
 | `summary/satellite_proposals.tsv` | `classify.curated_families` format; high and medium rows only |
+| `summary/satellite_trc_pairs.tsv` | TideCluster consensi matching across samples: coverage both ways, identity, KITE founder of each. These are the satellites shared between species |
 
 **Calls**, in priority order:
 1. `rRNA` (high): ≥ `rdna_min_cov` of the consensus matches a ribotin model
@@ -659,6 +660,24 @@ each other. The verdicts:
 - `undetermined`: anything else.
 
 Pairs are only formed among medium/high calls and `focus_families`.
+
+How monomers and consensi are compared:
+- **Monomers:** a pair's monomers are the two KITE founders in the sample
+  where the families share the most arrays (`monomer_a/b` names it). Only
+  when no sample has both does each family fall back to its own best
+  estimate.
+- **`top_trc_match`:** lists the families' top TRCs that are the same TRC
+  (`=same`) or whose consensi match across samples (`~`). Such a
+  cross-sample match with agreeing founders upgrades
+  `same_arrays_same_monomer` to `same_satellite_diverged`.
+- **Rotation:** consensus comparisons are rotation-agnostic.
+  - TideCluster consensi are dimers, and most RepeatModeler satellite
+    consensi are multimers, so every rotation lies in one piece inside them.
+  - blastn searches both strands, and coverage merges all HSPs.
+  - A library consensus shorter than 1.5× its unit is searched as a dimer,
+    with coordinates folded back to its own length.
+- **Simple repeats:** RepeatMasker's built-in `Simple_repeat` /
+  `Low_complexity` entries are never called.
 
 A pair listed in `expected_independent` is never grouped. If the test calls
 it `same_satellite`, it is flagged `CONTRADICTS expected_independent` for a

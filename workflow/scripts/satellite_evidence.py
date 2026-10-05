@@ -64,19 +64,33 @@ def label_fastas(specs):
 def cmd_select(args):
     focus = set(args.focus or [])
     cand = set(focus)
+    unit = {}  # family -> repeat unit (KITE founder > consensus self-period)
     for r in read_tsv(args.family_tandem):
         if r.get("tandem_family") == "True":
             cand.add(r["family"])
+        if num(r.get("monomer_period")):
+            unit.setdefault(r["family"], num(r["monomer_period"]))
     for path in args.crosscheck or []:
         for r in read_tsv(path):
             if num(r["in_trc_bp"], int) and int(r["in_trc_bp"]) >= args.min_trc_bp:
                 cand.add(r["family"])
+            if num(r.get("kite_founder_median")):
+                unit[r["family"]] = num(r["kite_founder_median"])
     n = {"lib": 0, "trc": 0, "rdna": 0, "mito": 0}
     seen_refs = set()
     with open(args.db_fasta, "w") as db, open(args.refs_fasta, "w") as refs:
         for header, seq in iter_fasta(args.library):
-            if bare(header) in cand:
-                write_fasta(db, f"lib{SEP}{bare(header)}", seq)
+            fam = bare(header)
+            if fam in cand:
+                # About one monomer long: write it as a dimer so any rotation of
+                # the other sequence aligns in one piece (folded back in report).
+                if unit.get(fam) and len(seq) < 1.5 * unit[fam]:
+                    write_fasta(db, f"libx2{SEP}{fam}", seq + seq)
+                    n["dimer"] = n.get("dimer", 0) + 1
+                    print(f"[satellite_evidence] {fam}: {len(seq)} bp ~ one {unit[fam]:g} bp unit; "
+                          f"searched as a dimer", file=sys.stderr)
+                else:
+                    write_fasta(db, f"lib{SEP}{fam}", seq)
                 n["lib"] += 1
         for path in args.trc_consensus or []:
             for header, seq in iter_fasta(path):
@@ -100,25 +114,40 @@ def cmd_select(args):
 
 # ---------------------------------------------------------------- report
 def read_blast(path):
-    """Yield (q, s, pident, qstart, qend, qlen) with the label prefixes kept."""
+    """Yield (q, s, pident, q_intervals, qlen) with the label prefixes kept.
+    Library consensi searched as dimers (libx2::) are renamed lib:: and their
+    query coordinates folded back onto the original length."""
     with open(path) as fh:
         for line in fh:
             f = line.rstrip("\n").split("\t")
             if len(f) < 12:
                 continue
-            q, s = f[0], f[1]
-            yield q, s, float(f[2]), int(f[4]), int(f[5]), int(f[8]), int(f[6]), int(f[7]), int(f[9])
+            q, s = f[0], f[1].replace(f"libx2{SEP}", f"lib{SEP}", 1)
+            qs, qe = sorted((int(f[4]), int(f[5])))
+            ql = int(f[8])
+            ivs = [(qs, qe)]
+            if q.startswith(f"libx2{SEP}"):
+                q = q.replace(f"libx2{SEP}", f"lib{SEP}", 1)
+                ql //= 2
+                ivs = []
+                for a, b in [(qs, min(qe, ql)), (max(qs, ql + 1) - ql, qe - ql)]:
+                    if a <= b:
+                        ivs.append((max(a, 1), min(b, ql)))
+                if qe - qs + 1 >= ql:
+                    ivs = [(1, ql)]
+            yield q, s, float(f[2]), ivs, ql
 
 
 def coverage(hits, min_id):
     """{(query, subject): (query coverage, bp-weighted identity)} over HSPs
     >= min_id; coverage = merged query bp / query length."""
     ivs, idw, qlen = defaultdict(list), defaultdict(float), {}
-    for q, s, pid, qs, qe, ql, ss, se, sl in hits:
+    for q, s, pid, q_ivs, ql in hits:
         if q == s or pid < min_id:
             continue
-        ivs[(q, s)].append((min(qs, qe), max(qs, qe)))
-        idw[(q, s)] += pid * abs(qe - qs)
+        for a, b in q_ivs:
+            ivs[(q, s)].append((a, b))
+            idw[(q, s)] += pid * (b - a)
         qlen[(q, s)] = ql
     out = {}
     for k, iv in ivs.items():
@@ -270,7 +299,9 @@ def cmd_report(args):
             rd_flag = any(r["trc_rdna_flag"] == "True" for r in rows.values())
 
             prop, conf, why = "NA", "none", []
-            if b_rd and b_rd[0] >= t.rdna_min_cov:
+            if cf.split("/")[0] in ("Simple_repeat", "Low_complexity"):
+                why.append("simple repeat (RepeatMasker built-in): not called")
+            elif b_rd and b_rd[0] >= t.rdna_min_cov:
                 prop, conf = "rRNA", "high"
                 why.append(f"{b_rd[0]:.2f} of consensus matches ribotin {strip(b_rd[2])} at {b_rd[1]:.1f}%")
             elif b_mt and b_mt[0] >= t.mito_min_cov:
@@ -376,16 +407,73 @@ def cmd_report(args):
             x = groups[x]
         return x
 
+    # ---- TRC consensus matches across samples (rotation-safe: TRC consensi are dimers)
+    def trc_name(x):
+        sample, trc = strip(x).split(":", 1)
+        return sample, trc
+
+    trc_match = {}
+    trc_rows = []
+    seen = set()
+    for (q, sub), (c, i) in cov_lib.items():
+        if not (q.startswith("trc" + SEP) and sub.startswith("trc" + SEP)):
+            continue
+        (sq, tq), (ss_, ts) = trc_name(q), trc_name(sub)
+        if sq == ss_:
+            continue
+        key = tuple(sorted(((sq, tq), (ss_, ts))))
+        if key in seen:
+            continue
+        seen.add(key)
+        (s1, t1), (s2, t2) = key
+        c12 = cov_lib.get((f"trc{SEP}{s1}:{t1}", f"trc{SEP}{s2}:{t2}"), (0.0, 0.0))
+        c21 = cov_lib.get((f"trc{SEP}{s2}:{t2}", f"trc{SEP}{s1}:{t1}"), (0.0, 0.0))
+        ident = max(c12[1], c21[1])
+        if max(c12[0], c21[0]) < t.min_pair_cov or ident < t.related_min_id:
+            continue
+        f1 = num(trc_info.get((s1, t1), {}).get("kite_founder_median"))
+        f2 = num(trc_info.get((s2, t2), {}).get("kite_founder_median"))
+        mm = monomer_match(f1, f2, t.monomer_tol)
+        trc_match[key] = (max(c12[0], c21[0]), ident, mm)
+        trc_rows.append((s1, t1, s2, t2, c12[0], c21[0], ident, f1, f2, mm))
+    with open(t.trc_pairs_out, "w") as out:
+        out.write("sample_a\ttrc_a\tsample_b\ttrc_b\tcov_a_by_b\tcov_b_by_a\tidentity\t"
+                  "kite_founder_a\tkite_founder_b\tmonomer_match\n")
+        for s1, t1, s2, t2, a_, b_, i_, f1, f2, mm in sorted(trc_rows):
+            out.write(f"{s1}\t{t1}\t{s2}\t{t2}\t{a_:.2f}\t{b_:.2f}\t{i_:.1f}\t"
+                      f"{'NA' if f1 is None else f'{f1:g}'}\t{'NA' if f2 is None else f'{f2:g}'}\t{mm}\n")
+
+    def top_trcs(fam):
+        return {s: xc[fam][s]["top_trc"] for s in tc_samples
+                if xc.get(fam, {}).get(s, {}).get("top_trc") not in (None, "NA")}
+
+    def top_trc_match(a, b):
+        """Same top TRC in a sample, or matching top-TRC consensi across samples."""
+        ta, tb = top_trcs(a), top_trcs(b)
+        hits = []
+        for sa_, x in ta.items():
+            for sb_, y in tb.items():
+                if sa_ == sb_ and x == y:
+                    hits.append(f"{sa_}:{x}=same")
+                elif sa_ != sb_:
+                    m = trc_match.get(tuple(sorted(((sa_, x), (sb_, y)))))
+                    if m:
+                        hits.append(f"{sa_}:{x}~{sb_}:{y}(cov={m[0]:.2f},id={m[1]:.1f},{m[2]})")
+        return hits
+
+    def kite_in(fam, s):
+        return num(xc.get(fam, {}).get(s, {}).get("kite_founder_median"))
+
     with open(t.pairs_out, "w") as out:
         out.write("family_a\tfamily_b\tcov_a_by_b\tcov_b_by_a\tidentity\tshared_trc_frac\t"
                   "max_shared_trc_frac\tmonomer_a\tmonomer_b\tmonomer_match\tsame_trc_superfamily\t"
-                  "verdict\tnote\n")
+                  "top_trc_match\tverdict\tnote\n")
         for a, b in sorted(pairs):
             ab = cov_lib.get((f"lib{SEP}{a}", f"lib{SEP}{b}"))
             ba = cov_lib.get((f"lib{SEP}{b}", f"lib{SEP}{a}"))
             cov_ab, cov_ba = (ab[0] if ab else 0.0), (ba[0] if ba else 0.0)
             ident = max([x[1] for x in (ab, ba) if x], default=0.0)
-            shared, per = [], []
+            shared, per, by_s = [], [], {}
             for s in tc_samples:
                 ta, tb = trc_bp(a, s), trc_bp(b, s)
                 if not ta or not tb:
@@ -393,9 +481,17 @@ def cmd_report(args):
                     continue
                 v = sum(min(ta[k], tb[k]) for k in set(ta) & set(tb)) / min(sum(ta.values()), sum(tb.values()))
                 shared.append(v)
+                by_s[s] = v
                 per.append(f"{s}:{v:.2f}")
             mx = max(shared, default=None)
-            (ma, sa), (mb, sb) = monomer(a), monomer(b)
+            # Monomers from the sample where they share arrays most (both need a
+            # KITE founder there); else each family's own best estimate.
+            both = [s for s in sorted(by_s, key=lambda x: -by_s[x]) if kite_in(a, s) and kite_in(b, s)]
+            if both:
+                ma, mb = kite_in(a, both[0]), kite_in(b, both[0])
+                sa = sb = f"kite:{both[0]}"
+            else:
+                (ma, sa), (mb, sb) = monomer(a), monomer(b)
             mm = monomer_match(ma, mb, t.monomer_tol)
             sfa, sfb = superfam(a), superfam(b)
             same_sf = "NA" if not (sfa and sfb) else str(bool(sfa & sfb))
@@ -411,7 +507,11 @@ def cmd_report(args):
             elif co and related:
                 verdict = "co_located_related" if mm == "different" else "undetermined"
             elif co and mono_ok and mm != "NA":
-                verdict = "same_arrays_same_monomer"  # consensi don't align: check by hand
+                # consensi don't align; matching TideCluster consensi across samples
+                # make it the same satellite, otherwise check by hand
+                cross = [h for h in top_trc_match(a, b)
+                         if "~" in h and (",same)" in h or ",multiple_" in h)]
+                verdict = "same_satellite_diverged" if cross else "same_arrays_same_monomer"
             elif co:
                 verdict = "co_located_distinct"
             elif related and mx is not None:
@@ -436,7 +536,8 @@ def cmd_report(args):
             out.write(f"{a}\t{b}\t{cov_ab:.2f}\t{cov_ba:.2f}\t{ident:.1f}\t{';'.join(per)}\t"
                       f"{'NA' if mx is None else f'{mx:.2f}'}\t"
                       f"{'NA' if ma is None else f'{ma:g}'}({sa})\t{'NA' if mb is None else f'{mb:g}'}({sb})\t"
-                      f"{mm}\t{same_sf}\t{verdict}\t{'; '.join(note) or '.'}\n")
+                      f"{mm}\t{same_sf}\t{';'.join(top_trc_match(a, b)) or '.'}\t{verdict}\t"
+                      f"{'; '.join(note) or '.'}\n")
 
     # ---- proposals (curated_families format)
     with open(t.proposals_out, "w") as out:
@@ -496,6 +597,7 @@ def main():
     r.add_argument("--calls-out", required=True)
     r.add_argument("--pairs-out", required=True)
     r.add_argument("--proposals-out", required=True)
+    r.add_argument("--trc-pairs-out", required=True)
 
     args = ap.parse_args()
     cmd_select(args) if args.cmd == "select" else cmd_report(args)

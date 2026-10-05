@@ -2206,6 +2206,7 @@ rule satellite_evidence:
         calls=f"{OUTDIR}/summary/satellite_family_calls.tsv",
         pairs=f"{OUTDIR}/summary/satellite_family_pairs.tsv",
         proposals=f"{OUTDIR}/summary/satellite_proposals.tsv",
+        trc_pairs=f"{OUTDIR}/summary/satellite_trc_pairs.tsv",
     threads: config["resources"]["satellite_evidence"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["satellite_evidence"]["mem"] * attempt,
@@ -2234,7 +2235,8 @@ rule satellite_evidence:
         "--rdna-min-cov {params.x[rdna_min_cov]} --rdna-min-id {params.x[rdna_min_id]} "
         "--mito-min-cov {params.x[mito_min_cov]} --mito-min-id {params.x[mito_min_id]} "
         "--evidence-out {output.evidence} --calls-out {output.calls} "
-        "--pairs-out {output.pairs} --proposals-out {output.proposals} > {log} 2>&1"
+        "--pairs-out {output.pairs} --proposals-out {output.proposals} "
+        "--trc-pairs-out {output.trc_pairs} > {log} 2>&1"
 
 
 # Input-only target (no run/shell), like library_only: a target with a body

@@ -2,10 +2,11 @@
 """Concatenate the per-(arm,species) chunks summarize_rm.py and
 assembly_stats.py write into the final long-format comparison tables, and
 compute arm_concordance.tsv (shared vs own pct + delta per species/class).
-discovery_round_saturation.tsv / ltr_discovery.tsv: per-species chunks
-concatenated. Stdlib only, no pandas.
+discovery_round_saturation.tsv / ltr_discovery.tsv / ltr_skipped_composition.tsv:
+per-species chunks concatenated. Stdlib only, no pandas.
 
---arm-concordance-out, --round-saturation-out and --ltr-summary-out are
+--arm-concordance-out, --round-saturation-out, --ltr-summary-out and
+--ltr-skipped-out are
 optional so the shared-arm-only report (report_shared_only) can reuse this
 without the own arm, RepeatModeler rounds or LTR side pipeline.
 """
@@ -106,6 +107,8 @@ def main():
     ap.add_argument("--round-saturation-out")
     ap.add_argument("--ltr-summary-chunks", nargs="*", default=[])
     ap.add_argument("--ltr-summary-out")
+    ap.add_argument("--ltr-skipped-chunks", nargs="*", default=[])
+    ap.add_argument("--ltr-skipped-out")
     args = ap.parse_args()
 
     tissue_by_species = parse_manifest_tissue(args.manifest)
@@ -120,6 +123,8 @@ def main():
         concat_chunks(args.round_saturation_chunks, args.round_saturation_out)
     if args.ltr_summary_out:
         concat_chunks(args.ltr_summary_chunks, args.ltr_summary_out)
+    if args.ltr_skipped_out:
+        concat_chunks(args.ltr_skipped_chunks, args.ltr_skipped_out)
 
     tissues = set(tissue_by_species.values())
     if "unknown" in tissues or len(tissues) > 1:

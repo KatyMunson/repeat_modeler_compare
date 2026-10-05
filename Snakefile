@@ -259,6 +259,7 @@ rule all:
         f"{OUTDIR}/summary/assembly_covariates.tsv",
         f"{OUTDIR}/summary/discovery_round_saturation.tsv",
         f"{OUTDIR}/summary/ltr_discovery.tsv",
+        f"{OUTDIR}/summary/ltr_skipped_composition.tsv",
         f"{OUTDIR}/summary/provenance.txt",
         f"{OUTDIR}/library/library_membership.tsv",
         f"{OUTDIR}/summary/discovery_summary.tsv",
@@ -1942,6 +1943,7 @@ rule round_saturation:
     input:
         out_file=f"{OUTDIR}/own/{{species}}/repeatmasker/{{species}}.fa.out",
         assembly_stats=f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv",
+        tandem_table=f"{OUTDIR}/own/{{species}}/summary/family_tandem.tsv",
     output:
         f"{OUTDIR}/own/{{species}}/summary/round_saturation.tsv",
     threads: config["resources"]["summarize"]["threads"]
@@ -1953,6 +1955,30 @@ rule round_saturation:
         f"{OUTDIR}/logs/own/{{species}}/round_saturation.log",
     shell:
         "python3 {SCRIPTS}/round_saturation.py --out-file {input.out_file} "
+        "--assembly-stats {input.assembly_stats} --species {wildcards.species} "
+        "--tandem-table {input.tandem_table} --out {output} > {log} 2>&1"
+
+
+rule ltr_skipped_composition:
+    # What the LTR tools' timed-out windows hold: shared-arm class and
+    # tandem_family bp inside ltr/skipped_windows.tsv, vs genome-wide (README).
+    input:
+        skipped=f"{OUTDIR}/{{species}}/ltr/skipped_windows.tsv",
+        out_file=f"{OUTDIR}/shared/{{species}}/repeatmasker/{{species}}.fa.out",
+        tandem_table=f"{OUTDIR}/shared/{{species}}/summary/family_tandem.tsv",
+        assembly_stats=f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv",
+    output:
+        f"{OUTDIR}/shared/{{species}}/summary/ltr_skipped_composition.tsv",
+    threads: config["resources"]["summarize"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["summarize"]["mem"] * attempt,
+        hrs=config["resources"]["summarize"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/shared/{{species}}/ltr_skipped_composition.log",
+    shell:
+        "python3 {SCRIPTS}/ltr_skipped_composition.py --skipped {input.skipped} "
+        "--out-file {input.out_file} --tandem-table {input.tandem_table} "
         "--assembly-stats {input.assembly_stats} --species {wildcards.species} "
         "--out {output} > {log} 2>&1"
 
@@ -1977,6 +2003,7 @@ def _combine_inputs(wildcards):
         ),
         "round_chunks": expand(f"{OUTDIR}/own/{{species}}/summary/round_saturation.tsv", species=SPECIES_IDS),
         "ltr_summaries": expand(f"{OUTDIR}/{{species}}/ltr/ltr_discovery_summary.tsv", species=SPECIES_IDS),
+        "ltr_skipped": expand(f"{OUTDIR}/shared/{{species}}/summary/ltr_skipped_composition.tsv", species=SPECIES_IDS),
     }
     return inputs
 
@@ -1990,6 +2017,7 @@ def _combine_outputs():
         "arm_concordance": f"{OUTDIR}/summary/arm_concordance.tsv",
         "round_saturation": f"{OUTDIR}/summary/discovery_round_saturation.tsv",
         "ltr_discovery": f"{OUTDIR}/summary/ltr_discovery.tsv",
+        "ltr_skipped": f"{OUTDIR}/summary/ltr_skipped_composition.tsv",
     }
     return outputs
 
@@ -2022,6 +2050,8 @@ rule combine_summaries:
         "--round-saturation-out {output.round_saturation} "
         "--ltr-summary-chunks {input.ltr_summaries} "
         "--ltr-summary-out {output.ltr_discovery} "
+        "--ltr-skipped-chunks {input.ltr_skipped} "
+        "--ltr-skipped-out {output.ltr_skipped} "
         "> {log} 2>&1"
 
 

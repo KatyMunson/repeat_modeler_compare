@@ -102,6 +102,14 @@ timed-out window with no timeout at all.
   out;
 - the per-group `*.timeouts.tsv` files list every salvaged or skipped piece.
 
+`{outdir}/summary/ltr_skipped_composition.tsv` says what the skipped
+regions hold, per species and tool: shared-arm bp by class, by
+`tandem_family` vs dispersed (any class, so an LTR-labelled satellite
+counts as tandem), and the top families, each next to its genome-wide %
+and the enrichment. Mostly tandem bp means the window was a satellite
+array with no LTR candidates to lose; mostly dispersed LTR bp means
+discovery was actually lost there.
+
 Tool paths: in `dfam/tetools`, `gt`, `LTR_retriever` and `cd-hit` live
 under `/opt` but are **not on `PATH`**, so `LTR_retriever` on its own says
 "command not found". The rules resolve them the way RepeatModeler does,
@@ -148,6 +156,11 @@ calls). If families from the final round still mask a
 meaningful share (for example >1% of the genome), sampling hasn't
 saturated. In that case set `repeatmodeler.extra_args: "-numAddlRounds 1"`
 (or 2), the same value for every species, and rerun.
+- Judge it by `dispersed_pct_non_n`, not `pct_non_n`: `tandem_bp` is the
+  part of a bucket held by `tandem_family` families (own-arm
+  `family_tandem.tsv`). One Mb-scale satellite array discovered in the last
+  round inflates `pct_non_n` without saying anything about missed TE
+  families.
 - Each extra round costs about as much as the most expensive round, and
   later rounds mostly add low-copy `Unknown` families.
 - Prefer extra rounds over a larger `-genomeSampleSizeMax`: RECON's

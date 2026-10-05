@@ -42,6 +42,7 @@ isn't documented): anything unrecognised is reported on stderr and left
 as NA rather than guessed. Stdlib only."""
 
 import argparse
+import csv
 import os
 import re
 import sys
@@ -125,48 +126,51 @@ def check_same_assembly(tc_lengths, name_map, fp_lengths):
 
 def read_trc_table(path, label):
     """Rows of a small TSV/CSV that mention a TRC id: {TRC: [other fields]}.
-    Returns ({}, None) if the file is absent."""
+    Parsed with csv: TideCluster's R tables quote fields that may hold
+    newlines."""
     rows = {}
     if not path:
         return rows
-    with open(path) as fh:
-        text = fh.read()
-    sep = "," if path.endswith(".csv") else "\t"
-    lines = [l for l in text.splitlines() if l.strip()]
-    for line in lines:
-        f = [x.strip().strip('"') for x in line.split(sep)]
+    with open(path, newline="") as fh:
+        records = [r for r in csv.reader(fh, delimiter="," if path.endswith(".csv") else "\t") if any(r)]
+    for f in records:
+        f = [x.strip() for x in f]
         ids = [x for x in f if TRC_RE.fullmatch(x)]
         if ids:
             rows[ids[0]] = [x for x in f if x != ids[0]]
-    print(f"[tidecluster_regions] {label}: {len(lines)} lines, {len(rows)} with a TRC id"
-          + (f"; first line: {lines[0]!r}" if lines else ""), file=sys.stderr)
+    print(f"[tidecluster_regions] {label}: {len(records)} records, {len(rows)} with a TRC id"
+          + (f"; first record: {records[0]!r}" if records else ""), file=sys.stderr)
     return rows
 
 
 def read_tarean_monomers(path):
-    """{TRC: monomer length} from the TAREAN report, if a column is recognisable."""
+    """{TRC: monomer length} from the TAREAN report (tarean_report.R writes it
+    with write.table(quote=TRUE); its Consensus column holds newlines inside
+    the quotes, so it must be read with csv, not line by line)."""
     if not path:
         return {}
-    with open(path) as fh:
-        header = [h.strip('"') for h in fh.readline().rstrip("\n").split("\t")]
-        rows = [[x.strip('"') for x in l.rstrip("\n").split("\t")] for l in fh if l.strip()]
+    with open(path, newline="") as fh:
+        reader = csv.reader(fh, delimiter="\t")
+        header = [h.strip() for h in next(reader, [])]
+        rows = [r for r in reader if any(r)]
     print(f"[tidecluster_regions] tarean_report columns: {header}", file=sys.stderr)
     low = [h.lower() for h in header]
     i_len = next((i for i, h in enumerate(low) if "monomer" in h and ("len" in h or "size" in h)), None)
     if i_len is None:
         i_len = next((i for i, h in enumerate(low) if h in ("consensus_length", "monomer", "length")), None)
-    if i_len is None:
-        print("[tidecluster_regions] note: no monomer-length column recognised in the TAREAN "
+    i_trc = low.index("trc") if "trc" in low else None
+    if i_len is None or i_trc is None:
+        print("[tidecluster_regions] note: no TRC / monomer-length column recognised in the TAREAN "
               "report; tarean_monomer_len = NA", file=sys.stderr)
         return {}
     out = {}
     for r in rows:
-        ids = [x for x in r if TRC_RE.search(x)]
-        if ids and i_len < len(r):
-            try:
-                out[TRC_RE.search(ids[0]).group(0)] = int(float(r[i_len]))
-            except ValueError:
-                pass
+        if max(i_len, i_trc) >= len(r) or not TRC_RE.fullmatch(r[i_trc].strip()):
+            continue
+        try:
+            out[r[i_trc].strip()] = int(float(r[i_len]))
+        except ValueError:
+            pass
     print(f"[tidecluster_regions] TAREAN monomer length from column '{header[i_len]}' "
           f"for {len(out)} TRCs", file=sys.stderr)
     return out
@@ -335,6 +339,13 @@ def main():
     print(f"[tidecluster_regions] TideHunter max period {max_p} ({how})", file=sys.stderr)
     with open(args.params, "w") as out:
         out.write(f"species\ttidehunter_max_period\tsource\n{args.species}\t{max_p}\t{how}\n")
+
+    for trc in list(monomer):
+        cap = min(cons_len.get(trc, float("inf")), trc_bp.get(trc, float("inf")))
+        if monomer[trc] > cap:
+            print(f"[tidecluster_regions] WARNING: TAREAN monomer {monomer[trc]} for {trc} exceeds its "
+                  f"consensus/array length ({cap:g}); set to NA", file=sys.stderr)
+            del monomer[trc]
 
     def kmed(trc):
         m = weighted_median(kite_by_trc.get(trc, []))

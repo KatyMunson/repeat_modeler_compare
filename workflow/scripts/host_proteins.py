@@ -5,7 +5,7 @@
 they would relabel real TEs as host genes. Two filters:
 
   prep      keyword filter on FASTA descriptions (all inputs), IDs prefixed
-            with the source file's stem so hits show the source species.
+            with the source file's stem so hits show the source sample.
             Annotation proteomes go to --annot-out (to be domain-screened
             with TEsorter -st prot); Swiss-Prot goes to --sprot-out
             (keyword filter only: reviewed descriptions are reliable, and

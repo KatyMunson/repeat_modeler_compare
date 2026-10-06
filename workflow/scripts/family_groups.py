@@ -26,8 +26,8 @@ Subcommands:
             region, or both. --class-family fills class_family.
             blastn -query elem.fa -db library -outfmt \\
               "6 qseqid sseqid pident length qstart qend sstart send qlen slen evalue bitscore"
-  report    sum owned_bp per species and group from the combined
-            family_tandem.tsv. Writes one row per species x group plus one
+  report    sum owned_bp per sample and group from the combined
+            family_tandem.tsv. Writes one row per sample x group plus one
             per member family (row_type = group / member).
 
 Several groups can share one TSV (concatenate members outputs). A family
@@ -153,24 +153,24 @@ def cmd_report(args):
             idx = {h: i for i, h in enumerate(header)}
             for line in fh:
                 f = line.rstrip("\n").split("\t")
-                non_n[f[idx["species_id"]]] = int(float(f[idx["non_n_bp"]]))
+                non_n[f[idx["sample_id"]]] = int(float(f[idx["non_n_bp"]]))
 
-    fam_stats = defaultdict(dict)   # species -> family -> (owned_bp, n_hits, class_family)
+    fam_stats = defaultdict(dict)   # sample -> family -> (owned_bp, n_hits, class_family)
     masked = defaultdict(int)
     with open(args.family_tandem) as fh:
         header = fh.readline().rstrip("\n").split("\t")
         idx = {h: i for i, h in enumerate(header)}
         for line in fh:
             f = line.rstrip("\n").split("\t")
-            sp, owned = f[idx["species"]], int(f[idx["owned_bp"]])
+            sp, owned = f[idx["sample"]], int(f[idx["owned_bp"]])
             masked[sp] += owned
             fam_stats[sp][bare(f[idx["family"]])] = (owned, int(f[idx["n_hits"]]), f[idx["class_family"]])
 
-    species = [s for s in (args.species_ids or sorted(fam_stats)) if s in fam_stats]
+    sample = [s for s in (args.sample_ids or sorted(fam_stats)) if s in fam_stats]
     with open(args.out, "w") as out:
-        out.write("species\tgroup\trow_type\tfamily\tclass_family\tn_families\tn_hits\towned_bp\t"
+        out.write("sample\tgroup\trow_type\tfamily\tclass_family\tn_families\tn_hits\towned_bp\t"
                   "pct_of_masked\tpct_non_n\n")
-        for sp in species:
+        for sp in sample:
             for group, fams in members.items():
                 rows = [(fam,) + fam_stats[sp].get(fam, (0, 0, "")) for fam in dict.fromkeys(fams)]
                 tot_bp = sum(r[1] for r in rows)
@@ -204,7 +204,7 @@ def main():
                    help="groups / curated-families TSVs (group or element, family columns)")
     r.add_argument("--family-tandem", required=True, help="combined family_tandem.tsv")
     r.add_argument("--assembly-covariates", default="")
-    r.add_argument("--species-ids", nargs="*", default=[])
+    r.add_argument("--sample-ids", nargs="*", default=[])
     r.add_argument("--out", required=True)
     args = ap.parse_args()
     {"members": cmd_members, "report": cmd_report}[args.cmd](args)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Rewrite a species' RepeatModeler2 family FASTA headers from
-'name#Class/Family [description]' to '{species_id}{sep}name#Class/Family',
+"""Rewrite a sample's RepeatModeler2 family FASTA headers from
+'name#Class/Family [description]' to '{sample_id}{sep}name#Class/Family',
 preserving the '#Class/Family' suffix exactly and dropping any trailing
 description. Fails loudly on duplicate names after prefixing. Stdlib only.
 
@@ -36,8 +36,8 @@ def iter_fasta(path):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--fasta", required=True, help="RepeatModeler2 *-families.fa for one species")
-    ap.add_argument("--species-id", required=True)
+    ap.add_argument("--fasta", required=True, help="RepeatModeler2 *-families.fa for one sample")
+    ap.add_argument("--sample-id", required=True)
     ap.add_argument("--sep", default="_")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
@@ -53,7 +53,7 @@ def main():
                     f"Family header '{header}' in {args.fasta} has no '#Class/Family' suffix"
                 )
             name, class_family = token.split("#", 1)
-            new_name = f"{args.species_id}{args.sep}{name}"
+            new_name = f"{args.sample_id}{args.sep}{name}"
 
             if new_name in seen:
                 raise ValueError(

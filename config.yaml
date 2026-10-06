@@ -23,7 +23,7 @@ mask_shared_library: ""
 genome_prep:
   min_contig_len: 0            # 0 = keep everything
   max_header_len: 50           # RepeatMasker rejects long sequence names
-  test_subsample_bp: 0         # >0 = keep only first N bp per species, for wiring tests
+  test_subsample_bp: 0         # >0 = keep only first N bp per sample, for wiring tests
 
 repeatmodeler:
   # dfam/tetools, run via Singularity; pinned to the tag whose digest matched
@@ -34,7 +34,7 @@ repeatmodeler:
   # RepeatModeler runs RECON/RepeatScout rounds only -- there is no
   # ltrstruct key any more (LTR discovery is the ltr_* rules). Deeper
   # sampling, if discovery_round_saturation.tsv says the last round still
-  # matters: "-numAddlRounds 1" (same value for every species).
+  # matters: "-numAddlRounds 1" (same value for every sample).
   extra_args: ""
 
 ltr_discovery:
@@ -59,7 +59,7 @@ ltr_discovery:
   ltr_finder_args: "-w 2 -C -D 15000 -d 1000 -L 7000 -l 100 -p 20 -M 0.85"
 
 library:
-  species_prefix_sep: "_"
+  sample_prefix_sep: "_"
   cdhit:
     identity: 0.8              # -c
     coverage_short: 0.8        # -aS
@@ -74,10 +74,10 @@ library:
   curated_override: ""         # path to a curated shared-library FASTA; if set, replaces clustering (§8)
 
 repeatmasker:
-  sensitive: true              # -s ; must be identical across all arms/species (asserted at parse time)
+  sensitive: true              # -s ; must be identical across all arms/sample (asserted at parse time)
   cores_per_pa: 4              # rmblast uses ~4 cores per -pa slot
   extra_args: ""
-  scatter_count: 10            # genome chunks per species for the repeatmasker scatter/gather
+  scatter_count: 10            # genome chunks per sample for the repeatmasker scatter/gather
 
 # family_tandem: every shared-library family checked against the operational
 # satellite definition the removed satellite arm's satellite_library_qc used
@@ -102,10 +102,10 @@ family_tandem:
 # left empty is skipped (treated as "no evidence").
 classify:
   enabled: true
-  # Screen only the de novo families (species-prefixed); curated Dfam entries
+  # Screen only the de novo families (sample-prefixed); curated Dfam entries
   # keep their labels. true = also screen/verify the Dfam export.
   screen_dfam: false
-  # Host-gene screen (DIAMOND). One TE-cleaned database serves every species.
+  # Host-gene screen (DIAMOND). One TE-cleaned database serves every sample.
   # Annotation proteomes are keyword- AND TEsorter-domain-filtered; Swiss-Prot
   # is keyword-filtered only. E.g. the NCBI annotation's complete.proteins.faa.
   annotation_proteins: []      # [/path/Esto/complete.proteins.faa, /path/MLI_proteins.faa]; .gz fine
@@ -116,7 +116,7 @@ classify:
   diamond_max_evalue: 1.0e-10
   min_host_cov: 0.3            # fraction of the consensus the best host protein's HSPs cover
   host_max_copies: 50          # a host-protein match labels a family Other/host_gene only if it has
-                               # <= this many .out hits in every species; above it the "gene" is a TE
+                               # <= this many .out hits in every sample; above it the "gene" is a TE
                                # ORF the annotation called a gene (note/status host_annotated_te_orf)
   # Curated families (README "Naming curated elements"): a TSV in the
   # family_groups.py format with class_family filled. Its labels win over
@@ -135,13 +135,13 @@ classify:
 summary:
   denominator: "non_n"         # non_n | total ; both are always written, this picks the headline
   landscape_max_div: 50
-  # Left-to-right species order in the plots (species_id). Empty = manifest
+  # Left-to-right sample order in the plots (sample_id). Empty = manifest
   # order. [Mlim, Esto] matches the collaborator's figure.
-  plot_species_order: [Mlim, Esto]
+  plot_sample_order: [Mlim, Esto]
   # Optional: TSV of families that are pieces of one element (group, family
   # columns; family_groups.py members). Adds element_groups.tsv. "" = off.
   element_groups: ""
-  # curation_candidates.tsv: families holding >= this % of a species' masked
+  # curation_candidates.tsv: families holding >= this % of a sample's masked
   # bp that are Unknown, too long for their label, flagged by verify_classes,
   # or younger than curation_young_div (median .out divergence %).
   curation_min_pct_masked: 0.1
@@ -156,7 +156,7 @@ satellite_crosscheck:
   # (example: external_annotations.example.tsv). No blank cells: "." / NA = not provided.
   external_annotations: ""
   # Samples without TideCluster whose evidence is inferred from another
-  # individual of the same species, e.g. {ind8: ind6}. Inferred evidence can
+  # individual of the same sample, e.g. {ind8: ind6}. Inferred evidence can
   # confirm a call made from the donor, never create one.
   infer_from: {}
   # Always evaluated in the pair table (full library names).
@@ -203,7 +203,7 @@ resources:
   assemble_shared_library: {threads: 1, mem: 4, hrs: 1}
   split_genome:     {threads: 1,  mem: 4,  hrs: 2}
   # NOTE: sized PER CHUNK now (repeatmasker.scatter_count chunks run
-  # concurrently per species/arm), not per whole genome as before this
+  # concurrently per sample/arm), not per whole genome as before this
   # rule became scatter/gather -- untuned placeholder, adjust from real
   # wiring-test chunk runtimes.
   repeatmasker:     {threads: 4,  mem: 4,  hrs: 12}

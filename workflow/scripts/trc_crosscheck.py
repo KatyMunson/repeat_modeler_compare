@@ -120,7 +120,7 @@ def main():
     ap.add_argument("--out-file", required=True, help="shared-arm RepeatMasker .out")
     ap.add_argument("--tandem-table", required=True, help="shared-arm family_tandem.tsv of this sample")
     ap.add_argument("--regions", required=True, help="tidecluster_regions.py --regions")
-    ap.add_argument("--species", required=True)
+    ap.add_argument("--sample", required=True)
     ap.add_argument("--top", type=int, default=5)
     ap.add_argument("--trc-out", required=True)
     ap.add_argument("--family-out", required=True)
@@ -149,7 +149,7 @@ def main():
     th_outside = sum(subtract_bp(th_regions[c], trc_regions.get(c, [])) for c in th_regions)
 
     with open(args.trc_out, "w") as out:
-        out.write("species\ttrc\tn_arrays\tarray_bp\tmasked_bp\tunmasked_bp\tpct_masked\t"
+        out.write("sample\ttrc\tn_arrays\tarray_bp\tmasked_bp\tunmasked_bp\tpct_masked\t"
                   "tandem_family_bp\ttop_families\ttidehunter_outside_trc_bp\n")
         tot = {"n": 0, "bp": 0, "m": 0, "t": 0}
         for trc in sorted(array_bp, key=lambda t: int(t.split("_")[1])):
@@ -158,11 +158,11 @@ def main():
             tbp = sum(bp for f, bp in fam_bp.items() if is_tandem.get(f))
             top = sorted(fam_bp.items(), key=lambda kv: -kv[1])[: args.top]
             top_s = ";".join(f"{f}:{bp}:{cls_of[f]}" for f, bp in top) or "."
-            out.write(f"{args.species}\t{trc}\t{arrays[trc]}\t{array_bp[trc]}\t{masked}\t"
+            out.write(f"{args.sample}\t{trc}\t{arrays[trc]}\t{array_bp[trc]}\t{masked}\t"
                       f"{array_bp[trc] - masked}\t{100.0 * masked / array_bp[trc]:.2f}\t{tbp}\t{top_s}\tNA\n")
             tot["n"] += arrays[trc]; tot["bp"] += array_bp[trc]; tot["m"] += masked; tot["t"] += tbp
         pct = 100.0 * tot["m"] / tot["bp"] if tot["bp"] else 0.0
-        out.write(f"{args.species}\tALL\t{tot['n']}\t{tot['bp']}\t{tot['m']}\t{tot['bp'] - tot['m']}\t"
+        out.write(f"{args.sample}\tALL\t{tot['n']}\t{tot['bp']}\t{tot['m']}\t{tot['bp'] - tot['m']}\t"
                   f"{pct:.2f}\t{tot['t']}\t.\t{th_outside}\n")
 
     # --- per family ---
@@ -193,7 +193,7 @@ def main():
         return f"{med:g}", f"{sup:.2f}"
 
     with open(args.family_out, "w") as out:
-        out.write("species\tfamily\tclass_family\tclass\ttandem_family\towned_bp\tin_trc_bp\tfrac_in_trc\t"
+        out.write("sample\tfamily\tclass_family\tclass\ttandem_family\towned_bp\tin_trc_bp\tfrac_in_trc\t"
                   "n_trcs\ttop_trc\ttop_trc_bp\ttrc_bp\ttidehunter_bp\tth_monomer_median\tth_monomer_support\t"
                   "kite_founder_median\tkite_founder_support\n")
         for family in sorted(set(fam_trc) | set(fam_th) | set(fam_kite)):
@@ -209,7 +209,7 @@ def main():
             med = weighted_median(th) if th else None
             sup = (sum(bp for m, bp in th if abs(m - med) <= 0.05 * med) / sum(bp for _, bp in th)
                    if med else None)
-            out.write(f"{args.species}\t{family}\t{meta['class_family']}\t{cls_of.get(family, 'NA')}\t"
+            out.write(f"{args.sample}\t{family}\t{meta['class_family']}\t{cls_of.get(family, 'NA')}\t"
                       f"{meta['tandem_family']}\t{owned}\t{in_bp}\t{frac:.3f}\t{len(d)}\t"
                       f"{ordered[0][0] if ordered else 'NA'}\t{ordered[0][1] if ordered else 0}\t"
                       f"{';'.join(keep) or '.'}\t{th_bp}\t"

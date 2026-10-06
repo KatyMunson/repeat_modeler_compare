@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Compute basic assembly-quality covariates (contig count, total/N/non-N bp,
-N50, largest contig) for one species' prepped genome FASTA. These are the
+N50, largest contig) for one sample's prepped genome FASTA. These are the
 denominators used everywhere downstream (class_composition.tsv etc). Stdlib
 only."""
 
@@ -43,7 +43,7 @@ def n50(lengths):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--fasta", required=True, help="prepped genome FASTA (already sanitized)")
-    ap.add_argument("--species-id", required=True)
+    ap.add_argument("--sample-id", required=True)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -64,10 +64,10 @@ def main():
 
     with open(args.out, "w") as fh:
         fh.write(
-            "species_id\tcontig_count\ttotal_bp\tn_bp\tnon_n_bp\tcontig_n50\tlargest_contig\n"
+            "sample_id\tcontig_count\ttotal_bp\tn_bp\tnon_n_bp\tcontig_n50\tlargest_contig\n"
         )
         fh.write(
-            f"{args.species_id}\t{contig_count}\t{total_bp}\t{n_bp}\t{non_n_bp}\t"
+            f"{args.sample_id}\t{contig_count}\t{total_bp}\t{n_bp}\t{non_n_bp}\t"
             f"{contig_n50}\t{largest}\n"
         )
 

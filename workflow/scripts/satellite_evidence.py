@@ -179,22 +179,22 @@ def cmd_report(args):
     ft = defaultdict(dict)  # family -> sample -> family_tandem row
     for r in read_tsv(t.family_tandem):
         if r.get("arm", "shared") == "shared":
-            ft[r["family"]][r["species"]] = r
+            ft[r["family"]][r["sample"]] = r
     xc = defaultdict(dict)  # family -> sample -> crosscheck row
     tc_samples = []
     for path in t.crosscheck:
         for r in read_tsv(path):
-            xc[r["family"]][r["species"]] = r
-            if r["species"] not in tc_samples:
-                tc_samples.append(r["species"])
+            xc[r["family"]][r["sample"]] = r
+            if r["sample"] not in tc_samples:
+                tc_samples.append(r["sample"])
     trc_info = {}
     for path in t.trc_info or []:
         for r in read_tsv(path):
-            trc_info[(r["species"], r["trc"])] = r
+            trc_info[(r["sample"], r["trc"])] = r
     max_period = {}
     for path in t.tc_params or []:
         for r in read_tsv(path):
-            max_period[r["species"]] = int(r["tidehunter_max_period"])
+            max_period[r["sample"]] = int(r["tidehunter_max_period"])
     infer = dict(x.split("=", 1) for x in (t.infer or []))  # target=donor
     focus = list(t.focus or [])
     expected_independent = {frozenset(x.split(",")) for x in (t.expected_independent or [])}

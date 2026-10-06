@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Parse one (arm, species) RepeatMasker run into per-class and per-Class/Family
+"""Parse one (arm, sample) RepeatMasker run into per-class and per-Class/Family
 non-overlapping bp tables, cross-checked against the .tbl summary, plus a
 long-format, overlap-resolved divergence-landscape chunk from the .align
-file. Stdlib only, no pandas. Output rows already carry arm/species/tissue so the per-run
+file. Stdlib only, no pandas. Output rows already carry arm/sample/tissue so the per-run
 chunks this writes can be concatenated as-is by combine_summaries.py.
 
 Non-overlapping bp: RepeatMasker's .out keeps lower-scoring hits that
@@ -345,7 +345,7 @@ def main():
     ap.add_argument("--align-file", required=True, help="RepeatMasker .align (-a)")
     ap.add_argument("--assembly-stats", required=True)
     ap.add_argument("--arm", required=True)
-    ap.add_argument("--species", required=True)
+    ap.add_argument("--sample", required=True)
     ap.add_argument("--tissue", required=True)
     ap.add_argument("--landscape-max-div", type=int, default=50)
     ap.add_argument("--tandem-table", help="family_tandem.tsv: report its tandem Unknown families as Unknown_tandem")
@@ -388,26 +388,26 @@ def main():
             print(
                 f"[summarize_rm] WARNING: computed masked bp ({computed_total}) differs "
                 f"from .tbl bases-masked ({tbl_total}) by {rel_diff:.2%} for "
-                f"{args.arm}/{args.species}",
+                f"{args.arm}/{args.sample}",
                 file=sys.stderr,
             )
 
     with open(args.class_out, "w") as fh:
-        fh.write("arm\tspecies\ttissue\tclass\tbp\tpct_total\tpct_non_n\n")
+        fh.write("arm\tsample\ttissue\tclass\tbp\tpct_total\tpct_non_n\n")
         for cls, bp in sorted(class_bp.items()):
             pct_total = 100.0 * bp / total_bp if total_bp else 0.0
             pct_non_n = 100.0 * bp / non_n_bp if non_n_bp else 0.0
-            fh.write(f"{args.arm}\t{args.species}\t{args.tissue}\t{cls}\t{bp}\t{pct_total:.4f}\t{pct_non_n:.4f}\n")
+            fh.write(f"{args.arm}\t{args.sample}\t{args.tissue}\t{cls}\t{bp}\t{pct_total:.4f}\t{pct_non_n:.4f}\n")
 
     with open(args.family_out, "w") as fh:
         # bp_from_unknown: the part of bp held by Unknown families that the
         # reclassification table relabelled into this Class/Family;
         # bp_curated: the part labelled by the curated-families table.
-        fh.write("arm\tspecies\ttissue\tclass_family\tbp\tpct_total\tpct_non_n\tbp_from_unknown\tbp_curated\n")
+        fh.write("arm\tsample\ttissue\tclass_family\tbp\tpct_total\tpct_non_n\tbp_from_unknown\tbp_curated\n")
         for cf, bp in sorted(family_bp.items()):
             pct_total = 100.0 * bp / total_bp if total_bp else 0.0
             pct_non_n = 100.0 * bp / non_n_bp if non_n_bp else 0.0
-            fh.write(f"{args.arm}\t{args.species}\t{args.tissue}\t{cf}\t{bp}\t{pct_total:.4f}\t{pct_non_n:.4f}\t"
+            fh.write(f"{args.arm}\t{args.sample}\t{args.tissue}\t{cf}\t{bp}\t{pct_total:.4f}\t{pct_non_n:.4f}\t"
                      f"{family_bp_from_unknown.get(cf, 0)}\t{family_bp_curated.get(cf, 0)}\n")
 
     del hits
@@ -418,16 +418,16 @@ def main():
         out_bp = class_bp.get(cls, 0)
         if out_bp and abs(resolved_bp - out_bp) / out_bp > 0.05:
             print(
-                f"[summarize_rm] WARNING: {args.arm}/{args.species} {cls}: .align-resolved bp "
+                f"[summarize_rm] WARNING: {args.arm}/{args.sample} {cls}: .align-resolved bp "
                 f"({resolved_bp}) differs from .out non-overlapping bp ({out_bp}) by "
                 f"{abs(resolved_bp - out_bp) / out_bp:.1%}",
                 file=sys.stderr,
             )
     with open(args.divergence_out, "w") as fh:
-        fh.write("arm\tspecies\tclass\tkimura_bin\tbp\tpct_non_n\n")
+        fh.write("arm\tsample\tclass\tkimura_bin\tbp\tpct_non_n\n")
         for (cls, kimura_bin), bp in sorted(landscape.items()):
             pct_non_n = 100.0 * bp / non_n_bp if non_n_bp else 0.0
-            fh.write(f"{args.arm}\t{args.species}\t{cls}\t{kimura_bin}\t{bp}\t{pct_non_n:.6f}\n")
+            fh.write(f"{args.arm}\t{args.sample}\t{cls}\t{kimura_bin}\t{bp}\t{pct_non_n:.6f}\n")
 
 
 if __name__ == "__main__":

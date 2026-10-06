@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Assemble a masking library: a base FASTA (clustered shared de novo
-library, one species' prefixed families, or a curated override), then an
+library, one sample's prefixed families, or a curated override), then an
 optional Dfam export appended as-is. Fails on a family name present in
 both (a curated override that already contains Dfam entries should not
 get them twice silently). Writes --report (source, path, n_appended).

@@ -242,14 +242,14 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dir", required=True)
     ap.add_argument("--prefix", required=True)
-    ap.add_argument("--species", required=True)
+    ap.add_argument("--sample", required=True)
     ap.add_argument("--name-map", required=True)
     ap.add_argument("--fingerprint", required=True)
     ap.add_argument("--allow-seqid-mismatch", action="store_true")
     ap.add_argument("--regions", required=True)
     ap.add_argument("--trc-info", required=True)
     ap.add_argument("--consensus", required=True)
-    ap.add_argument("--params", required=True, help="species, tidehunter_max_period, source")
+    ap.add_argument("--params", required=True, help="sample, tidehunter_max_period, source")
     args = ap.parse_args()
 
     d, pre = args.dir, args.prefix
@@ -258,7 +258,7 @@ def main():
     fp_len = read_lengths(args.fingerprint)
     problems = check_same_assembly(tc_len, name_map, fp_len)
     if problems:
-        msg = (f"TideCluster ran on a different assembly than the pipeline's {args.species} "
+        msg = (f"TideCluster ran on a different assembly than the pipeline's {args.sample} "
                f"({len(problems)} contig mismatches), e.g.:\n  " + "\n  ".join(problems[:10]))
         if not args.allow_seqid_mismatch:
             sys.exit("[tidecluster_regions] ERROR: " + msg +
@@ -329,7 +329,7 @@ def main():
             if trc in cons_len:
                 continue
             cons_len[trc] = len(seq)
-            write_fasta(out, f"{args.species}:{trc}", seq)
+            write_fasta(out, f"{args.sample}:{trc}", seq)
 
     monomer = read_tarean_monomers(path_for(d, pre, "tarean_report.tsv", required=False))
     superfam = read_trc_table(path_for(d, pre, "trc_superfamilies.csv", required=False), "trc_superfamilies")
@@ -338,7 +338,7 @@ def main():
     max_p, how = tidehunter_max_period(path_for(d, pre, "cmd_args.json", required=False))
     print(f"[tidecluster_regions] TideHunter max period {max_p} ({how})", file=sys.stderr)
     with open(args.params, "w") as out:
-        out.write(f"species\ttidehunter_max_period\tsource\n{args.species}\t{max_p}\t{how}\n")
+        out.write(f"sample\ttidehunter_max_period\tsource\n{args.sample}\t{max_p}\t{how}\n")
 
     for trc in list(monomer):
         cap = min(cons_len.get(trc, float("inf")), trc_bp.get(trc, float("inf")))
@@ -355,11 +355,11 @@ def main():
         return int(t.split("_")[1])
 
     with open(args.trc_info, "w") as out:
-        out.write("species\ttrc\tn_arrays\tarray_bp\tconsensus_len\ttarean_monomer_len\t"
+        out.write("sample\ttrc\tn_arrays\tarray_bp\tconsensus_len\ttarean_monomer_len\t"
                   "kite_founder_median\tkite_founder_n\tsuperfamily\trdna_flag\n")
         for trc in sorted(set(trc_arrays) | set(cons_len), key=trc_key):
             sf = superfam.get(trc)
-            out.write(f"{args.species}\t{trc}\t{trc_arrays.get(trc, 0)}\t{trc_bp.get(trc, 0)}\t"
+            out.write(f"{args.sample}\t{trc}\t{trc_arrays.get(trc, 0)}\t{trc_bp.get(trc, 0)}\t"
                       f"{cons_len.get(trc, 'NA')}\t{monomer.get(trc, 'NA')}\t"
                       f"{kmed(trc)}\t{len(kite_by_trc.get(trc, []))}\t"
                       f"{sf[0] if sf else 'NA'}\t{'True' if trc in rdna else 'False'}\n")

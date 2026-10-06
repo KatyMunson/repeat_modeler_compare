@@ -10,7 +10,7 @@ Subcommands:
   extract   write the library's records, header = bare family name (TEsorter
             and cmscan mangle '#'), plus a family -> RepeatModeler class table.
             --keep-prefix limits it to de novo families (the pipeline passes
-            each species' prefix, so curated Dfam entries are left alone);
+            each sample's prefix, so curated Dfam entries are left alone);
             --unknown-only keeps only Unknown ones.
   merge     combine the screens into one reclassification table for the
             Unknown families
@@ -23,7 +23,7 @@ Precedence (merge), first match wins:
      on order, and >= --min-domains domains           evidence = domain
   2. Rfam hit covering >= --min-rfam-cov of the consensus  evidence = rfam
   3. DIAMOND host hit covering >= --min-host-cov, and the family has
-     <= --host-max-copies .out hits in every species     evidence = host_protein
+     <= --host-max-copies .out hits in every sample     evidence = host_protein
   Disagreements (REXdb vs GyDB order; a domain call AND a host hit; a domain
   call AND an Rfam hit) leave the family Unknown with `conflict` recorded.
 A domain call beats Rfam and host hits only when they don't also qualify:
@@ -307,7 +307,7 @@ def domain_evidence(fam, rex, gydb, min_domains):
 
 
 def multicopy_families(paths, max_copies):
-    """Families with more than max_copies .out hits in any species."""
+    """Families with more than max_copies .out hits in any sample."""
     if not paths:
         return set()
     return {fam for per_sp in read_family_tandem(paths).values()
@@ -410,7 +410,7 @@ DISAGREEMENT = {"disagree_order", "retroposon_vs_line", "rfam", "host_protein",
 
 
 def read_family_tandem(paths):
-    """{species: {family: (owned_bp, tandem_family, n_hits)}} from family_tandem.tsv."""
+    """{sample: {family: (owned_bp, tandem_family, n_hits)}} from family_tandem.tsv."""
     out = {}
     for path in paths:
         with open(path) as fh:
@@ -419,7 +419,7 @@ def read_family_tandem(paths):
             for line in fh:
                 f = line.rstrip("\n").split("\t")
                 tf = f[idx["tandem_family"]] == "True" if "tandem_family" in idx else False
-                out.setdefault(f[idx["species"]], {})[f[idx["family"]]] = (
+                out.setdefault(f[idx["sample"]], {})[f[idx["family"]]] = (
                     int(f[idx["owned_bp"]]), tf, int(f[idx["n_hits"]]))
     return out
 
@@ -438,7 +438,7 @@ def cmd_verify(args):
     host = {q: h for q, h in host_all.items() if h[2] >= args.min_host_cov}
     rfam = {q: r for q, r in rfam_all.items() if r[2] >= args.min_rfam_cov}
     bp = read_family_tandem(args.family_tandem)
-    species = sorted(bp)
+    sample = sorted(bp)
     multicopy = {fam for per_sp in bp.values() for fam, v in per_sp.items() if v[2] > args.host_max_copies}
 
     rows = []
@@ -452,24 +452,24 @@ def cmd_verify(args):
         status = "domain_conflict" if db_conflict else verify_status(cls, dom, rfam.get(fam), hst)
         if status == "no_evidence" and fam in host and fam in multicopy:
             status = "host_annotated_te_orf"
-        owned = {sp: bp[sp].get(fam, (0, False, 0))[0] for sp in species}
-        tandem = any(bp[sp].get(fam, (0, False, 0))[1] for sp in species)
+        owned = {sp: bp[sp].get(fam, (0, False, 0))[0] for sp in sample}
+        tandem = any(bp[sp].get(fam, (0, False, 0))[1] for sp in sample)
         rows.append((fam, cls, dom or "", status, owned, tandem, db_conflict,
                      host_all[fam][3] if fam in host_all else "",
                      rfam_all[fam][1] if fam in rfam_all else ""))
 
-    # per species x collapsed class x status, bp-weighted
+    # per sample x collapsed class x status, bp-weighted
     agg = {}
     class_tot = {}
     for fam, cls, _dom, status, owned, _t, *_ in rows:
         top = collapse_class(cls)
-        for sp in species:
+        for sp in sample:
             a = agg.setdefault((sp, top, status), [0, 0])
             a[0] += 1 if owned[sp] else 0
             a[1] += owned[sp]
             class_tot[(sp, top)] = class_tot.get((sp, top), 0) + owned[sp]
     with open(args.out, "w") as out:
-        out.write("species\trm_class\tstatus\tn_families_present\towned_bp\tpct_of_class_bp\n")
+        out.write("sample\trm_class\tstatus\tn_families_present\towned_bp\tpct_of_class_bp\n")
         for (sp, top, status), (n, b) in sorted(agg.items()):
             if n == 0:
                 continue
@@ -482,11 +482,11 @@ def cmd_verify(args):
     flagged.sort(key=lambda r: -sum(r[4].values()))
     with open(args.disagreements_out, "w") as out:
         out.write("family\trm_class\tdomain_call\tstatus\ttandem_family\t"
-                  + "".join(f"owned_bp_{sp}\t" for sp in species)
+                  + "".join(f"owned_bp_{sp}\t" for sp in sample)
                   + "tesorter_conflict\tdiamond_best\trfam_best\n")
         for fam, cls, dom, status, owned, tandem, conf, hst, rna in flagged:
             out.write(f"{fam}\t{cls}\t{dom}\t{status}\t{tandem}\t"
-                      + "".join(f"{owned[sp]}\t" for sp in species)
+                      + "".join(f"{owned[sp]}\t" for sp in sample)
                       + f"{conf}\t{hst}\t{rna}\n")
 
     n_status = {}
@@ -533,9 +533,9 @@ def main():
     m.add_argument("--max-evalue", type=float, default=1e-10)
     m.add_argument("--min-rfam-cov", type=float, default=0.5)
     m.add_argument("--family-tandem", nargs="*", default=[],
-                   help="per-species family_tandem.tsv (n_hits) for --host-max-copies")
+                   help="per-sample family_tandem.tsv (n_hits) for --host-max-copies")
     m.add_argument("--host-max-copies", type=int, default=50,
-                   help="host_protein only for families with <= this many .out hits in every species")
+                   help="host_protein only for families with <= this many .out hits in every sample")
     m.add_argument("--out", required=True)
     v = sub.add_parser("verify")
     v.add_argument("--consensi", required=True)
@@ -544,7 +544,7 @@ def main():
     v.add_argument("--tesorter-gydb", default="")
     v.add_argument("--diamond", default="")
     v.add_argument("--rfam", default="")
-    v.add_argument("--family-tandem", nargs="+", required=True, help="per-species family_tandem.tsv (owned_bp)")
+    v.add_argument("--family-tandem", nargs="+", required=True, help="per-sample family_tandem.tsv (owned_bp)")
     v.add_argument("--min-domains", type=int, default=1)
     v.add_argument("--min-host-cov", type=float, default=0.3)
     v.add_argument("--max-evalue", type=float, default=1e-10)

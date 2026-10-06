@@ -96,10 +96,10 @@ def main():
     ap.add_argument("--timeout-logs", nargs="*", default=[], help="tool:path pairs, e.g. harvest:g0.timeouts.tsv")
     ap.add_argument("--window-size", type=int, required=True)
     ap.add_argument("--overlap", type=int, required=True)
-    ap.add_argument("--species", required=True)
+    ap.add_argument("--sample", required=True)
     ap.add_argument("--out-scn", required=True)
     ap.add_argument("--out-skipped", required=True, help="tool, contig, start, end (0-based half-open, merged)")
-    ap.add_argument("--out-summary", required=True, help="species, tool, n_candidates, skipped_bp")
+    ap.add_argument("--out-summary", required=True, help="sample, tool, n_candidates, skipped_bp")
     args = ap.parse_args()
 
     order, lengths = read_genome_index(args.genome)
@@ -144,9 +144,9 @@ def main():
                     total += e - s
             skipped_bp[tool] = total
     with open(args.out_summary, "w") as fh:
-        fh.write("species\ttool\tn_candidates\tskipped_bp\n")
+        fh.write("sample\ttool\tn_candidates\tskipped_bp\n")
         for tool in ("harvest", "finder"):
-            fh.write(f"{args.species}\t{tool}\t{counts[tool]}\t{skipped_bp.get(tool, 0)}\n")
+            fh.write(f"{args.sample}\t{tool}\t{counts[tool]}\t{skipped_bp.get(tool, 0)}\n")
     print(f"[normalize_scn] {len(rows)} unique candidates (harvest {counts['harvest']}, finder {counts['finder']}); "
           f"skipped bp {skipped_bp}", file=sys.stderr)
 

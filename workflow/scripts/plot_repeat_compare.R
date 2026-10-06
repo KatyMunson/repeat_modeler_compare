@@ -2,15 +2,15 @@
 # plot_repeat_compare.R -- three comparison plots from repeat_compare's
 # summary tables: (1) class composition (primary "shared" arm) with tissue
 # + assembly covariates in the subtitle, (2) divergence landscapes faceted
-# by species, (3) shared-vs-own concordance dot plot.
+# by sample, (3) shared-vs-own concordance dot plot.
 #
 # Usage: Rscript plot_repeat_compare.R <class_composition.tsv> \
 #          <divergence_landscape.tsv> <arm_concordance.tsv> \
 #          <assembly_covariates.tsv> <out_dir>
 #
-# Optional 6th argument: comma-separated species IDs giving the left-to-right
-# order of species in every plot (e.g. Mlim,Esto); unlisted species follow.
-# Default: the order species appear in the tables.
+# Optional 6th argument: comma-separated sample IDs giving the left-to-right
+# order of sample in every plot (e.g. Mlim,Esto); unlisted sample follow.
+# Default: the order sample appear in the tables.
 #
 # Pass NONE for <arm_concordance.tsv> to skip plot 3 (shared-arm-only
 # report, where there is no own arm to compare against).
@@ -26,7 +26,7 @@ divergence_landscape_path <- args[2]
 arm_concordance_path <- args[3]
 assembly_covariates_path <- args[4]
 out_dir <- args[5]
-species_order_arg <- if (length(args) >= 6) args[6] else ""
+sample_order_arg <- if (length(args) >= 6) args[6] else ""
 
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
@@ -43,14 +43,14 @@ if (!"pct_non_n" %in% names(divergence_landscape)) {
 }
 has_concordance <- arm_concordance_path != "NONE"
 
-# Left-to-right species order shared by all plots (6th argument).
-species_levels <- function(present) {
-  wanted <- trimws(strsplit(species_order_arg, ",", fixed = TRUE)[[1]])
+# Left-to-right sample order shared by all plots (6th argument).
+sample_levels <- function(present) {
+  wanted <- trimws(strsplit(sample_order_arg, ",", fixed = TRUE)[[1]])
   wanted <- wanted[wanted != ""]
   c(intersect(wanted, present), setdiff(unique(present), wanted))
 }
-order_species <- function(dt) {
-  dt[, species := factor(species, levels = species_levels(as.character(species)))]
+order_sample <- function(dt) {
+  dt[, sample := factor(sample, levels = sample_levels(as.character(sample)))]
   dt
 }
 assembly_covariates <- fread(assembly_covariates_path, integer64 = "double")
@@ -101,16 +101,16 @@ class_fill <- function() scale_fill_manual(values = class_colors, labels = label
 class_colour <- function() scale_colour_manual(values = class_colors, labels = label_class, name = "Class")
 
 # ---------------------------------------------------------------------------
-# 1. Class composition, primary "shared" arm, species side by side.
+# 1. Class composition, primary "shared" arm, sample side by side.
 # ---------------------------------------------------------------------------
-shared_composition <- order_species(order_classes(class_composition[arm == "shared"]))
+shared_composition <- order_sample(order_classes(class_composition[arm == "shared"]))
 
 assembly_covariates <- assembly_covariates[
-  order(match(species_id, species_levels(as.character(species_id))))]
+  order(match(sample_id, sample_levels(as.character(sample_id))))]
 covariate_subtitle <- paste(
   sprintf(
     "%s (%s): N50=%s, %s contigs, %.2f Gb non-N",
-    assembly_covariates$species_id,
+    assembly_covariates$sample_id,
     assembly_covariates$tissue,
     format(assembly_covariates$contig_n50, big.mark = ","),
     format(assembly_covariates$contig_count, big.mark = ","),
@@ -119,13 +119,13 @@ covariate_subtitle <- paste(
   collapse = "\n"
 )
 
-p1 <- ggplot(shared_composition, aes(x = species, y = pct_non_n, fill = class)) +
+p1 <- ggplot(shared_composition, aes(x = sample, y = pct_non_n, fill = class)) +
   geom_col(position = "stack", width = 0.6) +
   class_fill() +
   labs(
     title = "Repeat class composition (shared-library arm)",
     subtitle = covariate_subtitle,
-    x = "Species",
+    x = "Sample",
     y = "% of non-N assembly length"
   ) +
   theme_minimal()
@@ -139,18 +139,18 @@ ggsave(
 )
 
 # ---------------------------------------------------------------------------
-# 2. Divergence landscapes, primary "shared" arm, faceted by species,
+# 2. Divergence landscapes, primary "shared" arm, faceted by sample,
 #    stacked by class. Overlap-resolved (each base counted once), so heights
 #    are whole-genome Mbp per 1% Kimura bin; the shared y-axis keeps the two
-#    species' absolute amounts directly comparable.
+#    samples' absolute amounts directly comparable.
 # ---------------------------------------------------------------------------
 shared_landscape <- divergence_landscape[arm == "shared",
-  .(mbp = sum(bp) / 1e6), by = .(species, class, kimura_bin)]
-shared_landscape <- order_species(order_classes(shared_landscape))
+  .(mbp = sum(bp) / 1e6), by = .(sample, class, kimura_bin)]
+shared_landscape <- order_sample(order_classes(shared_landscape))
 
 p2 <- ggplot(shared_landscape, aes(x = kimura_bin, y = mbp, fill = class)) +
   geom_col(position = "stack", width = 1) +
-  facet_wrap(~species) +
+  facet_wrap(~sample) +
   class_fill() +
   labs(
     title = "Divergence (Kimura) landscape by class (shared-library arm)",
@@ -172,13 +172,13 @@ ggsave(
 # 3. Shared vs own concordance dot plot.
 # ---------------------------------------------------------------------------
 if (has_concordance) {
-  arm_concordance <- order_species(order_classes(fread(arm_concordance_path, integer64 = "double")))
+  arm_concordance <- order_sample(order_classes(fread(arm_concordance_path, integer64 = "double")))
 
   p3 <- ggplot(arm_concordance, aes(x = pct_non_n_own, y = pct_non_n_shared, color = class)) +
     geom_point(size = 2) +
     class_colour() +
     geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
-    facet_wrap(~species) +
+    facet_wrap(~sample) +
     labs(
       title = "Shared-library vs own-library concordance",
       x = "% non-N (own-library arm)",

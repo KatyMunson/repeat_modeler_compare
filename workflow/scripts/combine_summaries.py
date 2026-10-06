@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Concatenate the per-(arm,species) chunks summarize_rm.py and
+"""Concatenate the per-(arm,sample) chunks summarize_rm.py and
 assembly_stats.py write into the final long-format comparison tables, and
-compute arm_concordance.tsv (shared vs own pct + delta per species/class).
+compute arm_concordance.tsv (shared vs own pct + delta per sample/class).
 discovery_round_saturation.tsv / ltr_discovery.tsv / ltr_skipped_composition.tsv:
-per-species chunks concatenated. Stdlib only, no pandas.
+per-sample chunks concatenated. Stdlib only, no pandas.
 
 --arm-concordance-out, --round-saturation-out, --ltr-summary-out and
 --ltr-skipped-out are
@@ -15,7 +15,7 @@ import argparse
 
 
 def parse_manifest_tissue(manifest_path):
-    tissue_by_species = {}
+    tissue_by_sample = {}
     with open(manifest_path) as fh:
         for line in fh:
             line = line.rstrip("\n")
@@ -24,8 +24,8 @@ def parse_manifest_tissue(manifest_path):
             fields = line.split("\t")
             if len(fields) < 4:
                 continue
-            tissue_by_species[fields[0]] = fields[3]
-    return tissue_by_species
+            tissue_by_sample[fields[0]] = fields[3]
+    return tissue_by_sample
 
 
 def concat_chunks(chunk_paths, out_path):
@@ -43,22 +43,22 @@ def concat_chunks(chunk_paths, out_path):
                     fh_out.write(line)
 
 
-def combine_assembly_covariates(chunk_paths, tissue_by_species, out_path):
+def combine_assembly_covariates(chunk_paths, tissue_by_sample, out_path):
     with open(out_path, "w") as fh_out:
         fh_out.write(
-            "species_id\ttissue\tcontig_count\ttotal_bp\tn_bp\tnon_n_bp\tcontig_n50\tlargest_contig\n"
+            "sample_id\ttissue\tcontig_count\ttotal_bp\tn_bp\tnon_n_bp\tcontig_n50\tlargest_contig\n"
         )
         for path in chunk_paths:
             with open(path) as fh_in:
                 fh_in.readline()  # header
                 row = fh_in.readline().strip().split("\t")
-            species_id = row[0]
-            tissue = tissue_by_species.get(species_id, "unknown")
-            fh_out.write("\t".join([species_id, tissue] + row[1:]) + "\n")
+            sample_id = row[0]
+            tissue = tissue_by_sample.get(sample_id, "unknown")
+            fh_out.write("\t".join([sample_id, tissue] + row[1:]) + "\n")
 
 
 def build_arm_concordance(class_composition_path, out_path):
-    # key: (species, class) -> {arm: (pct_total, pct_non_n)}
+    # key: (sample, class) -> {arm: (pct_total, pct_non_n)}
     by_key = {}
     with open(class_composition_path) as fh:
         header = fh.readline().strip().split("\t")
@@ -66,18 +66,18 @@ def build_arm_concordance(class_composition_path, out_path):
         for line in fh:
             fields = line.rstrip("\n").split("\t")
             arm = fields[idx["arm"]]
-            species = fields[idx["species"]]
+            sample = fields[idx["sample"]]
             cls = fields[idx["class"]]
             pct_total = float(fields[idx["pct_total"]])
             pct_non_n = float(fields[idx["pct_non_n"]])
-            by_key.setdefault((species, cls), {})[arm] = (pct_total, pct_non_n)
+            by_key.setdefault((sample, cls), {})[arm] = (pct_total, pct_non_n)
 
     with open(out_path, "w") as fh_out:
         fh_out.write(
-            "species\tclass\tpct_total_shared\tpct_total_own\tdelta_total\t"
+            "sample\tclass\tpct_total_shared\tpct_total_own\tdelta_total\t"
             "pct_non_n_shared\tpct_non_n_own\tdelta_non_n\n"
         )
-        for (species, cls), by_arm in sorted(by_key.items()):
+        for (sample, cls), by_arm in sorted(by_key.items()):
             shared = by_arm.get("shared")
             own = by_arm.get("own")
             if shared is None or own is None:
@@ -85,7 +85,7 @@ def build_arm_concordance(class_composition_path, out_path):
             pct_total_shared, pct_non_n_shared = shared
             pct_total_own, pct_non_n_own = own
             fh_out.write(
-                f"{species}\t{cls}\t{pct_total_shared:.4f}\t{pct_total_own:.4f}\t"
+                f"{sample}\t{cls}\t{pct_total_shared:.4f}\t{pct_total_own:.4f}\t"
                 f"{pct_total_shared - pct_total_own:.4f}\t{pct_non_n_shared:.4f}\t"
                 f"{pct_non_n_own:.4f}\t{pct_non_n_shared - pct_non_n_own:.4f}\n"
             )
@@ -111,12 +111,12 @@ def main():
     ap.add_argument("--ltr-skipped-out")
     args = ap.parse_args()
 
-    tissue_by_species = parse_manifest_tissue(args.manifest)
+    tissue_by_sample = parse_manifest_tissue(args.manifest)
 
     concat_chunks(args.class_chunks, args.class_composition_out)
     concat_chunks(args.family_chunks, args.family_composition_out)
     concat_chunks(args.divergence_chunks, args.divergence_landscape_out)
-    combine_assembly_covariates(args.assembly_stats_chunks, tissue_by_species, args.assembly_covariates_out)
+    combine_assembly_covariates(args.assembly_stats_chunks, tissue_by_sample, args.assembly_covariates_out)
     if args.arm_concordance_out:
         build_arm_concordance(args.class_composition_out, args.arm_concordance_out)
     if args.round_saturation_out:
@@ -126,12 +126,12 @@ def main():
     if args.ltr_skipped_out:
         concat_chunks(args.ltr_skipped_chunks, args.ltr_skipped_out)
 
-    tissues = set(tissue_by_species.values())
+    tissues = set(tissue_by_sample.values())
     if "unknown" in tissues or len(tissues) > 1:
         print(
-            f"[combine_summaries] WARNING: tissue values across species are "
+            f"[combine_summaries] WARNING: tissue values across samples are "
             f"{sorted(tissues)} — see assembly_covariates.tsv / report before "
-            f"comparing across species (germline vs soma genomes are different genomes).",
+            f"comparing across samples (germline vs soma genomes are different genomes).",
         )
 
 

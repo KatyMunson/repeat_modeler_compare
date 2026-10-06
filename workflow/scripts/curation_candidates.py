@@ -2,7 +2,7 @@
 """Rank library families that deserve a manual recheck (profile, extend,
 rebuild the consensus, group the pieces; README "Curating a family").
 
-A family is a candidate when it holds >= --min-pct-masked of some species'
+A family is a candidate when it holds >= --min-pct-masked of some samples'
 masked bp (owned_bp, combined family_tandem.tsv) AND at least one flag:
 
   unknown          still Unknown after the classify screens (unknown_tandem
@@ -24,7 +24,7 @@ masked bp (owned_bp, combined family_tandem.tsv) AND at least one flag:
 
 Families already in an element group (--groups, summary.element_groups) are
 listed with curated=<group> and ranked last, so finished work drops out.
-Ranked by the largest pct_of_masked across species. Stdlib only."""
+Ranked by the largest pct_of_masked across samples. Stdlib only."""
 
 import argparse
 import re
@@ -85,19 +85,19 @@ def main():
     ap.add_argument("--disagreements", default="", help="class_disagreements.tsv")
     ap.add_argument("--groups", nargs="*", default=[],
                     help="element groups / curated-families TSVs (group or element, family[, class_family])")
-    ap.add_argument("--species-ids", nargs="*", default=[])
+    ap.add_argument("--sample-ids", nargs="*", default=[])
     ap.add_argument("--min-pct-masked", type=float, default=0.1)
     ap.add_argument("--young-div", type=float, default=3.0)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
-    per = {}          # family -> species -> row
+    per = {}          # family -> sample -> row
     masked = {}
     for r in read_tsv(args.family_tandem):
-        sp = r["species"]
+        sp = r["sample"]
         masked[sp] = masked.get(sp, 0) + int(r["owned_bp"])
         per.setdefault(r["family"], {})[sp] = r
-    species = [s for s in (args.species_ids or sorted(masked)) if s in masked]
+    sample = [s for s in (args.sample_ids or sorted(masked)) if s in masked]
 
     new_class, reclass_ev = {}, {}
     if args.reclass:
@@ -121,7 +121,7 @@ def main():
         any_row = next(iter(by_sp.values()))
         orig = any_row["class_family"]
         cls = curated.get(fam, new_class.get(fam, orig))
-        pcts = {sp: 100.0 * int(by_sp[sp]["owned_bp"]) / masked[sp] if sp in by_sp else 0.0 for sp in species}
+        pcts = {sp: 100.0 * int(by_sp[sp]["owned_bp"]) / masked[sp] if sp in by_sp else 0.0 for sp in sample}
         top = max(pcts.values()) if pcts else 0.0
         if top < args.min_pct_masked:
             continue
@@ -154,18 +154,18 @@ def main():
     rows.sort()
     with open(args.out, "w") as out:
         out.write("rank\tfamily\trm_class_family\tclass_family\tcons_len\tflags\tcurated\t"
-                  + "".join(f"owned_bp_{sp}\tpct_masked_{sp}\tn_hits_{sp}\tmedian_div_{sp}\t" for sp in species)
+                  + "".join(f"owned_bp_{sp}\tpct_masked_{sp}\tn_hits_{sp}\tmedian_div_{sp}\t" for sp in sample)
                   + "monomer_period\tclassify_evidence\n")
         for rank, (cur, _t, fam, orig, cls, cl, flags, by_sp, pcts, _d, mono, grp, ev) in enumerate(rows, 1):
             out.write(f"{rank}\t{fam}\t{orig}\t{cls}\t{cl}\t{','.join(flags)}\t{grp or '.'}\t")
-            for sp in species:
+            for sp in sample:
                 r = by_sp.get(sp)
                 out.write(f"{r['owned_bp'] if r else 0}\t{pcts[sp]:.3f}\t{r['n_hits'] if r else 0}\t"
                           f"{r['median_div'] if r else 'NA'}\t")
             out.write(f"{mono}\t{ev or '.'}\n")
     n_open = sum(1 for r in rows if not r[0])
     print(f"[curation_candidates] {len(rows)} families flagged ({n_open} not yet curated) at "
-          f">= {args.min_pct_masked}% of some species' masked bp", file=sys.stderr)
+          f">= {args.min_pct_masked}% of some samples' masked bp", file=sys.stderr)
 
 
 if __name__ == "__main__":

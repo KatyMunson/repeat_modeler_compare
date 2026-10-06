@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Where does each species' masked sequence come from? Splits masked bp by
+"""Where does each sample's masked sequence come from? Splits masked bp by
 the library source of the family that holds it, from the combined
 family_tandem.tsv (owned_bp: every base counted once, for its single
 highest-scoring hit -- the rule class_composition.tsv uses):
 
-  own_denovo        families discovered in this species (<species_id><sep>...)
-  denovo:<species>  families discovered in another species of the run
+  own_denovo        families discovered in this sample (<sample_id><sep>...)
+  denovo:<sample>  families discovered in another sample of the run
   rm_builtin        RepeatMasker's own simple-repeat / low-complexity screen
   dfam              everything else (the Dfam export added to the library)
 
-One row per species and source plus a `total` row per species:
+One row per sample and source plus a `total` row per sample:
   n_families  families holding any bp
   n_hits      .out hit lines (copies / fragments) of those families
   owned_bp, pct_of_masked, pct_non_n (bp / non-N assembly length from
@@ -21,9 +21,9 @@ Counts follow the family that won each base at masking time. Dfam entries
 are appended after the de novo families are clustered (never merged into
 them), so where a de novo consensus fits better its bp count as de novo even
 if Dfam holds the same element (dfam_overlap.tsv lists such families). A
-family shared by both species is one cd-hit cluster named after its longest
+family shared by both samples is one cd-hit cluster named after its longest
 member, so denovo:<other> includes shared families whose representative came
-from the other species (library_membership.tsv).
+from the other samples (library_membership.tsv).
 
 With --dfam-matches (library/dfam_overlap/dfam_matches.tsv) each de novo
 source is also split by the `dfam_match` column:
@@ -42,10 +42,10 @@ import sys
 BUILTIN_CLASSES = {"Simple_repeat", "Low_complexity"}
 
 
-def source_of(family, cls, species, species_ids, sep):
-    for sp in species_ids:
+def source_of(family, cls, sample, sample_ids, sep):
+    for sp in sample_ids:
         if family.startswith(f"{sp}{sep}"):
-            return "own_denovo" if sp == species else f"denovo:{sp}"
+            return "own_denovo" if sp == sample else f"denovo:{sp}"
     if cls in BUILTIN_CLASSES:
         return "rm_builtin"
     return "dfam"
@@ -65,9 +65,9 @@ def weighted_median(pairs):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--family-tandem", required=True, help="combined family_tandem.tsv")
-    ap.add_argument("--species-ids", nargs="+", required=True)
-    ap.add_argument("--sep", default="_", help="library.species_prefix_sep")
-    ap.add_argument("--assembly-covariates", required=True, help="assembly_covariates.tsv (species_id, non_n_bp)")
+    ap.add_argument("--sample-ids", nargs="+", required=True)
+    ap.add_argument("--sep", default="_", help="library.sample_prefix_sep")
+    ap.add_argument("--assembly-covariates", required=True, help="assembly_covariates.tsv (sample_id, non_n_bp)")
     ap.add_argument("--dfam-matches", help="dfam_matches.tsv from dfam_overlap (optional): split de novo "
                     "sources into known-in-Dfam and novel")
     ap.add_argument("--out", required=True)
@@ -79,7 +79,7 @@ def main():
         idx = {h: i for i, h in enumerate(header)}
         for line in fh:
             f = line.rstrip("\n").split("\t")
-            non_n[f[idx["species_id"]]] = int(float(f[idx["non_n_bp"]]))
+            non_n[f[idx["sample_id"]]] = int(float(f[idx["non_n_bp"]]))
 
     known = None
     if args.dfam_matches:
@@ -92,7 +92,7 @@ def main():
                 if len(f) > i_fam:
                     known.add(f[i_fam].split("#", 1)[0])
 
-    # (species, source, dfam_match) -> [n_families, n_hits, owned_bp, [(div, bp)]]
+    # (sample, source, dfam_match) -> [n_families, n_hits, owned_bp, [(div, bp)]]
     agg = {}
     with open(args.family_tandem) as fh:
         header = fh.readline().rstrip("\n").split("\t")
@@ -102,9 +102,9 @@ def main():
             owned = int(f[idx["owned_bp"]])
             if owned == 0:
                 continue
-            sp = f[idx["species"]]
+            sp = f[idx["sample"]]
             family = f[idx["family"]]
-            src = source_of(family, f[idx["class"]], sp, args.species_ids, args.sep)
+            src = source_of(family, f[idx["class"]], sp, args.sample_ids, args.sep)
             keys = [(sp, src, "." if known is None or not src.startswith(("own_denovo", "denovo:")) else "all"),
                     (sp, "total", ".")]
             if known is not None and keys[0][2] == "all":
@@ -119,13 +119,13 @@ def main():
                 except ValueError:
                     pass
 
-    order = ["own_denovo"] + [f"denovo:{s}" for s in args.species_ids] + ["dfam", "rm_builtin", "total"]
-    species = [s for s in args.species_ids if (s, "total", ".") in agg] + \
-        sorted({s for s, _src, _m in agg} - set(args.species_ids))
+    order = ["own_denovo"] + [f"denovo:{s}" for s in args.sample_ids] + ["dfam", "rm_builtin", "total"]
+    sample = [s for s in args.sample_ids if (s, "total", ".") in agg] + \
+        sorted({s for s, _src, _m in agg} - set(args.sample_ids))
     with open(args.out, "w") as out:
-        out.write("species\tsource\tdfam_match\tn_families\tn_hits\towned_bp\tpct_of_masked\tpct_non_n\t"
+        out.write("sample\tsource\tdfam_match\tn_families\tn_hits\towned_bp\tpct_of_masked\tpct_non_n\t"
                   "bp_weighted_median_div\n")
-        for sp in species:
+        for sp in sample:
             masked = agg[(sp, "total", ".")][2]
             for src in order:
                 for match in (".", "all", "known", "novel"):

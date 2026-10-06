@@ -1,12 +1,12 @@
 # =============================================================================
-# Snakefile — repeat_compare: RepeatModeler2 + RepeatMasker cross-species
+# Snakefile — repeat_compare: RepeatModeler2 + RepeatMasker cross-sample
 # repeat comparison
 #
-# 1. Sanitizes each manifest species' genome FASTA, computes assembly QC
+# 1. Sanitizes each manifest sample's genome FASTA, computes assembly QC
 #    covariates (contig N50, N content, etc — the denominators used
 #    everywhere downstream) and a genome fingerprint (identity guard).
 # 2. Runs RepeatModeler2's RECON/RepeatScout rounds (dfam/tetools
-#    Singularity image) de novo on each species independently — WITHOUT
+#    Singularity image) de novo on each sample independently — WITHOUT
 #    -LTRStruct.
 # 3. LTR structural discovery outside RepeatModeler: LTR_HARVEST_parallel
 #    (+ LTR_FINDER_parallel) on the prepped genome, split into
@@ -17,11 +17,11 @@
 #    RepeatModeler does and classified with RepeatClassifier. Only the
 #    single whole-genome ltrharvest call (which stalled for days on a
 #    highly repetitive hagfish assembly) is replaced.
-# 4. Prefixes each species' family names with its species_id, optionally
-#    exports a Dfam supplement, clusters all species' families together
+# 4. Prefixes each sample's family names with its sample_id, optionally
+#    exports a Dfam supplement, clusters all samples' families together
 #    with cd-hit-est into one non-redundant "shared" library (+ Dfam), and
-#    assembles a per-species "own" library.
-# 5. Masks every species' genome with BOTH libraries (two "arms"), computes
+#    assembles a per-sample "own" library.
+# 5. Masks every sample's genome with BOTH libraries (two "arms"), computes
 #    divergence landscapes, and summarizes non-overlapping repeat bp per
 #    class and per Class/Family against both total and non-N length.
 # 6. Combines everything into long-format comparison tables and plots.
@@ -30,10 +30,10 @@
 # pending fixes to the satellite caller (compare_assemblies_satellites); it
 # is preserved at commit 502accf (tag satellite-arm-v1) -- see README.
 #
-# Species undergoing programmed germline-to-soma genome rearrangement (e.g.
+# Sample undergoing programmed germline-to-soma genome rearrangement (e.g.
 # hagfish) can have very different repeat content between tissues — this
 # pipeline does not act on the manifest's `tissue` column, it only carries
-# it into every summary table and warns if species disagree or are
+# it into every summary table and warns if samples disagree or are
 # `unknown` (see combine_summaries.py).
 #
 # Usage: snakemake -s Snakefile --configfile config.yaml --cores <N>
@@ -69,17 +69,17 @@ def parse_manifest(path):
                          "arm was removed; see README)") if len(fields) == 6 else ""
                 raise ValueError(
                     f"{path}:{lineno}: expected 5 tab-separated fields "
-                    f"(species_id, species_name, fasta, tissue, accession), "
+                    f"(sample_id, sample_name, fasta, tissue, accession), "
                     f"got {len(fields)}{extra}: {line!r}"
                 )
-            species_id, species_name, fasta, tissue, accession = fields
-            if not re.fullmatch(r"[A-Za-z0-9]+", species_id):
+            sample_id, sample_name, fasta, tissue, accession = fields
+            if not re.fullmatch(r"[A-Za-z0-9]+", sample_id):
                 raise ValueError(
-                    f"{path}:{lineno}: species_id '{species_id}' must match [A-Za-z0-9]+"
+                    f"{path}:{lineno}: sample_id '{sample_id}' must match [A-Za-z0-9]+"
                 )
-            if species_id in seen_ids:
-                raise ValueError(f"{path}:{lineno}: duplicate species_id '{species_id}'")
-            seen_ids.add(species_id)
+            if sample_id in seen_ids:
+                raise ValueError(f"{path}:{lineno}: duplicate sample_id '{sample_id}'")
+            seen_ids.add(sample_id)
             if tissue not in ("germline", "soma", "unknown"):
                 raise ValueError(
                     f"{path}:{lineno}: tissue must be one of germline|soma|unknown, got '{tissue}'"
@@ -88,34 +88,34 @@ def parse_manifest(path):
                 raise ValueError(f"{path}:{lineno}: fasta path does not exist: {fasta}")
             manifest.append(
                 {
-                    "species_id": species_id,
-                    "species_name": species_name,
+                    "sample_id": sample_id,
+                    "sample_name": sample_name,
                     "fasta": fasta,
                     "tissue": tissue,
                     "accession": accession,
                 }
             )
     if len(manifest) < 2:
-        raise ValueError(f"{path}: at least 2 species are required, found {len(manifest)}")
+        raise ValueError(f"{path}: at least 2 samples are required, found {len(manifest)}")
     return manifest
 
 
 MANIFEST = parse_manifest(config["manifest"])
-SPECIES_IDS = [row["species_id"] for row in MANIFEST]
-FASTA_BY_SPECIES = {row["species_id"]: row["fasta"] for row in MANIFEST}
-TISSUE_BY_SPECIES = {row["species_id"]: row["tissue"] for row in MANIFEST}
+SAMPLE_IDS = [row["sample_id"] for row in MANIFEST]
+FASTA_BY_SAMPLE = {row["sample_id"]: row["fasta"] for row in MANIFEST}
+TISSUE_BY_SAMPLE = {row["sample_id"]: row["tissue"] for row in MANIFEST}
 
-tissue_values = set(TISSUE_BY_SPECIES.values())
+tissue_values = set(TISSUE_BY_SAMPLE.values())
 if "unknown" in tissue_values or len(tissue_values) > 1:
     print(
         f"[repeat_compare] WARNING: manifest tissue values are {sorted(tissue_values)} — "
         f"a germline assembly and a somatic assembly are different genomes; this is not "
-        f"treated as an error, but check before comparing across species.",
+        f"treated as an error, but check before comparing across samples.",
     )
 
-# repeatmasker.sensitive is a single config value used by every arm/species by
+# repeatmasker.sensitive is a single config value used by every arm/sample by
 # construction; validate its type here so a future refactor can't silently
-# make it per-arm/per-species without this assertion catching it (§6.8).
+# make it per-arm/per-sample without this assertion catching it (§6.8).
 if not isinstance(config["repeatmasker"]["sensitive"], bool):
     raise ValueError("config['repeatmasker']['sensitive'] must be true or false")
 
@@ -181,12 +181,19 @@ def _as_bool(value):
     return bool(value)
 
 
-# Left-to-right species order in the plots (summary.plot_species_order);
+# Config keys renamed with species -> sample (manifest entries are individual
+# assemblies, not species): refuse the old names rather than silently ignore them.
+for _sec, _old, _new in (("summary", "plot_species_order", "plot_sample_order"),
+                         ("library", "species_prefix_sep", "sample_prefix_sep")):
+    if _old in (config.get(_sec) or {}):
+        raise ValueError(f"config {_sec}.{_old} was renamed to {_sec}.{_new}; please rename it in config.yaml")
+
+# Left-to-right sample order in the plots (summary.plot_sample_order);
 # empty = manifest order. Passed to plot_repeat_compare.R as one argument.
-_order = (config.get("summary", {}) or {}).get("plot_species_order") or []
+_order = (config.get("summary", {}) or {}).get("plot_sample_order") or []
 if isinstance(_order, str):
     _order = [x for x in re.split(r"[,\s\[\]]+", _order) if x]
-PLOT_SPECIES_ORDER = ",".join(list(_order) + [s for s in SPECIES_IDS if s not in _order])
+PLOT_SAMPLE_ORDER = ",".join(list(_order) + [s for s in SAMPLE_IDS if s not in _order])
 # Optional groups TSV (family_groups.py members): families that are pieces
 # of one element, summed into {summary}/element_groups.tsv.
 ELEMENT_GROUPS = config["summary"].get("element_groups", "") or ""
@@ -242,7 +249,7 @@ def parse_external_annotations(path):
                                      f"(use '.' or NA for 'not provided')")
             row = {c: (None if v.lower() in SATX_MISSING else v) for c, v in zip(header, fields)}
             sid = row["sample_id"]
-            if sid not in SPECIES_IDS:
+            if sid not in SAMPLE_IDS:
                 raise ValueError(f"{path}:{lineno}: sample_id '{sid}' is not in the manifest")
             if sid in rows:
                 raise ValueError(f"{path}:{lineno}: duplicate sample_id '{sid}'")
@@ -257,16 +264,16 @@ def parse_external_annotations(path):
 
 SATX_ANNOT = parse_external_annotations(SATX.get("external_annotations", "") or "")
 SATX_ON = bool(SATX_ANNOT)
-TC_SAMPLES = [s for s in SPECIES_IDS if SATX_ANNOT.get(s, {}).get("tidecluster_dir")]
+TC_SAMPLES = [s for s in SAMPLE_IDS if SATX_ANNOT.get(s, {}).get("tidecluster_dir")]
 SATX_INFER = {str(k): str(v) for k, v in (SATX.get("infer_from") or {}).items()}
 for _t, _d in SATX_INFER.items():
-    if _t not in SPECIES_IDS or _d not in TC_SAMPLES:
+    if _t not in SAMPLE_IDS or _d not in TC_SAMPLES:
         raise ValueError(f"satellite_crosscheck.infer_from {_t}: {_d} -- target must be in the manifest "
                          f"and donor must have TideCluster inputs ({TC_SAMPLES})")
 if SATX_ON:
     if not TC_SAMPLES:
         raise ValueError("satellite_crosscheck.external_annotations has no sample with TideCluster inputs")
-    for _s in SPECIES_IDS:
+    for _s in SAMPLE_IDS:
         _r = SATX_ANNOT.get(_s, {})
         _mode = ("tidecluster" if _s in TC_SAMPLES
                  else f"inferred from {SATX_INFER[_s]}" if _s in SATX_INFER else "library-level only")
@@ -279,7 +286,7 @@ def _tc_file(sample, suffix):
     return os.path.join(r["tidecluster_dir"], f"{r['tidecluster_prefix']}_{suffix}")
 
 
-SATX_REFS = [f"{lab}={SATX_ANNOT[s][col]}" for s in SPECIES_IDS if s in SATX_ANNOT
+SATX_REFS = [f"{lab}={SATX_ANNOT[s][col]}" for s in SAMPLE_IDS if s in SATX_ANNOT
              for lab, col in (("rdna", "ribotin_fa"), ("mito", "mitohifi_fa")) if SATX_ANNOT[s][col]]
 
 
@@ -293,7 +300,7 @@ USE_LTR_FINDER = bool(LTR_CFG["use_ltr_finder"])
 LTR_TOOLS = ["harvest", "finder"] if USE_LTR_FINDER else ["harvest"]
 
 wildcard_constraints:
-    species="|".join(re.escape(s) for s in SPECIES_IDS),
+    sample="|".join(re.escape(s) for s in SAMPLE_IDS),
     arm="shared|own",
     group=r"g\d+",
     tool="harvest|finder",
@@ -302,7 +309,7 @@ wildcard_constraints:
 # repeatmasker_chunk / gather_repeatmasker below) -- reused pattern from
 # compare_assemblies_satellites' stage 03 (its -lib-mode RepeatMasker
 # scatter/gather), adapted here since our own repeatmasker rule originally
-# ran each species' whole genome as one unchunked job.
+# ran each sample's whole genome as one unchunked job.
 scattergather:
     genome_chunks=config["repeatmasker"]["scatter_count"],
 
@@ -313,9 +320,9 @@ scattergather:
 rule all:
     input:
         expand(
-            f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.out",
+            f"{OUTDIR}/{{arm}}/{{sample}}/repeatmasker/{{sample}}.fa.out",
             arm=ARMS,
-            species=SPECIES_IDS,
+            sample=SAMPLE_IDS,
         ),
         f"{OUTDIR}/summary/class_composition.tsv",
         f"{OUTDIR}/summary/family_composition.tsv",
@@ -328,9 +335,9 @@ rule all:
         [f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
         [f"{OUTDIR}/summary/class_verification.tsv", f"{OUTDIR}/summary/class_disagreements.tsv"] if CLASSIFY_ON else [],
         expand(
-            f"{OUTDIR}/{{arm}}/{{species}}/divergence/{{species}}.landscape.html",
+            f"{OUTDIR}/{{arm}}/{{sample}}/divergence/{{sample}}.landscape.html",
             arm=ARMS,
-            species=SPECIES_IDS,
+            sample=SAMPLE_IDS,
         ),
         f"{OUTDIR}/summary/arm_concordance.tsv",
         f"{OUTDIR}/summary/assembly_covariates.tsv",
@@ -358,14 +365,14 @@ rule library_only:
 
 
 rule mask_shared_only:
-    # RepeatMasker with the shared library on every manifest species and
+    # RepeatMasker with the shared library on every manifest sample and
     # nothing else (no own arm, no summaries). Pair with mask_shared_library
     # (see top of file) to use an already-built library; without it this
     # still pulls in the full discovery/library chain.
     input:
         expand(
-            f"{OUTDIR}/shared/{{species}}/repeatmasker/{{species}}.fa.out",
-            species=SPECIES_IDS,
+            f"{OUTDIR}/shared/{{sample}}/repeatmasker/{{sample}}.fa.out",
+            sample=SAMPLE_IDS,
         ),
 
 
@@ -383,13 +390,13 @@ def _require_mask_shared_library(target):
 
 rule report_shared_only:
     # Reporting that needs only the shared arm: divergence + summarize per
-    # species, then combined tables and plots under summary_shared_only/ and
+    # sample, then combined tables and plots under summary_shared_only/ and
     # plots_shared_only/ (kept apart from a full run's summary/ and plots/).
     # No arm concordance, round saturation, LTR or discovery tables -- those
     # need the own arm or the discovery chain. Requires the same
     # mask_shared_library used for mask_shared_only: without it the shared
     # arm points back at {outdir}/library/shared_library.fa, which pulls in
-    # the whole discovery chain AND re-masks every species.
+    # the whole discovery chain AND re-masks every sample.
     input:
         lambda wc: _require_mask_shared_library("report_shared_only"),
         f"{OUTDIR}/summary_shared_only/class_composition.tsv",
@@ -407,8 +414,8 @@ rule report_shared_only:
         f"{OUTDIR}/plots_shared_only/class_composition_shared.png",
         f"{OUTDIR}/plots_shared_only/divergence_landscape.png",
         expand(
-            f"{OUTDIR}/shared/{{species}}/divergence/{{species}}.landscape.html",
-            species=SPECIES_IDS,
+            f"{OUTDIR}/shared/{{sample}}/divergence/{{sample}}.landscape.html",
+            sample=SAMPLE_IDS,
         ),
 
 
@@ -417,17 +424,17 @@ rule report_shared_only:
 # -----------------------------------------------------------------------------
 rule prep_genome:
     input:
-        fasta=lambda wc: FASTA_BY_SPECIES[wc.species],
+        fasta=lambda wc: FASTA_BY_SAMPLE[wc.sample],
     output:
-        fa=f"{OUTDIR}/{{species}}/genome/{{species}}.fa",
-        name_map=f"{OUTDIR}/{{species}}/genome/{{species}}.name_map.tsv",
+        fa=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fa",
+        name_map=f"{OUTDIR}/{{sample}}/genome/{{sample}}.name_map.tsv",
     threads: config["resources"]["prep_genome"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["prep_genome"]["mem"] * attempt,
         hrs=config["resources"]["prep_genome"]["hrs"],
         shell_exec="bash",
     log:
-        f"{OUTDIR}/logs/{{species}}/prep_genome.log",
+        f"{OUTDIR}/logs/{{sample}}/prep_genome.log",
     params:
         min_contig_len=config["genome_prep"]["min_contig_len"],
         max_header_len=config["genome_prep"]["max_header_len"],
@@ -451,16 +458,16 @@ rule prep_genome:
 # -----------------------------------------------------------------------------
 rule genome_fingerprint:
     input:
-        fa=f"{OUTDIR}/{{species}}/genome/{{species}}.fa",
+        fa=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fa",
     output:
-        f"{OUTDIR}/{{species}}/genome/{{species}}.fingerprint.tsv",
+        f"{OUTDIR}/{{sample}}/genome/{{sample}}.fingerprint.tsv",
     threads: config["resources"]["genome_fingerprint"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["genome_fingerprint"]["mem"] * attempt,
         hrs=config["resources"]["genome_fingerprint"]["hrs"],
         shell_exec="bash",
     log:
-        f"{OUTDIR}/logs/{{species}}/genome_fingerprint.log",
+        f"{OUTDIR}/logs/{{sample}}/genome_fingerprint.log",
     shell:
         "python3 {SCRIPTS}/fingerprint.py write --fasta {input.fa} --out {output} > {log} 2>&1"
 
@@ -470,19 +477,19 @@ rule genome_fingerprint:
 # -----------------------------------------------------------------------------
 rule assembly_stats:
     input:
-        fa=f"{OUTDIR}/{{species}}/genome/{{species}}.fa",
+        fa=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fa",
     output:
-        f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv",
+        f"{OUTDIR}/{{sample}}/genome/{{sample}}.assembly_stats.tsv",
     threads: config["resources"]["assembly_stats"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["assembly_stats"]["mem"] * attempt,
         hrs=config["resources"]["assembly_stats"]["hrs"],
         shell_exec="bash",
     log:
-        f"{OUTDIR}/logs/{{species}}/assembly_stats.log",
+        f"{OUTDIR}/logs/{{sample}}/assembly_stats.log",
     shell:
         "python3 workflow/scripts/assembly_stats.py "
-        "--fasta {input.fa} --species-id {wildcards.species} --out {output} "
+        "--fasta {input.fa} --sample-id {wildcards.sample} --out {output} "
         "> {log} 2>&1"
 
 
@@ -584,9 +591,9 @@ CONF
 # -----------------------------------------------------------------------------
 rule build_db:
     input:
-        fa=f"{OUTDIR}/{{species}}/genome/{{species}}.fa",
+        fa=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fa",
     output:
-        touch(f"{OUTDIR}/{{species}}/repeatmodeler/{{species}}.build_db.done"),
+        touch(f"{OUTDIR}/{{sample}}/repeatmodeler/{{sample}}.build_db.done"),
     threads: config["resources"]["build_db"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["build_db"]["mem"] * attempt,
@@ -595,16 +602,16 @@ rule build_db:
     singularity:
         TETOOLS
     params:
-        workdir=f"{OUTDIR}/{{species}}/repeatmodeler",
+        workdir=f"{OUTDIR}/{{sample}}/repeatmodeler",
     log:
-        f"{OUTDIR}/logs/{{species}}/build_db.log",
+        f"{OUTDIR}/logs/{{sample}}/build_db.log",
     shell:
         "mkdir -p {params.workdir} && "
         # This container's RepeatModeler 2.0.9 BuildDatabase rejects -engine
         # outright ("Unknown option: engine") -- WU-BLAST support was
         # dropped upstream and NCBI/RMBlast is the only engine now, so the
         # flag is no longer accepted at all, not just unnecessary.
-        "BuildDatabase -name {params.workdir}/{wildcards.species} {input.fa} "
+        "BuildDatabase -name {params.workdir}/{wildcards.sample} {input.fa} "
         "> {log} 2>&1"
 
 
@@ -630,12 +637,12 @@ rule build_db:
 # -----------------------------------------------------------------------------
 rule repeatmodeler:
     input:
-        db_done=f"{OUTDIR}/{{species}}/repeatmodeler/{{species}}.build_db.done",
-        fingerprint=f"{OUTDIR}/{{species}}/genome/{{species}}.fingerprint.tsv",
+        db_done=f"{OUTDIR}/{{sample}}/repeatmodeler/{{sample}}.build_db.done",
+        fingerprint=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fingerprint.tsv",
     output:
-        consensi=f"{OUTDIR}/{{species}}/repeatmodeler/{{species}}.rounds.consensi.fa",
-        stk=f"{OUTDIR}/{{species}}/repeatmodeler/{{species}}.rounds.families.stk",
-        provenance=f"{OUTDIR}/{{species}}/repeatmodeler/{{species}}.repeatmodeler_provenance.txt",
+        consensi=f"{OUTDIR}/{{sample}}/repeatmodeler/{{sample}}.rounds.consensi.fa",
+        stk=f"{OUTDIR}/{{sample}}/repeatmodeler/{{sample}}.rounds.families.stk",
+        provenance=f"{OUTDIR}/{{sample}}/repeatmodeler/{{sample}}.repeatmodeler_provenance.txt",
     threads: config["resources"]["repeatmodeler"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["repeatmodeler"]["mem"] * attempt,
@@ -644,7 +651,7 @@ rule repeatmodeler:
     singularity:
         TETOOLS
     params:
-        workdir=f"{OUTDIR}/{{species}}/repeatmodeler",
+        workdir=f"{OUTDIR}/{{sample}}/repeatmodeler",
         extra_args=config["repeatmodeler"]["extra_args"],
         fp_abs=lambda wc, input: os.path.abspath(input.fingerprint),
         script_abs=os.path.abspath(f"{SCRIPTS}/fingerprint.py"),
@@ -652,7 +659,7 @@ rule repeatmodeler:
         out_stk=lambda wc, output: os.path.abspath(output.stk),
         out_prov=lambda wc, output: os.path.abspath(output.provenance),
     log:
-        f"{OUTDIR}/logs/{{species}}/repeatmodeler.log",
+        f"{OUTDIR}/logs/{{sample}}/repeatmodeler.log",
     shell:
         """
         exec > {log} 2>&1
@@ -662,7 +669,7 @@ rule repeatmodeler:
         RM_DIR=$(ls -d RM_* 2>/dev/null | head -n1 || true)
         if [ -z "$RM_DIR" ]; then
             cp {params.fp_abs} rm_run.fingerprint.tsv
-            RepeatModeler -database {wildcards.species} -threads {threads} {params.extra_args}
+            RepeatModeler -database {wildcards.sample} -threads {threads} {params.extra_args}
             RM_DIR=$(ls -d RM_* | head -n1)
         else
             if [ ! -s rm_run.fingerprint.tsv ]; then
@@ -679,7 +686,7 @@ rule repeatmodeler:
                 echo "[INFO] $RM_DIR already finished; reusing its rounds output"
             else
                 echo "[INFO] Recovering previous RepeatModeler run from $RM_DIR"
-                RepeatModeler -database {wildcards.species} -threads {threads} \
+                RepeatModeler -database {wildcards.sample} -threads {threads} \
                     -recoverDir "$RM_DIR" {params.extra_args} | tee recover.stdout
                 if [ ! -s "$RM_DIR/consensi.fa.classified" ] && \
                    ! grep -q "appears to contain a successful run" recover.stdout; then
@@ -717,17 +724,17 @@ rule repeatmodeler:
 # -----------------------------------------------------------------------------
 rule ltr_group_genome:
     input:
-        f"{OUTDIR}/{{species}}/genome/{{species}}.fa",
+        f"{OUTDIR}/{{sample}}/genome/{{sample}}.fa",
     output:
-        groups=temp(expand(f"{OUTDIR}/{{{{species}}}}/ltr/groups/{{group}}.fa", group=LTR_GROUPS)),
-        manifest=f"{OUTDIR}/{{species}}/ltr/groups/manifest.tsv",
+        groups=temp(expand(f"{OUTDIR}/{{{{sample}}}}/ltr/groups/{{group}}.fa", group=LTR_GROUPS)),
+        manifest=f"{OUTDIR}/{{sample}}/ltr/groups/manifest.tsv",
     threads: config["resources"]["ltr_group_genome"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["ltr_group_genome"]["mem"] * attempt,
         hrs=config["resources"]["ltr_group_genome"]["hrs"],
         shell_exec="bash",
     log:
-        f"{OUTDIR}/logs/{{species}}/ltr_group_genome.log",
+        f"{OUTDIR}/logs/{{sample}}/ltr_group_genome.log",
     shell:
         "python3 {SCRIPTS}/group_genome.py --fasta {input} --outputs {output.groups} "
         "--manifest {output.manifest} > {log} 2>&1"
@@ -738,10 +745,10 @@ _EMPTY_SCN_HEADER = "# no sequences in this group"
 
 rule ltr_harvest_group:
     input:
-        f"{OUTDIR}/{{species}}/ltr/groups/{{group}}.fa",
+        f"{OUTDIR}/{{sample}}/ltr/groups/{{group}}.fa",
     output:
-        scn=f"{OUTDIR}/{{species}}/ltr/groups/{{group}}.harvest.scn",
-        timeouts=f"{OUTDIR}/{{species}}/ltr/groups/{{group}}.harvest.timeouts.tsv",
+        scn=f"{OUTDIR}/{{sample}}/ltr/groups/{{group}}.harvest.scn",
+        timeouts=f"{OUTDIR}/{{sample}}/ltr/groups/{{group}}.harvest.timeouts.tsv",
     threads: config["resources"]["ltr_harvest_group"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["ltr_harvest_group"]["mem"] * attempt,
@@ -753,9 +760,9 @@ rule ltr_harvest_group:
     singularity:
         TETOOLS
     log:
-        f"{OUTDIR}/logs/{{species}}/ltr_harvest_group/{{group}}.log",
+        f"{OUTDIR}/logs/{{sample}}/ltr_harvest_group/{{group}}.log",
     params:
-        workdir=f"{OUTDIR}/{{species}}/ltr/work/harvest_{{group}}",
+        workdir=f"{OUTDIR}/{{sample}}/ltr/work/harvest_{{group}}",
         fa_abs=lambda wc, input: os.path.abspath(input[0]),
         scn_abs=lambda wc, output: os.path.abspath(output.scn),
         timeouts_abs=lambda wc, output: os.path.abspath(output.timeouts),
@@ -788,11 +795,11 @@ rule ltr_harvest_group:
 
 rule ltr_finder_group:
     input:
-        f"{OUTDIR}/{{species}}/ltr/groups/{{group}}.fa",
+        f"{OUTDIR}/{{sample}}/ltr/groups/{{group}}.fa",
     output:
-        scn=f"{OUTDIR}/{{species}}/ltr/groups/{{group}}.finder.scn",
-        timeouts=f"{OUTDIR}/{{species}}/ltr/groups/{{group}}.finder.timeouts.tsv",
-        version=f"{OUTDIR}/{{species}}/ltr/groups/{{group}}.finder.version.txt",
+        scn=f"{OUTDIR}/{{sample}}/ltr/groups/{{group}}.finder.scn",
+        timeouts=f"{OUTDIR}/{{sample}}/ltr/groups/{{group}}.finder.timeouts.tsv",
+        version=f"{OUTDIR}/{{sample}}/ltr/groups/{{group}}.finder.version.txt",
     threads: config["resources"]["ltr_finder_group"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["ltr_finder_group"]["mem"] * attempt,
@@ -802,9 +809,9 @@ rule ltr_finder_group:
     conda:
         "workflow/envs/ltr_finder.yaml"
     log:
-        f"{OUTDIR}/logs/{{species}}/ltr_finder_group/{{group}}.log",
+        f"{OUTDIR}/logs/{{sample}}/ltr_finder_group/{{group}}.log",
     params:
-        workdir=f"{OUTDIR}/{{species}}/ltr/work/finder_{{group}}",
+        workdir=f"{OUTDIR}/{{sample}}/ltr/work/finder_{{group}}",
         fa_abs=lambda wc, input: os.path.abspath(input[0]),
         scn_abs=lambda wc, output: os.path.abspath(output.scn),
         timeouts_abs=lambda wc, output: os.path.abspath(output.timeouts),
@@ -838,22 +845,22 @@ rule ltr_finder_group:
 
 rule ltr_gather:
     input:
-        genome=f"{OUTDIR}/{{species}}/genome/{{species}}.fa",
-        harvest=expand(f"{OUTDIR}/{{{{species}}}}/ltr/groups/{{group}}.harvest.scn", group=LTR_GROUPS),
-        harvest_to=expand(f"{OUTDIR}/{{{{species}}}}/ltr/groups/{{group}}.harvest.timeouts.tsv", group=LTR_GROUPS),
-        finder=expand(f"{OUTDIR}/{{{{species}}}}/ltr/groups/{{group}}.finder.scn", group=LTR_GROUPS) if USE_LTR_FINDER else [],
-        finder_to=expand(f"{OUTDIR}/{{{{species}}}}/ltr/groups/{{group}}.finder.timeouts.tsv", group=LTR_GROUPS) if USE_LTR_FINDER else [],
+        genome=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fa",
+        harvest=expand(f"{OUTDIR}/{{{{sample}}}}/ltr/groups/{{group}}.harvest.scn", group=LTR_GROUPS),
+        harvest_to=expand(f"{OUTDIR}/{{{{sample}}}}/ltr/groups/{{group}}.harvest.timeouts.tsv", group=LTR_GROUPS),
+        finder=expand(f"{OUTDIR}/{{{{sample}}}}/ltr/groups/{{group}}.finder.scn", group=LTR_GROUPS) if USE_LTR_FINDER else [],
+        finder_to=expand(f"{OUTDIR}/{{{{sample}}}}/ltr/groups/{{group}}.finder.timeouts.tsv", group=LTR_GROUPS) if USE_LTR_FINDER else [],
     output:
-        scn=f"{OUTDIR}/{{species}}/ltr/rawLTR.scn",
-        skipped=f"{OUTDIR}/{{species}}/ltr/skipped_windows.tsv",
-        summary=f"{OUTDIR}/{{species}}/ltr/ltr_discovery_summary.tsv",
+        scn=f"{OUTDIR}/{{sample}}/ltr/rawLTR.scn",
+        skipped=f"{OUTDIR}/{{sample}}/ltr/skipped_windows.tsv",
+        summary=f"{OUTDIR}/{{sample}}/ltr/ltr_discovery_summary.tsv",
     threads: config["resources"]["ltr_gather"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["ltr_gather"]["mem"] * attempt,
         hrs=config["resources"]["ltr_gather"]["hrs"],
         shell_exec="bash",
     log:
-        f"{OUTDIR}/logs/{{species}}/ltr_gather.log",
+        f"{OUTDIR}/logs/{{sample}}/ltr_gather.log",
     params:
         timeout_logs=lambda wc, input: " ".join(
             [f"harvest:{p}" for p in input.harvest_to] + [f"finder:{p}" for p in input.finder_to]
@@ -864,19 +871,19 @@ rule ltr_gather:
     shell:
         "python3 {SCRIPTS}/normalize_scn.py --genome {input.genome} --harvest {input.harvest} "
         "{params.finder_arg} --timeout-logs {params.timeout_logs} "
-        "--window-size {params.size} --overlap {params.overlap} --species {wildcards.species} "
+        "--window-size {params.size} --overlap {params.overlap} --sample {wildcards.sample} "
         "--out-scn {output.scn} --out-skipped {output.skipped} --out-summary {output.summary} "
         "> {log} 2>&1"
 
 
 rule ltr_pipeline:
     input:
-        genome=f"{OUTDIR}/{{species}}/genome/{{species}}.fa",
-        scn=f"{OUTDIR}/{{species}}/ltr/rawLTR.scn",
+        genome=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fa",
+        scn=f"{OUTDIR}/{{sample}}/ltr/rawLTR.scn",
     output:
-        fa=f"{OUTDIR}/{{species}}/ltr/{{species}}.ltrs.fa",
-        stk=f"{OUTDIR}/{{species}}/ltr/{{species}}.ltrs.stk",
-        versions=f"{OUTDIR}/{{species}}/ltr/tool_versions.txt",
+        fa=f"{OUTDIR}/{{sample}}/ltr/{{sample}}.ltrs.fa",
+        stk=f"{OUTDIR}/{{sample}}/ltr/{{sample}}.ltrs.stk",
+        versions=f"{OUTDIR}/{{sample}}/ltr/tool_versions.txt",
     threads: config["resources"]["ltr_pipeline"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["ltr_pipeline"]["mem"] * attempt,
@@ -885,9 +892,9 @@ rule ltr_pipeline:
     singularity:
         TETOOLS
     log:
-        f"{OUTDIR}/logs/{{species}}/ltr_pipeline.log",
+        f"{OUTDIR}/logs/{{sample}}/ltr_pipeline.log",
     params:
-        workdir=f"{OUTDIR}/{{species}}/ltr/work/pipeline",
+        workdir=f"{OUTDIR}/{{sample}}/ltr/work/pipeline",
         genome_abs=lambda wc, input: os.path.abspath(input.genome),
         scn_abs=lambda wc, input: os.path.abspath(input.scn),
         fa_abs=lambda wc, output: os.path.abspath(output.fa),
@@ -908,12 +915,12 @@ rule ltr_pipeline:
         rm -rf {params.workdir} && mkdir -p {params.workdir} && cd {params.workdir}
         # LTRPipeline writes <input>-ltrs.fa next to its input; link the
         # genome in so everything stays inside the work dir.
-        ln -s {params.genome_abs} {wildcards.species}.fa
+        ln -s {params.genome_abs} {wildcards.sample}.fa
         export RM_DIR=$(dirname "$(readlink -f "$(command -v RepeatModeler)")")
-        perl {params.tool} -inscn {params.scn_abs} -threads {threads} -tmpdir . {wildcards.species}.fa
-        if [ -s {wildcards.species}.fa-ltrs.fa ]; then
-            cp {wildcards.species}.fa-ltrs.fa {params.fa_abs}
-            cp {wildcards.species}.fa-ltrs.stk {params.stk_abs}
+        perl {params.tool} -inscn {params.scn_abs} -threads {threads} -tmpdir . {wildcards.sample}.fa
+        if [ -s {wildcards.sample}.fa-ltrs.fa ]; then
+            cp {wildcards.sample}.fa-ltrs.fa {params.fa_abs}
+            cp {wildcards.sample}.fa-ltrs.stk {params.stk_abs}
         else
             echo "[WARN] LTRPipeline produced no LTR families (see above); continuing rounds-only"
             : > {params.fa_abs}
@@ -928,13 +935,13 @@ rule ltr_pipeline:
 # -----------------------------------------------------------------------------
 rule merge_families:
     input:
-        rounds_fa=f"{OUTDIR}/{{species}}/repeatmodeler/{{species}}.rounds.consensi.fa",
-        rounds_stk=f"{OUTDIR}/{{species}}/repeatmodeler/{{species}}.rounds.families.stk",
-        ltr_fa=f"{OUTDIR}/{{species}}/ltr/{{species}}.ltrs.fa",
-        ltr_stk=f"{OUTDIR}/{{species}}/ltr/{{species}}.ltrs.stk",
+        rounds_fa=f"{OUTDIR}/{{sample}}/repeatmodeler/{{sample}}.rounds.consensi.fa",
+        rounds_stk=f"{OUTDIR}/{{sample}}/repeatmodeler/{{sample}}.rounds.families.stk",
+        ltr_fa=f"{OUTDIR}/{{sample}}/ltr/{{sample}}.ltrs.fa",
+        ltr_stk=f"{OUTDIR}/{{sample}}/ltr/{{sample}}.ltrs.stk",
     output:
-        fa=f"{OUTDIR}/{{species}}/families/{{species}}.merged.consensi.fa",
-        stk=f"{OUTDIR}/{{species}}/families/{{species}}.merged.families.stk",
+        fa=f"{OUTDIR}/{{sample}}/families/{{sample}}.merged.consensi.fa",
+        stk=f"{OUTDIR}/{{sample}}/families/{{sample}}.merged.families.stk",
     threads: config["resources"]["merge_families"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["merge_families"]["mem"] * attempt,
@@ -943,9 +950,9 @@ rule merge_families:
     singularity:
         TETOOLS
     log:
-        f"{OUTDIR}/logs/{{species}}/merge_families.log",
+        f"{OUTDIR}/logs/{{sample}}/merge_families.log",
     params:
-        workdir=f"{OUTDIR}/{{species}}/families/merge_work",
+        workdir=f"{OUTDIR}/{{sample}}/families/merge_work",
         rm_cfg=f"{SCRIPTS}/rm_config_path.sh",
     shell:
         """
@@ -961,11 +968,11 @@ rule merge_families:
 
 rule classify_families:
     input:
-        fa=f"{OUTDIR}/{{species}}/families/{{species}}.merged.consensi.fa",
-        stk=f"{OUTDIR}/{{species}}/families/{{species}}.merged.families.stk",
+        fa=f"{OUTDIR}/{{sample}}/families/{{sample}}.merged.consensi.fa",
+        stk=f"{OUTDIR}/{{sample}}/families/{{sample}}.merged.families.stk",
     output:
-        fa=f"{OUTDIR}/{{species}}/families/{{species}}-families.fa",
-        stk=f"{OUTDIR}/{{species}}/families/{{species}}-families.stk",
+        fa=f"{OUTDIR}/{{sample}}/families/{{sample}}-families.fa",
+        stk=f"{OUTDIR}/{{sample}}/families/{{sample}}-families.stk",
     threads: config["resources"]["classify_families"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["classify_families"]["mem"] * attempt,
@@ -974,9 +981,9 @@ rule classify_families:
     singularity:
         TETOOLS
     log:
-        f"{OUTDIR}/logs/{{species}}/classify_families.log",
+        f"{OUTDIR}/logs/{{sample}}/classify_families.log",
     params:
-        workdir=f"{OUTDIR}/{{species}}/families/classify_work",
+        workdir=f"{OUTDIR}/{{sample}}/families/classify_work",
         fa_abs=lambda wc, output: os.path.abspath(output.fa),
         stk_abs=lambda wc, output: os.path.abspath(output.stk),
     shell:
@@ -999,21 +1006,21 @@ rule classify_families:
 # -----------------------------------------------------------------------------
 rule prefix_library:
     input:
-        fa=f"{OUTDIR}/{{species}}/families/{{species}}-families.fa",
+        fa=f"{OUTDIR}/{{sample}}/families/{{sample}}-families.fa",
     output:
-        f"{OUTDIR}/{{species}}/library/{{species}}.prefixed.fa",
+        f"{OUTDIR}/{{sample}}/library/{{sample}}.prefixed.fa",
     threads: config["resources"]["prefix_library"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["prefix_library"]["mem"] * attempt,
         hrs=config["resources"]["prefix_library"]["hrs"],
         shell_exec="bash",
     log:
-        f"{OUTDIR}/logs/{{species}}/prefix_library.log",
+        f"{OUTDIR}/logs/{{sample}}/prefix_library.log",
     params:
-        sep=config["library"]["species_prefix_sep"],
+        sep=config["library"]["sample_prefix_sep"],
     shell:
         "python3 workflow/scripts/prefix_library.py "
-        "--fasta {input.fa} --species-id {wildcards.species} --sep {params.sep} "
+        "--fasta {input.fa} --sample-id {wildcards.sample} --sep {params.sep} "
         "--out {output} > {log} 2>&1"
 
 
@@ -1052,7 +1059,7 @@ if INCLUDE_DFAM:
             # uncurated per-genome RepeatModeler-derived family Dfam has
             # ever ingested for that clade -- 4.4M entries in practice, not
             # a "supplement" (spec §6.6) by any reading. -c restricts to
-            # the curated cross-species reference set that section actually
+            # the curated cross-sample reference set that section actually
             # describes.
             #
             # No --add-reverse-complement: it writes every family twice
@@ -1071,7 +1078,7 @@ if INCLUDE_DFAM:
 # -----------------------------------------------------------------------------
 rule cluster_library:
     input:
-        prefixed=expand(f"{OUTDIR}/{{species}}/library/{{species}}.prefixed.fa", species=SPECIES_IDS),
+        prefixed=expand(f"{OUTDIR}/{{sample}}/library/{{sample}}.prefixed.fa", sample=SAMPLE_IDS),
     output:
         all_prefixed=temp(f"{OUTDIR}/library/all_prefixed.fa"),
         nr_fa=f"{OUTDIR}/library/shared_denovo.nr.fa",
@@ -1114,25 +1121,25 @@ rule library_membership:
     log:
         f"{OUTDIR}/logs/library/library_membership.log",
     params:
-        sep=config["library"]["species_prefix_sep"],
-        codes=" ".join(SPECIES_IDS),
+        sep=config["library"]["sample_prefix_sep"],
+        codes=" ".join(SAMPLE_IDS),
         dfam_arg=lambda wc, input: f"--dfam {input.dfam}" if input.dfam else "",
     shell:
         "python3 workflow/scripts/library_membership.py "
-        "--clstr {input.clstr} --sep {params.sep} --species-codes {params.codes} "
+        "--clstr {input.clstr} --sep {params.sep} --sample-codes {params.codes} "
         "{params.dfam_arg} --out {output} > {log} 2>&1"
 
 
 rule discovery_summary:
-    # Family counts per species from RepeatModeler rounds + LTR pipeline
-    # through merge, classification and cross-species clustering (shared
-    # vs species-only), plus a per-Class breakdown. Library-stage inputs
+    # Family counts per sample from RepeatModeler rounds + LTR pipeline
+    # through merge, classification and cross-sample clustering (shared
+    # vs sample-only), plus a per-Class breakdown. Library-stage inputs
     # only, so it's also built by library_only.
     input:
-        rounds_fa=expand(f"{OUTDIR}/{{species}}/repeatmodeler/{{species}}.rounds.consensi.fa", species=SPECIES_IDS),
-        ltr_fa=expand(f"{OUTDIR}/{{species}}/ltr/{{species}}.ltrs.fa", species=SPECIES_IDS),
-        merged_fa=expand(f"{OUTDIR}/{{species}}/families/{{species}}.merged.consensi.fa", species=SPECIES_IDS),
-        classified_fa=expand(f"{OUTDIR}/{{species}}/families/{{species}}-families.fa", species=SPECIES_IDS),
+        rounds_fa=expand(f"{OUTDIR}/{{sample}}/repeatmodeler/{{sample}}.rounds.consensi.fa", sample=SAMPLE_IDS),
+        ltr_fa=expand(f"{OUTDIR}/{{sample}}/ltr/{{sample}}.ltrs.fa", sample=SAMPLE_IDS),
+        merged_fa=expand(f"{OUTDIR}/{{sample}}/families/{{sample}}.merged.consensi.fa", sample=SAMPLE_IDS),
+        classified_fa=expand(f"{OUTDIR}/{{sample}}/families/{{sample}}-families.fa", sample=SAMPLE_IDS),
         clstr=f"{OUTDIR}/library/shared_denovo.nr.fa.clstr",
         membership=f"{OUTDIR}/library/library_membership.tsv",
     output:
@@ -1146,10 +1153,10 @@ rule discovery_summary:
     log:
         f"{OUTDIR}/logs/summary/discovery_summary.log",
     params:
-        sep=config["library"]["species_prefix_sep"],
-        species=" ".join(SPECIES_IDS),
+        sep=config["library"]["sample_prefix_sep"],
+        sample=" ".join(SAMPLE_IDS),
     shell:
-        "python3 {SCRIPTS}/discovery_summary.py --species {params.species} "
+        "python3 {SCRIPTS}/discovery_summary.py --sample {params.sample} "
         "--rounds-fa {input.rounds_fa} --ltr-fa {input.ltr_fa} --merged-fa {input.merged_fa} "
         "--classified-fa {input.classified_fa} --clstr {input.clstr} --membership {input.membership} "
         "--sep {params.sep} --out {output.summary} --by-class-out {output.by_class} > {log} 2>&1"
@@ -1157,10 +1164,10 @@ rule discovery_summary:
 
 if INCLUDE_DFAM:
 
-    rule dfam_overlap_species:
-        # Which of this species' de novo families are already-known Dfam
+    rule dfam_overlap_sample:
+        # Which of this sample's de novo families are already-known Dfam
         # families: cd-hit-est-2d with db1 = the Dfam export, db2 = the
-        # species' prefixed families, same thresholds as cluster_library.
+        # sample's prefixed families, same thresholds as cluster_library.
         # -s2 0.8: a Dfam family must be >= 80% of the de novo family's
         # length. -aS alone (coverage of the SHORTER sequence) let any family
         # that merely contains a short Dfam entry (tRNA, MITE, solo LTR)
@@ -1169,10 +1176,10 @@ if INCLUDE_DFAM:
         # dfam_overlap.py then requires >= 80% coverage of the de novo family.
         input:
             dfam=DFAM_EXPORT_FASTA,
-            families=f"{OUTDIR}/{{species}}/library/{{species}}.prefixed.fa",
+            families=f"{OUTDIR}/{{sample}}/library/{{sample}}.prefixed.fa",
         output:
-            clstr=f"{OUTDIR}/library/dfam_overlap/{{species}}.dfam2d.clstr",
-            unmatched=temp(f"{OUTDIR}/library/dfam_overlap/{{species}}.dfam2d"),
+            clstr=f"{OUTDIR}/library/dfam_overlap/{{sample}}.dfam2d.clstr",
+            unmatched=temp(f"{OUTDIR}/library/dfam_overlap/{{sample}}.dfam2d"),
         threads: config["resources"]["dfam_overlap"]["threads"]
         resources:
             mem=lambda wildcards, attempt: config["resources"]["dfam_overlap"]["mem"] * attempt,
@@ -1181,7 +1188,7 @@ if INCLUDE_DFAM:
         conda:
             "workflow/envs/cdhit.yaml"
         log:
-            f"{OUTDIR}/logs/library/dfam_overlap_{{species}}.log",
+            f"{OUTDIR}/logs/library/dfam_overlap_{{sample}}.log",
         params:
             identity=config["library"]["cdhit"]["identity"],
             coverage_short=config["library"]["cdhit"]["coverage_short"],
@@ -1195,8 +1202,8 @@ if INCLUDE_DFAM:
 
     rule dfam_overlap:
         input:
-            families=expand(f"{OUTDIR}/{{species}}/library/{{species}}.prefixed.fa", species=SPECIES_IDS),
-            clstr=expand(f"{OUTDIR}/library/dfam_overlap/{{species}}.dfam2d.clstr", species=SPECIES_IDS),
+            families=expand(f"{OUTDIR}/{{sample}}/library/{{sample}}.prefixed.fa", sample=SAMPLE_IDS),
+            clstr=expand(f"{OUTDIR}/library/dfam_overlap/{{sample}}.dfam2d.clstr", sample=SAMPLE_IDS),
         output:
             summary=f"{OUTDIR}/summary/dfam_overlap.tsv",
             matches=f"{OUTDIR}/library/dfam_overlap/dfam_matches.tsv",
@@ -1208,10 +1215,10 @@ if INCLUDE_DFAM:
         log:
             f"{OUTDIR}/logs/summary/dfam_overlap.log",
         params:
-            species=" ".join(SPECIES_IDS),
+            sample=" ".join(SAMPLE_IDS),
             min_coverage=config["library"]["cdhit"]["coverage_short"],
         shell:
-            "python3 {SCRIPTS}/dfam_overlap.py --species {params.species} "
+            "python3 {SCRIPTS}/dfam_overlap.py --sample {params.sample} "
             "--families {input.families} --clstr {input.clstr} "
             "--min-coverage {params.min_coverage} "
             "--out-summary {output.summary} --out-matches {output.matches} > {log} 2>&1"
@@ -1251,28 +1258,28 @@ rule assemble_shared_library:
 
 
 def _own_library_inputs(wildcards):
-    inputs = {"prefixed": f"{OUTDIR}/{wildcards.species}/library/{wildcards.species}.prefixed.fa"}
+    inputs = {"prefixed": f"{OUTDIR}/{wildcards.sample}/library/{wildcards.sample}.prefixed.fa"}
     if INCLUDE_DFAM:
         inputs["dfam"] = DFAM_EXPORT_FASTA
     return inputs
 
 
 rule own_library:
-    # Sanity-check arm library: that species' de novo families only (+ the
+    # Sanity-check arm library: that sample's de novo families only (+ the
     # same optional Dfam export), assembled in its own small rule so both
     # arms call RepeatMasker identically (§6.7).
     input:
         unpack(_own_library_inputs),
     output:
-        fa=f"{OUTDIR}/own/{{species}}/library/{{species}}.own_library.fa",
-        report=f"{OUTDIR}/own/{{species}}/library/{{species}}.own_library.sources.tsv",
+        fa=f"{OUTDIR}/own/{{sample}}/library/{{sample}}.own_library.fa",
+        report=f"{OUTDIR}/own/{{sample}}/library/{{sample}}.own_library.sources.tsv",
     threads: config["resources"]["own_library"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["own_library"]["mem"] * attempt,
         hrs=config["resources"]["own_library"]["hrs"],
         shell_exec="bash",
     log:
-        f"{OUTDIR}/logs/{{species}}/own_library.log",
+        f"{OUTDIR}/logs/{{sample}}/own_library.log",
     params:
         dfam_arg=lambda wc, input: f"--dfam {input.dfam}" if INCLUDE_DFAM else "",
     shell:
@@ -1285,7 +1292,7 @@ rule own_library:
 #
 # Adapted from compare_assemblies_satellites' stage 03 -lib-mode RepeatMasker
 # scatter/gather (split_genome_fasta / run_repeatmasker_genome_lib /
-# gather_repeatmasker_genome_lib), rather than running each species' whole
+# gather_repeatmasker_genome_lib), rather than running each sample's whole
 # genome as one unchunked job: real multi-Gb assemblies schedule much better
 # on SGE as N independently-restartable chunk jobs. Deliberately NOT copying
 # that stage's -nolow flag -- it suppresses RepeatMasker's built-in
@@ -1295,20 +1302,20 @@ rule own_library:
 def rm_library(wildcards):
     if wildcards.arm == "shared":
         return MASK_SHARED_LIBRARY or f"{OUTDIR}/library/shared_library.fa"
-    return f"{OUTDIR}/own/{wildcards.species}/library/{wildcards.species}.own_library.fa"
+    return f"{OUTDIR}/own/{wildcards.sample}/library/{wildcards.sample}.own_library.fa"
 
 
 rule split_genome:
-    # Scatters one species' genome into config["repeatmasker"]["scatter_count"]
+    # Scatters one sample's genome into config["repeatmasker"]["scatter_count"]
     # chunks (workflow/scripts/split_fasta.py, copied verbatim from the
     # sibling repo's common/scripts/split_fasta.py -- snake/boustrophedon by
-    # contig count). Per-species, not per-arm: the genome being split is
+    # contig count). Per-sample, not per-arm: the genome being split is
     # identical regardless of which library later masks it.
     input:
-        fasta=f"{OUTDIR}/{{species}}/genome/{{species}}.fa",
+        fasta=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fa",
     output:
         fasta=temp(scatter.genome_chunks(
-            f"{OUTDIR}/{{{{species}}}}/genome/chunks/{{scatteritem}}/{{scatteritem}}.fa"
+            f"{OUTDIR}/{{{{sample}}}}/genome/chunks/{{scatteritem}}/{{scatteritem}}.fa"
         )),
     threads: config["resources"]["split_genome"]["threads"]
     resources:
@@ -1316,7 +1323,7 @@ rule split_genome:
         hrs=config["resources"]["split_genome"]["hrs"],
         shell_exec="bash",
     log:
-        f"{OUTDIR}/logs/{{species}}/split_genome.log",
+        f"{OUTDIR}/logs/{{sample}}/split_genome.log",
     shell:
         "python3 workflow/scripts/split_fasta.py --infile {input.fasta} "
         "--outputs {output.fasta} > {log} 2>&1"
@@ -1324,13 +1331,13 @@ rule split_genome:
 
 rule repeatmasker_chunk:
     input:
-        fasta=f"{OUTDIR}/{{species}}/genome/chunks/{{scatteritem}}/{{scatteritem}}.fa",
+        fasta=f"{OUTDIR}/{{sample}}/genome/chunks/{{scatteritem}}/{{scatteritem}}.fa",
         lib=rm_library,
         famdb_verified=f"{OUTDIR}/library/famdb_verified.txt",
     output:
-        out_file=temp(f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.out"),
-        tbl_file=temp(f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.tbl"),
-        align_file=temp(f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.align"),
+        out_file=temp(f"{OUTDIR}/{{arm}}/{{sample}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.out"),
+        tbl_file=temp(f"{OUTDIR}/{{arm}}/{{sample}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.tbl"),
+        align_file=temp(f"{OUTDIR}/{{arm}}/{{sample}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.align"),
     threads: config["resources"]["repeatmasker"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["repeatmasker"]["mem"] * attempt,
@@ -1339,7 +1346,7 @@ rule repeatmasker_chunk:
     conda:
         "workflow/envs/repeatmasker.yaml"
     params:
-        outdir=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/chunks/{{scatteritem}}",
+        outdir=f"{OUTDIR}/{{arm}}/{{sample}}/repeatmasker/chunks/{{scatteritem}}",
         pa=config["resources"]["repeatmasker"]["threads"] // config["repeatmasker"]["cores_per_pa"],
         sensitive_flag="-s" if config["repeatmasker"]["sensitive"] else "",
         extra_args=config["repeatmasker"]["extra_args"],
@@ -1352,7 +1359,7 @@ rule repeatmasker_chunk:
         fa_abs=lambda wc, input: os.path.abspath(input.fasta),
         lib_abs=lambda wc, input: os.path.abspath(input.lib),
     log:
-        f"{OUTDIR}/logs/{{arm}}/{{species}}/repeatmasker_chunk/{{scatteritem}}.log",
+        f"{OUTDIR}/logs/{{arm}}/{{sample}}/repeatmasker_chunk/{{scatteritem}}.log",
     shell:
         """
         exec > {log} 2>&1
@@ -1382,25 +1389,25 @@ rule gather_repeatmasker:
     # trusting it for the full run.
     input:
         out_chunks=gather.genome_chunks(
-            f"{OUTDIR}/{{{{arm}}}}/{{{{species}}}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.out"
+            f"{OUTDIR}/{{{{arm}}}}/{{{{sample}}}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.out"
         ),
         tbl_chunks=gather.genome_chunks(
-            f"{OUTDIR}/{{{{arm}}}}/{{{{species}}}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.tbl"
+            f"{OUTDIR}/{{{{arm}}}}/{{{{sample}}}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.tbl"
         ),
         align_chunks=gather.genome_chunks(
-            f"{OUTDIR}/{{{{arm}}}}/{{{{species}}}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.align"
+            f"{OUTDIR}/{{{{arm}}}}/{{{{sample}}}}/repeatmasker/chunks/{{scatteritem}}/{{scatteritem}}.fa.align"
         ),
     output:
-        out_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.out",
-        tbl_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.tbl",
-        align_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.align",
+        out_file=f"{OUTDIR}/{{arm}}/{{sample}}/repeatmasker/{{sample}}.fa.out",
+        tbl_file=f"{OUTDIR}/{{arm}}/{{sample}}/repeatmasker/{{sample}}.fa.tbl",
+        align_file=f"{OUTDIR}/{{arm}}/{{sample}}/repeatmasker/{{sample}}.fa.align",
     threads: config["resources"]["gather_repeatmasker"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["gather_repeatmasker"]["mem"] * attempt,
         hrs=config["resources"]["gather_repeatmasker"]["hrs"],
         shell_exec="bash",
     log:
-        f"{OUTDIR}/logs/{{arm}}/{{species}}/gather_repeatmasker.log",
+        f"{OUTDIR}/logs/{{arm}}/{{sample}}/gather_repeatmasker.log",
     shell:
         """
         exec > {log} 2>&1
@@ -1426,11 +1433,11 @@ rule gather_repeatmasker:
 # -----------------------------------------------------------------------------
 rule divergence:
     input:
-        align=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.align",
-        assembly_stats=f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv",
+        align=f"{OUTDIR}/{{arm}}/{{sample}}/repeatmasker/{{sample}}.fa.align",
+        assembly_stats=f"{OUTDIR}/{{sample}}/genome/{{sample}}.assembly_stats.tsv",
     output:
-        divsum=f"{OUTDIR}/{{arm}}/{{species}}/divergence/{{species}}.divsum",
-        landscape=f"{OUTDIR}/{{arm}}/{{species}}/divergence/{{species}}.landscape.html",
+        divsum=f"{OUTDIR}/{{arm}}/{{sample}}/divergence/{{sample}}.divsum",
+        landscape=f"{OUTDIR}/{{arm}}/{{sample}}/divergence/{{sample}}.landscape.html",
     threads: config["resources"]["divergence"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["divergence"]["mem"] * attempt,
@@ -1439,7 +1446,7 @@ rule divergence:
     conda:
         "workflow/envs/repeatmasker.yaml"
     log:
-        f"{OUTDIR}/logs/{{arm}}/{{species}}/divergence.log",
+        f"{OUTDIR}/logs/{{arm}}/{{sample}}/divergence.log",
     shell:
         """
         exec > {log} 2>&1
@@ -1467,34 +1474,34 @@ rule divergence:
 
 
 # -----------------------------------------------------------------------------
-# 6.9 summarize (per arm, species)
+# 6.9 summarize (per arm, sample)
 # -----------------------------------------------------------------------------
 rule summarize:
     input:
-        out_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.out",
-        tbl_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.tbl",
-        align_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.align",
-        assembly_stats=f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv",
+        out_file=f"{OUTDIR}/{{arm}}/{{sample}}/repeatmasker/{{sample}}.fa.out",
+        tbl_file=f"{OUTDIR}/{{arm}}/{{sample}}/repeatmasker/{{sample}}.fa.tbl",
+        align_file=f"{OUTDIR}/{{arm}}/{{sample}}/repeatmasker/{{sample}}.fa.align",
+        assembly_stats=f"{OUTDIR}/{{sample}}/genome/{{sample}}.assembly_stats.tsv",
         tandem_table=(
-            f"{OUTDIR}/{{arm}}/{{species}}/summary/family_tandem.tsv"
+            f"{OUTDIR}/{{arm}}/{{sample}}/summary/family_tandem.tsv"
             if _as_bool(config["family_tandem"].get("carve_unknown", True))
             else []
         ),
         reclass_table=[f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
         curated_table=[CURATED_FAMILIES] if CURATED_FAMILIES else [],
     output:
-        class_chunk=f"{OUTDIR}/{{arm}}/{{species}}/summary/class_composition.tsv",
-        family_chunk=f"{OUTDIR}/{{arm}}/{{species}}/summary/family_composition.tsv",
-        divergence_chunk=f"{OUTDIR}/{{arm}}/{{species}}/summary/divergence_landscape.tsv",
+        class_chunk=f"{OUTDIR}/{{arm}}/{{sample}}/summary/class_composition.tsv",
+        family_chunk=f"{OUTDIR}/{{arm}}/{{sample}}/summary/family_composition.tsv",
+        divergence_chunk=f"{OUTDIR}/{{arm}}/{{sample}}/summary/divergence_landscape.tsv",
     threads: config["resources"]["summarize"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["summarize"]["mem"] * attempt,
         hrs=config["resources"]["summarize"]["hrs"],
         shell_exec="bash",
     log:
-        f"{OUTDIR}/logs/{{arm}}/{{species}}/summarize.log",
+        f"{OUTDIR}/logs/{{arm}}/{{sample}}/summarize.log",
     params:
-        tissue=lambda wc: TISSUE_BY_SPECIES[wc.species],
+        tissue=lambda wc: TISSUE_BY_SAMPLE[wc.sample],
         landscape_max_div=config["summary"]["landscape_max_div"],
         tandem_arg=lambda wc, input: f"--tandem-table {input.tandem_table}" if input.tandem_table else "",
         reclass_arg=lambda wc, input: f"--reclass-table {input.reclass_table}" if input.reclass_table else "",
@@ -1503,7 +1510,7 @@ rule summarize:
         "python3 workflow/scripts/summarize_rm.py "
         "--out-file {input.out_file} --tbl-file {input.tbl_file} "
         "--align-file {input.align_file} --assembly-stats {input.assembly_stats} "
-        "--arm {wildcards.arm} --species {wildcards.species} --tissue {params.tissue} "
+        "--arm {wildcards.arm} --sample {wildcards.sample} --tissue {params.tissue} "
         "--landscape-max-div {params.landscape_max_div} {params.tandem_arg} {params.reclass_arg} "
         "{params.curated_arg} --class-out {output.class_chunk} --family-out {output.family_chunk} "
         "--divergence-out {output.divergence_chunk} > {log} 2>&1"
@@ -1537,7 +1544,7 @@ rule extract_consensi:
         keep=(
             ""
             if _as_bool(CLASSIFY.get("screen_dfam", False))
-            else " ".join(f"--keep-prefix {sp}{config['library']['species_prefix_sep']}" for sp in SPECIES_IDS)
+            else " ".join(f"--keep-prefix {sp}{config['library']['sample_prefix_sep']}" for sp in SAMPLE_IDS)
         ),
     shell:
         "python3 {SCRIPTS}/reclassify_unknown.py extract --library {input.library} --out {output.fa} "
@@ -1776,7 +1783,7 @@ rule reclassify_unknown:
         diamond=[f"{OUTDIR}/classify/diamond_host.tsv"] if HOST_SCREEN_ON else [],
         rfam=[f"{OUTDIR}/classify/rfam.tblout"] if RFAM_ON else [],
         # copy counts for classify.host_max_copies (TE ORFs annotated as genes)
-        family_tandem=expand(f"{OUTDIR}/shared/{{species}}/summary/family_tandem.tsv", species=SPECIES_IDS),
+        family_tandem=expand(f"{OUTDIR}/shared/{{sample}}/summary/family_tandem.tsv", sample=SAMPLE_IDS),
     output:
         tsv=f"{OUTDIR}/classify/unknown_reclassification.tsv",
     threads: config["resources"]["classify_light"]["threads"]
@@ -1824,8 +1831,8 @@ def library_source_matches_arg(wildcards, input):
 
 
 rule library_source:
-    # How much of each species' masked bp comes from its own de novo
-    # families, the other species' de novo families, Dfam, and RepeatMasker's
+    # How much of each sample's masked bp comes from its own de novo
+    # families, the other samples' de novo families, Dfam, and RepeatMasker's
     # built-in simple-repeat screen; de novo sources split into known-in-Dfam
     # vs novel when dfam_matches.tsv is available (README "Library sources").
     input:
@@ -1844,12 +1851,12 @@ rule library_source:
     log:
         f"{OUTDIR}/logs/summary/library_source_{{sumdir}}.log",
     params:
-        species=" ".join(SPECIES_IDS),
-        sep=config["library"]["species_prefix_sep"],
+        sample=" ".join(SAMPLE_IDS),
+        sep=config["library"]["sample_prefix_sep"],
         matches_arg=library_source_matches_arg,
     shell:
         "python3 {SCRIPTS}/library_source.py --family-tandem {input.family_tandem} "
-        "--assembly-covariates {input.assembly_covariates} --species-ids {params.species} "
+        "--assembly-covariates {input.assembly_covariates} --sample-ids {params.sample} "
         "--sep '{params.sep}' {params.matches_arg} --out {output.tsv} > {log} 2>&1"
 
 
@@ -1873,11 +1880,11 @@ rule element_groups:
     log:
         f"{OUTDIR}/logs/summary/element_groups_{{sumdir}}.log",
     params:
-        species=" ".join(SPECIES_IDS),
+        sample=" ".join(SAMPLE_IDS),
     shell:
         "python3 {SCRIPTS}/family_groups.py report --groups {input.groups} "
         "--family-tandem {input.family_tandem} --assembly-covariates {input.assembly_covariates} "
-        "--species-ids {params.species} --out {output.tsv} > {log} 2>&1"
+        "--sample-ids {params.sample} --out {output.tsv} > {log} 2>&1"
 
 
 rule curation_candidates:
@@ -1901,7 +1908,7 @@ rule curation_candidates:
     log:
         f"{OUTDIR}/logs/summary/curation_candidates_{{sumdir}}.log",
     params:
-        species=" ".join(SPECIES_IDS),
+        sample=" ".join(SAMPLE_IDS),
         opt=lambda wc, input: " ".join(
             ([f"--reclass {input.reclass}"] if input.reclass else [])
             + ([f"--disagreements {input.disagreements}"] if input.disagreements else [])
@@ -1911,7 +1918,7 @@ rule curation_candidates:
         young=config["summary"].get("curation_young_div", 3.0),
     shell:
         "python3 {SCRIPTS}/curation_candidates.py --family-tandem {input.family_tandem} {params.opt} "
-        "--species-ids {params.species} --min-pct-masked {params.min_pct} --young-div {params.young} "
+        "--sample-ids {params.sample} --min-pct-masked {params.min_pct} --young-div {params.young} "
         "--out {output.tsv} > {log} 2>&1"
 
 
@@ -1926,7 +1933,7 @@ rule verify_classes:
         gydb=f"{OUTDIR}/classify/tesorter/library.gydb.cls.tsv",
         diamond=[f"{OUTDIR}/classify/diamond_host.tsv"] if HOST_SCREEN_ON else [],
         rfam=[f"{OUTDIR}/classify/rfam.tblout"] if RFAM_ON else [],
-        family_tandem=expand(f"{OUTDIR}/shared/{{species}}/summary/family_tandem.tsv", species=SPECIES_IDS),
+        family_tandem=expand(f"{OUTDIR}/shared/{{sample}}/summary/family_tandem.tsv", sample=SAMPLE_IDS),
     output:
         verification=f"{OUTDIR}/{{sumdir}}/class_verification.tsv",
         disagreements=f"{OUTDIR}/{{sumdir}}/class_disagreements.tsv",
@@ -1958,7 +1965,7 @@ rule verify_classes:
 
 
 # -----------------------------------------------------------------------------
-# family_tandem (per arm, species): is each library family arranged in
+# family_tandem (per arm, sample): is each library family arranged in
 # tandem arrays (satellite-like) or dispersed? Same operational definition as
 # the removed satellite arm's satellite_library_qc (README). summarize reads
 # it to report tandem Unknown families as Unknown_tandem
@@ -1966,26 +1973,26 @@ rule verify_classes:
 # -----------------------------------------------------------------------------
 rule family_tandem:
     input:
-        out_file=f"{OUTDIR}/{{arm}}/{{species}}/repeatmasker/{{species}}.fa.out",
+        out_file=f"{OUTDIR}/{{arm}}/{{sample}}/repeatmasker/{{sample}}.fa.out",
         library=rm_library,
-        assembly_stats=f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv",
+        assembly_stats=f"{OUTDIR}/{{sample}}/genome/{{sample}}.assembly_stats.tsv",
     output:
-        family_chunk=f"{OUTDIR}/{{arm}}/{{species}}/summary/family_tandem.tsv",
-        class_chunk=f"{OUTDIR}/{{arm}}/{{species}}/summary/class_tandem.tsv",
+        family_chunk=f"{OUTDIR}/{{arm}}/{{sample}}/summary/family_tandem.tsv",
+        class_chunk=f"{OUTDIR}/{{arm}}/{{sample}}/summary/class_tandem.tsv",
     threads: config["resources"]["family_tandem"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["family_tandem"]["mem"] * attempt,
         hrs=config["resources"]["family_tandem"]["hrs"],
         shell_exec="bash",
     log:
-        f"{OUTDIR}/logs/{{arm}}/{{species}}/family_tandem.log",
+        f"{OUTDIR}/logs/{{arm}}/{{sample}}/family_tandem.log",
     params:
         t=config["family_tandem"],
     shell:
         "python3 workflow/scripts/family_tandem.py "
         "--out-file {input.out_file} --library {input.library} "
         "--assembly-stats {input.assembly_stats} "
-        "--arm {wildcards.arm} --species {wildcards.species} "
+        "--arm {wildcards.arm} --sample {wildcards.sample} "
         "--min-len {params.t[min_cons_len]} --max-len {params.t[max_cons_len]} "
         "--min-copies {params.t[min_copies]} --min-array-copies {params.t[min_array_copies]} "
         "--min-tandem-frac {params.t[min_tandem_frac]} "
@@ -1995,11 +2002,11 @@ rule family_tandem:
 
 
 rule combine_family_tandem:
-    # Concatenate the per-species tables (header once) into summary/ for a
+    # Concatenate the per-sample tables (header once) into summary/ for a
     # full run or summary_shared_only/ for report_shared_only.
     input:
-        family_chunks=expand(f"{OUTDIR}/shared/{{species}}/summary/family_tandem.tsv", species=SPECIES_IDS),
-        class_chunks=expand(f"{OUTDIR}/shared/{{species}}/summary/class_tandem.tsv", species=SPECIES_IDS),
+        family_chunks=expand(f"{OUTDIR}/shared/{{sample}}/summary/family_tandem.tsv", sample=SAMPLE_IDS),
+        class_chunks=expand(f"{OUTDIR}/shared/{{sample}}/summary/class_tandem.tsv", sample=SAMPLE_IDS),
     output:
         family_tandem=f"{OUTDIR}/{{sumdir}}/family_tandem.tsv",
         class_tandem=f"{OUTDIR}/{{sumdir}}/class_tandem.tsv",
@@ -2019,21 +2026,21 @@ rule round_saturation:
     # Own-arm masked bp by the RepeatModeler round that discovered each
     # family -- the data behind "should we sample more deeply?" (README).
     input:
-        out_file=f"{OUTDIR}/own/{{species}}/repeatmasker/{{species}}.fa.out",
-        assembly_stats=f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv",
-        tandem_table=f"{OUTDIR}/own/{{species}}/summary/family_tandem.tsv",
+        out_file=f"{OUTDIR}/own/{{sample}}/repeatmasker/{{sample}}.fa.out",
+        assembly_stats=f"{OUTDIR}/{{sample}}/genome/{{sample}}.assembly_stats.tsv",
+        tandem_table=f"{OUTDIR}/own/{{sample}}/summary/family_tandem.tsv",
     output:
-        f"{OUTDIR}/own/{{species}}/summary/round_saturation.tsv",
+        f"{OUTDIR}/own/{{sample}}/summary/round_saturation.tsv",
     threads: config["resources"]["summarize"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["summarize"]["mem"] * attempt,
         hrs=config["resources"]["summarize"]["hrs"],
         shell_exec="bash",
     log:
-        f"{OUTDIR}/logs/own/{{species}}/round_saturation.log",
+        f"{OUTDIR}/logs/own/{{sample}}/round_saturation.log",
     shell:
         "python3 {SCRIPTS}/round_saturation.py --out-file {input.out_file} "
-        "--assembly-stats {input.assembly_stats} --species {wildcards.species} "
+        "--assembly-stats {input.assembly_stats} --sample {wildcards.sample} "
         "--tandem-table {input.tandem_table} --out {output} > {log} 2>&1"
 
 
@@ -2041,23 +2048,23 @@ rule ltr_skipped_composition:
     # What the LTR tools' timed-out windows hold: shared-arm class and
     # tandem_family bp inside ltr/skipped_windows.tsv, vs genome-wide (README).
     input:
-        skipped=f"{OUTDIR}/{{species}}/ltr/skipped_windows.tsv",
-        out_file=f"{OUTDIR}/shared/{{species}}/repeatmasker/{{species}}.fa.out",
-        tandem_table=f"{OUTDIR}/shared/{{species}}/summary/family_tandem.tsv",
-        assembly_stats=f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv",
+        skipped=f"{OUTDIR}/{{sample}}/ltr/skipped_windows.tsv",
+        out_file=f"{OUTDIR}/shared/{{sample}}/repeatmasker/{{sample}}.fa.out",
+        tandem_table=f"{OUTDIR}/shared/{{sample}}/summary/family_tandem.tsv",
+        assembly_stats=f"{OUTDIR}/{{sample}}/genome/{{sample}}.assembly_stats.tsv",
     output:
-        f"{OUTDIR}/shared/{{species}}/summary/ltr_skipped_composition.tsv",
+        f"{OUTDIR}/shared/{{sample}}/summary/ltr_skipped_composition.tsv",
     threads: config["resources"]["summarize"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["summarize"]["mem"] * attempt,
         hrs=config["resources"]["summarize"]["hrs"],
         shell_exec="bash",
     log:
-        f"{OUTDIR}/logs/shared/{{species}}/ltr_skipped_composition.log",
+        f"{OUTDIR}/logs/shared/{{sample}}/ltr_skipped_composition.log",
     shell:
         "python3 {SCRIPTS}/ltr_skipped_composition.py --skipped {input.skipped} "
         "--out-file {input.out_file} --tandem-table {input.tandem_table} "
-        "--assembly-stats {input.assembly_stats} --species {wildcards.species} "
+        "--assembly-stats {input.assembly_stats} --sample {wildcards.sample} "
         "--out {output} > {log} 2>&1"
 
 
@@ -2075,28 +2082,28 @@ rule trc_regions:
     # TideCluster arrays -> pipeline contig names, after checking TideCluster
     # ran on the same assembly (seqid_lengths.tsv vs fingerprint.tsv).
     input:
-        name_map=f"{OUTDIR}/{{species}}/genome/{{species}}.name_map.tsv",
-        fingerprint=f"{OUTDIR}/{{species}}/genome/{{species}}.fingerprint.tsv",
-        clustering=lambda wc: _tc_file(wc.species, "clustering.gff3"),
-        seqid_lengths=lambda wc: _tc_file(wc.species, "seqid_lengths.tsv"),
-        consensus=lambda wc: _tc_file(wc.species, "consensus_dimer_library.fasta"),
+        name_map=f"{OUTDIR}/{{sample}}/genome/{{sample}}.name_map.tsv",
+        fingerprint=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fingerprint.tsv",
+        clustering=lambda wc: _tc_file(wc.sample, "clustering.gff3"),
+        seqid_lengths=lambda wc: _tc_file(wc.sample, "seqid_lengths.tsv"),
+        consensus=lambda wc: _tc_file(wc.sample, "consensus_dimer_library.fasta"),
     output:
-        regions=f"{OUTDIR}/shared/{{species}}/satellite/trc_regions.tsv",
-        trc_info=f"{OUTDIR}/shared/{{species}}/satellite/trc_info.tsv",
-        consensus=f"{OUTDIR}/shared/{{species}}/satellite/trc_consensus.fa",
-        params=f"{OUTDIR}/shared/{{species}}/satellite/tidecluster_params.tsv",
+        regions=f"{OUTDIR}/shared/{{sample}}/satellite/trc_regions.tsv",
+        trc_info=f"{OUTDIR}/shared/{{sample}}/satellite/trc_info.tsv",
+        consensus=f"{OUTDIR}/shared/{{sample}}/satellite/trc_consensus.fa",
+        params=f"{OUTDIR}/shared/{{sample}}/satellite/tidecluster_params.tsv",
     wildcard_constraints:
-        species=TC_CONSTRAINT,
+        sample=TC_CONSTRAINT,
     threads: config["resources"]["trc_regions"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["trc_regions"]["mem"] * attempt,
         hrs=config["resources"]["trc_regions"]["hrs"],
         shell_exec="bash",
     log:
-        f"{OUTDIR}/logs/shared/{{species}}/trc_regions.log",
+        f"{OUTDIR}/logs/shared/{{sample}}/trc_regions.log",
     params:
-        tc_dir=lambda wc: SATX_ANNOT[wc.species]["tidecluster_dir"],
-        tc_prefix=lambda wc: SATX_ANNOT[wc.species]["tidecluster_prefix"],
+        tc_dir=lambda wc: SATX_ANNOT[wc.sample]["tidecluster_dir"],
+        tc_prefix=lambda wc: SATX_ANNOT[wc.sample]["tidecluster_prefix"],
         outdir=lambda wc, output: os.path.dirname(output.regions),
         allow=lambda wc: "--allow-seqid-mismatch" if _as_bool(SATX.get("allow_seqid_mismatch", False)) else "",
     shell:
@@ -2104,7 +2111,7 @@ rule trc_regions:
         exec > {log} 2>&1
         set -euo pipefail
         python3 {SCRIPTS}/tidecluster_regions.py --dir {params.tc_dir} --prefix {params.tc_prefix} \
-            --species {wildcards.species} --name-map {input.name_map} --fingerprint {input.fingerprint} \
+            --sample {wildcards.sample} --name-map {input.name_map} --fingerprint {input.fingerprint} \
             {params.allow} --regions {output.regions} --trc-info {output.trc_info} \
             --consensus {output.consensus} --params {output.params}
         # TideCluster's own run record, for provenance
@@ -2120,24 +2127,24 @@ rule trc_crosscheck:
     # Which library families hold the TRC arrays, how much of each family
     # sits in them, and how much array sequence the library misses.
     input:
-        out_file=f"{OUTDIR}/shared/{{species}}/repeatmasker/{{species}}.fa.out",
-        tandem_table=f"{OUTDIR}/shared/{{species}}/summary/family_tandem.tsv",
-        regions=f"{OUTDIR}/shared/{{species}}/satellite/trc_regions.tsv",
+        out_file=f"{OUTDIR}/shared/{{sample}}/repeatmasker/{{sample}}.fa.out",
+        tandem_table=f"{OUTDIR}/shared/{{sample}}/summary/family_tandem.tsv",
+        regions=f"{OUTDIR}/shared/{{sample}}/satellite/trc_regions.tsv",
     output:
-        trc=f"{OUTDIR}/shared/{{species}}/satellite/trc_crosscheck.trc.tsv",
-        family=f"{OUTDIR}/shared/{{species}}/satellite/trc_crosscheck.family.tsv",
+        trc=f"{OUTDIR}/shared/{{sample}}/satellite/trc_crosscheck.trc.tsv",
+        family=f"{OUTDIR}/shared/{{sample}}/satellite/trc_crosscheck.family.tsv",
     wildcard_constraints:
-        species=TC_CONSTRAINT,
+        sample=TC_CONSTRAINT,
     threads: config["resources"]["trc_crosscheck"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["trc_crosscheck"]["mem"] * attempt,
         hrs=config["resources"]["trc_crosscheck"]["hrs"],
         shell_exec="bash",
     log:
-        f"{OUTDIR}/logs/shared/{{species}}/trc_crosscheck.log",
+        f"{OUTDIR}/logs/shared/{{sample}}/trc_crosscheck.log",
     shell:
         "python3 {SCRIPTS}/trc_crosscheck.py --out-file {input.out_file} "
-        "--tandem-table {input.tandem_table} --regions {input.regions} --species {wildcards.species} "
+        "--tandem-table {input.tandem_table} --regions {input.regions} --sample {wildcards.sample} "
         "--trc-out {output.trc} --family-out {output.family} > {log} 2>&1"
 
 
@@ -2147,8 +2154,8 @@ rule satellite_consensus_blast:
     input:
         library=lambda wc: MASK_SHARED_LIBRARY or f"{OUTDIR}/library/shared_library.fa",
         family_tandem=f"{OUTDIR}/summary/family_tandem.tsv",
-        crosscheck=expand(f"{OUTDIR}/shared/{{species}}/satellite/trc_crosscheck.family.tsv", species=TC_SAMPLES),
-        trc_consensus=expand(f"{OUTDIR}/shared/{{species}}/satellite/trc_consensus.fa", species=TC_SAMPLES),
+        crosscheck=expand(f"{OUTDIR}/shared/{{sample}}/satellite/trc_crosscheck.family.tsv", sample=TC_SAMPLES),
+        trc_consensus=expand(f"{OUTDIR}/shared/{{sample}}/satellite/trc_consensus.fa", sample=TC_SAMPLES),
         refs=[r.split("=", 1)[1] for r in SATX_REFS],
     output:
         db_fa=f"{SATDIR}/blast/satellite_db.fa",
@@ -2196,9 +2203,9 @@ rule satellite_consensus_blast:
 rule satellite_evidence:
     input:
         family_tandem=f"{OUTDIR}/summary/family_tandem.tsv",
-        crosscheck=expand(f"{OUTDIR}/shared/{{species}}/satellite/trc_crosscheck.family.tsv", species=TC_SAMPLES),
-        trc_info=expand(f"{OUTDIR}/shared/{{species}}/satellite/trc_info.tsv", species=TC_SAMPLES),
-        tc_params=expand(f"{OUTDIR}/shared/{{species}}/satellite/tidecluster_params.tsv", species=TC_SAMPLES),
+        crosscheck=expand(f"{OUTDIR}/shared/{{sample}}/satellite/trc_crosscheck.family.tsv", sample=TC_SAMPLES),
+        trc_info=expand(f"{OUTDIR}/shared/{{sample}}/satellite/trc_info.tsv", sample=TC_SAMPLES),
+        tc_params=expand(f"{OUTDIR}/shared/{{sample}}/satellite/tidecluster_params.tsv", sample=TC_SAMPLES),
         sat=f"{SATDIR}/blast/satellite_all_vs_all.tsv",
         ref=f"{SATDIR}/blast/library_vs_refs.tsv",
     output:
@@ -2252,7 +2259,7 @@ rule satellite_crosscheck_only:
     # --rerun-triggers mtime so finished upstream jobs aren't redone.
     input:
         f"{OUTDIR}/summary/satellite_family_calls.tsv" if SATX_ON else [],
-        expand(f"{OUTDIR}/shared/{{species}}/satellite/trc_crosscheck.trc.tsv", species=TC_SAMPLES),
+        expand(f"{OUTDIR}/shared/{{sample}}/satellite/trc_crosscheck.trc.tsv", sample=TC_SAMPLES),
 
 
 # -----------------------------------------------------------------------------
@@ -2262,20 +2269,20 @@ rule satellite_crosscheck_only:
 def _combine_inputs(wildcards):
     inputs = {
         "class_chunks": expand(
-            f"{OUTDIR}/{{arm}}/{{species}}/summary/class_composition.tsv", arm=ARMS, species=SPECIES_IDS
+            f"{OUTDIR}/{{arm}}/{{sample}}/summary/class_composition.tsv", arm=ARMS, sample=SAMPLE_IDS
         ),
         "family_chunks": expand(
-            f"{OUTDIR}/{{arm}}/{{species}}/summary/family_composition.tsv", arm=ARMS, species=SPECIES_IDS
+            f"{OUTDIR}/{{arm}}/{{sample}}/summary/family_composition.tsv", arm=ARMS, sample=SAMPLE_IDS
         ),
         "divergence_chunks": expand(
-            f"{OUTDIR}/{{arm}}/{{species}}/summary/divergence_landscape.tsv", arm=ARMS, species=SPECIES_IDS
+            f"{OUTDIR}/{{arm}}/{{sample}}/summary/divergence_landscape.tsv", arm=ARMS, sample=SAMPLE_IDS
         ),
         "assembly_stats_chunks": expand(
-            f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv", species=SPECIES_IDS
+            f"{OUTDIR}/{{sample}}/genome/{{sample}}.assembly_stats.tsv", sample=SAMPLE_IDS
         ),
-        "round_chunks": expand(f"{OUTDIR}/own/{{species}}/summary/round_saturation.tsv", species=SPECIES_IDS),
-        "ltr_summaries": expand(f"{OUTDIR}/{{species}}/ltr/ltr_discovery_summary.tsv", species=SPECIES_IDS),
-        "ltr_skipped": expand(f"{OUTDIR}/shared/{{species}}/summary/ltr_skipped_composition.tsv", species=SPECIES_IDS),
+        "round_chunks": expand(f"{OUTDIR}/own/{{sample}}/summary/round_saturation.tsv", sample=SAMPLE_IDS),
+        "ltr_summaries": expand(f"{OUTDIR}/{{sample}}/ltr/ltr_discovery_summary.tsv", sample=SAMPLE_IDS),
+        "ltr_skipped": expand(f"{OUTDIR}/shared/{{sample}}/summary/ltr_skipped_composition.tsv", sample=SAMPLE_IDS),
     }
     return inputs
 
@@ -2331,10 +2338,10 @@ rule combine_summaries_shared_only:
     # combine_summaries for report_shared_only: shared-arm chunks only, and
     # none of the own-arm / discovery outputs.
     input:
-        class_chunks=expand(f"{OUTDIR}/shared/{{species}}/summary/class_composition.tsv", species=SPECIES_IDS),
-        family_chunks=expand(f"{OUTDIR}/shared/{{species}}/summary/family_composition.tsv", species=SPECIES_IDS),
-        divergence_chunks=expand(f"{OUTDIR}/shared/{{species}}/summary/divergence_landscape.tsv", species=SPECIES_IDS),
-        assembly_stats_chunks=expand(f"{OUTDIR}/{{species}}/genome/{{species}}.assembly_stats.tsv", species=SPECIES_IDS),
+        class_chunks=expand(f"{OUTDIR}/shared/{{sample}}/summary/class_composition.tsv", sample=SAMPLE_IDS),
+        family_chunks=expand(f"{OUTDIR}/shared/{{sample}}/summary/family_composition.tsv", sample=SAMPLE_IDS),
+        divergence_chunks=expand(f"{OUTDIR}/shared/{{sample}}/summary/divergence_landscape.tsv", sample=SAMPLE_IDS),
+        assembly_stats_chunks=expand(f"{OUTDIR}/{{sample}}/genome/{{sample}}.assembly_stats.tsv", sample=SAMPLE_IDS),
     output:
         class_composition=f"{OUTDIR}/summary_shared_only/class_composition.tsv",
         family_composition=f"{OUTDIR}/summary_shared_only/family_composition.tsv",
@@ -2370,13 +2377,13 @@ rule provenance:
         famdb_release=f"{OUTDIR}/library/famdb_release_info.txt",
         cdhit_version=f"{OUTDIR}/library/cdhit_version.txt",
         repeatmodeler_provenance=expand(
-            f"{OUTDIR}/{{species}}/repeatmodeler/{{species}}.repeatmodeler_provenance.txt",
-            species=SPECIES_IDS,
+            f"{OUTDIR}/{{sample}}/repeatmodeler/{{sample}}.repeatmodeler_provenance.txt",
+            sample=SAMPLE_IDS,
         ),
-        fingerprints=expand(f"{OUTDIR}/{{species}}/genome/{{species}}.fingerprint.tsv", species=SPECIES_IDS),
-        ltr_versions=expand(f"{OUTDIR}/{{species}}/ltr/tool_versions.txt", species=SPECIES_IDS),
+        fingerprints=expand(f"{OUTDIR}/{{sample}}/genome/{{sample}}.fingerprint.tsv", sample=SAMPLE_IDS),
+        ltr_versions=expand(f"{OUTDIR}/{{sample}}/ltr/tool_versions.txt", sample=SAMPLE_IDS),
         finder_versions=expand(
-            f"{OUTDIR}/{{species}}/ltr/groups/{{group}}.finder.version.txt", species=SPECIES_IDS, group=LTR_GROUPS[:1]
+            f"{OUTDIR}/{{sample}}/ltr/groups/{{group}}.finder.version.txt", sample=SAMPLE_IDS, group=LTR_GROUPS[:1]
         ) if USE_LTR_FINDER else [],
         ltr_discovery=f"{OUTDIR}/summary/ltr_discovery.tsv",
         config_snapshot="config.yaml",
@@ -2399,11 +2406,11 @@ rule provenance:
         echo; echo "=== RepeatMasker ==="; cat {input.rm_version}
         echo; echo "=== FamDB / Dfam release ==="; cat {input.famdb_release}
         echo; echo "=== cd-hit ==="; cat {input.cdhit_version}
-        echo; echo "=== RepeatModeler version + in-container Dfam partitions, per species ==="
+        echo; echo "=== RepeatModeler version + in-container Dfam partitions, per sample ==="
         for f in {input.repeatmodeler_provenance}; do echo "--- $f ---"; cat "$f"; done
         echo; echo "=== Genome fingerprints (md5 / n_seqs / total_bp) ==="
         for f in {input.fingerprints}; do echo "--- $f ---"; grep '^#' "$f"; done
-        echo; echo "=== LTR discovery tool versions, per species ==="
+        echo; echo "=== LTR discovery tool versions, per sample ==="
         for f in {input.ltr_versions} {input.finder_versions}; do echo "--- $f ---"; cat "$f"; done
         echo "vendored: see workflow/vendor/README.md (LTR_HARVEST_parallel c3c9b3c, LTR_FINDER_parallel f1036ca, RepeatModeler 2.0.9 LTRPipeline, all patched)"
         echo; echo "=== LTR candidates and window-timeout skipped bp ==="; cat {input.ltr_discovery}
@@ -2434,14 +2441,14 @@ rule plot:
         "workflow/envs/r_plot.yaml"
     params:
         out_dir=f"{OUTDIR}/plots",
-        species_order=PLOT_SPECIES_ORDER,
+        sample_order=PLOT_SAMPLE_ORDER,
     log:
         f"{OUTDIR}/logs/summary/plot.log",
     shell:
         "Rscript workflow/scripts/plot_repeat_compare.R "
         "{input.class_composition} {input.divergence_landscape} "
         "{input.arm_concordance} {input.assembly_covariates} {params.out_dir} "
-        "{params.species_order} > {log} 2>&1"
+        "{params.sample_order} > {log} 2>&1"
 
 
 rule plot_shared_only:
@@ -2462,11 +2469,11 @@ rule plot_shared_only:
         "workflow/envs/r_plot.yaml"
     params:
         out_dir=f"{OUTDIR}/plots_shared_only",
-        species_order=PLOT_SPECIES_ORDER,
+        sample_order=PLOT_SAMPLE_ORDER,
     log:
         f"{OUTDIR}/logs/summary_shared_only/plot.log",
     shell:
         "Rscript workflow/scripts/plot_repeat_compare.R "
         "{input.class_composition} {input.divergence_landscape} "
-        "NONE {input.assembly_covariates} {params.out_dir} {params.species_order} "
+        "NONE {input.assembly_covariates} {params.out_dir} {params.sample_order} "
         "> {log} 2>&1"

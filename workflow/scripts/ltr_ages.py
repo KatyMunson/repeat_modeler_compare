@@ -16,7 +16,7 @@ a library consensus fits, unlike the .out divergence of each hit.
       --family Esto_rnd-1_family-332 --outdir diag/fam332_ages [--rate 2.2e-9]
 
 Inputs:
-  --scn     the pipeline's {species}/ltr/rawLTR.scn: 11 LTRharvest columns
+  --scn     the pipeline's {sample}/ltr/rawLTR.scn: 11 LTRharvest columns
             s(ret) e(ret) l(ret) s(lLTR) e(lLTR) l(lLTR) s(rLTR) e(rLTR)
             l(rLTR) sim seq-nr, seq-nr = 0-based index of the contig in
             --genome (normalize_scn.py). Candidates found by both tools are

@@ -1,8 +1,8 @@
 # repeat_compare
 
-RepeatModeler2 + RepeatMasker cross-species repeat comparison, built for
+RepeatModeler2 + RepeatMasker cross-sample repeat comparison, built for
 *Eptatretus stoutii* (de novo) vs *Myxine limosa* (published), but
-species-agnostic and manifest-driven.
+sample-agnostic and manifest-driven.
 
 ## Design
 
@@ -10,12 +10,12 @@ Both genomes are masked with **two arms**:
 
 | arm | library | role |
 |---|---|---|
-| `shared` | non-redundant union of all species' de novo families (+ optional Dfam export) | **primary comparison** |
-| `own` | that species' de novo families only (+ same optional Dfam export) | sanity check / concordance |
+| `shared` | non-redundant union of all samples' de novo families (+ optional Dfam export) | **primary comparison** |
+| `own` | that sample's de novo families only (+ same optional Dfam export) | sanity check / concordance |
 
-Masking every species with only its own library biases the comparison
+Masking every sample with only its own library biases the comparison
 (each genome is best-annotated for its own families), so `shared` is the
-one to trust for cross-species numbers; `own` exists to sanity-check it via
+one to trust for cross-sample numbers; `own` exists to sanity-check it via
 `{outdir}/summary/arm_concordance.tsv`. (`outdir` is `results_v2` by
 default: the restructured pipeline below writes to a fresh directory so
 runs made with the previous `-LTRStruct` version in `results/` stay
@@ -24,14 +24,24 @@ untouched. Paths below are written as `{outdir}/...`.)
 Hagfish undergo programmed germline-to-soma genome rearrangement — a
 germline assembly and a somatic assembly are different genomes. This
 pipeline does **not** act on the manifest's `tissue` column; it only
-carries it into every summary table and warns (never fails) if species
+carries it into every summary table and warns (never fails) if samples
 disagree or are `unknown`. Assembly-quality covariates (contig count,
 total/N/non-N length, N50) are reported alongside every repeat result for
 the same reason — a fragmented or collapsed assembly undercounts repeats.
 
+**Naming: "sample", not "species".** Each manifest row is one assembly,
+which is often one individual of a species (two meadowlark individuals,
+say). The wildcard, the script arguments and the first column of every
+summary table therefore say `sample` (and `sample_id`). Tables written
+before this rename say `species`; to read them with newer tooling run
+`sed -i '1s/^\(arm\t\)\?species/\1sample/' table.tsv`. The config keys
+`summary.plot_species_order` and `library.species_prefix_sep` are now
+`plot_sample_order` and `sample_prefix_sep`; the old names stop the
+workflow with a message.
+
 ## Pipeline flow
 
-Per species unless noted:
+Per sample unless noted:
 
 ```
 prep_genome -> genome_fingerprint, assembly_stats
@@ -41,7 +51,7 @@ LTR side pipeline:  ltr_group_genome
     -> ltr_harvest_group + ltr_finder_group (per group) -> ltr_gather -> ltr_pipeline
 merge_families (rounds + LTR, RepeatModeler's own cd-hit merge)
     -> classify_families (RepeatClassifier)
-prefix_library -> cluster_library (all species) -> shared / own libraries (+ Dfam)
+prefix_library -> cluster_library (all samples) -> shared / own libraries (+ Dfam)
 -> repeatmasker (both arms) -> divergence -> summarize -> combine_summaries -> plot
 ```
 
@@ -62,8 +72,8 @@ This pipeline replaces **only step 1**. `ltr_pipeline` runs
 `workflow/vendor/RepeatModeler/LTRPipeline_from_scn` (RepeatModeler's own
 `LTRPipeline`, patched to read a precomputed `.scn`) for steps 2–3.
 `merge_families.py` ports step 4's merge, and `classify_families` runs
-RepeatClassifier. Every species goes through the same path, so results are
-comparable across species. Relative to a stock `-LTRStruct` run, two things
+RepeatClassifier. Every sample goes through the same path, so results are
+comparable across samples. Relative to a stock `-LTRStruct` run, two things
 differ, and methods should say so:
 - LTRharvest runs on **overlapping 5 Mb windows with per-window timeouts**
   instead of one whole-genome pass. Windows that still time out are
@@ -96,14 +106,14 @@ the vendored tools. That includes an upstream bug: salvage mode re-ran a
 timed-out window with no timeout at all.
 
 **If LTR candidate jobs are slow or failing, check these first:**
-- `{outdir}/{species}/ltr/groups/manifest.tsv` shows which contigs are in
+- `{outdir}/{sample}/ltr/groups/manifest.tsv` shows which contigs are in
   which group;
-- `{outdir}/{species}/ltr/skipped_windows.tsv` shows which regions timed
+- `{outdir}/{sample}/ltr/skipped_windows.tsv` shows which regions timed
   out;
 - the per-group `*.timeouts.tsv` files list every salvaged or skipped piece.
 
 `{outdir}/summary/ltr_skipped_composition.tsv` says what the skipped
-regions hold, per species and tool: shared-arm bp by class, by
+regions hold, per sample and tool: shared-arm bp by class, by
 `tandem_family` vs dispersed (any class, so an LTR-labelled satellite
 counts as tandem), and the top families, each next to its genome-wide %
 and the enrichment. Mostly tandem bp means the window was a satellite
@@ -132,7 +142,7 @@ accepts that case, since only the rounds are needed, and otherwise
 requires a real completion.
 
 **Rule of thumb:** RepeatModeler and the LTR side pipeline must both run
-on the identical genome FASTA for a species, every
+on the identical genome FASTA for a sample, every
 time. Scaffolded or pre-scaffold doesn't matter, as long as it's the same
 file. The pipeline guarantees this within a run. The guard catches it
 across runs.
@@ -155,7 +165,7 @@ by the round that discovered each family (`rnd-1` … `rnd-N`, `ltr`,
 calls). If families from the final round still mask a
 meaningful share (for example >1% of the genome), sampling hasn't
 saturated. In that case set `repeatmodeler.extra_args: "-numAddlRounds 1"`
-(or 2), the same value for every species, and rerun.
+(or 2), the same value for every sample, and rerun.
 - Judge it by `dispersed_pct_non_n`, not `pct_non_n`: `tandem_bp` is the
   part of a bucket held by `tandem_family` families (own-arm
   `family_tandem.tsv`). One Mb-scale satellite array discovered in the last
@@ -169,7 +179,7 @@ saturated. In that case set `repeatmodeler.extra_args: "-numAddlRounds 1"`
 ### Discovery summary
 
 `{outdir}/summary/discovery_summary.tsv` follows the family counts from
-discovery to the shared library, with one row per species plus `ALL`.
+discovery to the shared library, with one row per sample plus `ALL`.
 It's built from library-stage files only, so `library_only` produces it too.
 
 | Column | Meaning |
@@ -178,19 +188,19 @@ It's built from library-stage files only, so `library_only` produces it too.
 | `merge_removed`, `merged_families` | round families dropped as redundant with an LTR family, and what's left (`merge_families`) |
 | `merged_ltr_families`, `putative_subfamilies` | LTR families in the merged set; round families tagged "putative subfamily of" |
 | `classified_families`, `unknown_families` | after RepeatClassifier; those labelled `Unknown` |
-| `clusters`, `species_only_clusters`, `shared_clusters` | cross-species cd-hit-est clusters (`cluster_library`) containing this species' families |
-| `families_in_species_only_clusters`, `families_in_shared_clusters`, `pct_families_in_shared_clusters` | where this species' families landed |
+| `clusters`, `sample_only_clusters`, `shared_clusters` | cross-sample cd-hit-est clusters (`cluster_library`) containing this sample's families |
+| `families_in_sample_only_clusters`, `families_in_shared_clusters`, `pct_families_in_shared_clusters` | where this sample's families landed |
 | `shared_clusters_label_conflict` | shared clusters whose members' `Class/Family` labels disagree (see `library_membership.tsv`) |
 | `dfam_entries` | Dfam families appended to the libraries, counted by unique name (`ALL` row only) |
 
-In the `ALL` row, family counts are summed over species and cluster counts
-are over the whole clustering. A species' family count must equal its
+In the `ALL` row, family counts are summed over sample and cluster counts
+are over the whole clustering. A sample's family count must equal its
 members in the `.clstr`; otherwise the rule fails, since the inputs would
 come from different runs.
 
-`discovery_summary_by_class.tsv` splits families into species-only vs
+`discovery_summary_by_class.tsv` splits families into sample-only vs
 shared clusters per Class (the part of each family's own label before
-`/`), for each species and `ALL`. Sharing is usually very uneven across
+`/`), for each sample and `ALL`. Sharing is usually very uneven across
 classes, so read this alongside the overall percentage.
 
 ### Overlap with Dfam
@@ -199,10 +209,10 @@ RepeatClassifier compares families with the Dfam in the container, but it
 only assigns a class. It doesn't record which Dfam family matched, and the
 Dfam export is appended to the libraries without being compared with the
 de novo families. `dfam_overlap` (run when `library.include_dfam` is set)
-fills that gap. It runs `cd-hit-est-2d` of each species' families against
+fills that gap. It runs `cd-hit-est-2d` of each sample's families against
 the Dfam export, with `cluster_library`'s identity threshold, on both
 strands:
-- `{outdir}/summary/dfam_overlap.tsv`: per species and `ALL`, and per
+- `{outdir}/summary/dfam_overlap.tsv`: per sample and `ALL`, and per
   Class, how many families match a Dfam family, split into
   `class_agrees` / `class_differs` (family classified; Dfam Class the
   same / different) and `unknown_matched` (family was `Unknown`, so the
@@ -222,7 +232,7 @@ cyclostomes.
 
 ## Tandem check (`family_tandem`)
 
-Every family in the shared-arm `.out` of each species is checked against
+Every family in the shared-arm `.out` of each sample is checked against
 the operational satellite definition the removed satellite arm used
 (`satellite_library_qc.py`, tag `satellite-arm-v1`), so a shared-library
 family and a satellite-library motif are judged the same way:
@@ -251,7 +261,7 @@ consensus's strongest internal repeat period (k-mer spacing), so a
 consensus that is several copies of a shorter unit reports that unit.
 
 - `{outdir}/summary/family_tandem.tsv` (or `summary_shared_only/`): one row
-  per family and species, largest first: `owned_bp` (the bp it holds under
+  per family and sample, largest first: `owned_bp` (the bp it holds under
   the class table's highest-score rule), tandem fraction, array count and
   largest array, `median_div` (bp-weighted `.out` perc. div., to place a
   family on the landscape), the four pass flags, `satellite_like` and a
@@ -267,7 +277,7 @@ that pipeline's own QC on the same assembly.
 ## Reclassifying Unknown families and verifying classes (`classify`)
 
 Three cheap, independent screens run once on every **de novo** consensus in
-the shared library (`{outdir}/classify/`). These are the species-prefixed
+the shared library (`{outdir}/classify/`). These are the sample-prefixed
 RepeatModeler families. Curated Dfam entries keep their labels and are left
 out of both the reclassification and the verification;
 `classify.screen_dfam: true` includes them. Their share of masked bp is in
@@ -296,7 +306,7 @@ Precedence (first match wins; only `Unknown` families change):
 3. **rfam**: the hit covers at least `min_rfam_cov` of the consensus.
 4. **host_protein**: the best host protein covers at least `min_host_cov`
    and the family has at most `host_max_copies` (50) `.out` hits in every
-   species, giving `Other/host_gene`. These are excluded from TE classes and
+   sample, giving `Other/host_gene`. These are excluded from TE classes and
    counted in Other. Above that copy number the match is a TE open reading
    frame that the genome annotation called a gene ("uncharacterized LOC...",
    no TE domain, so the keyword and TEsorter filters miss it): the family
@@ -320,7 +330,7 @@ Class/Family that came from relabelled Unknown families. Report how much
 moved with it, together with the `evidence` column.
 
 **Host proteins.**
-- `annotation_proteins` takes the species' gene annotations, e.g. NCBI's
+- `annotation_proteins` takes the sample's gene annotations, e.g. NCBI's
   `complete.proteins.faa` for Esto and the MLI protein FASTA. Not the
   transcripts: DIAMOND needs proteins.
 - `swissprot_fasta` is optional.
@@ -360,7 +370,7 @@ written next to your reference files.
 RepeatClassifier labels families by homology to Dfam and RepeatPeps. The
 screens are independent of that, so `verify` compares each classified
 family's label with them. It changes nothing; it only reports.
-Families are weighted by the bp they hold in each species (`owned_bp` from
+Families are weighted by the bp they hold in each sample (`owned_bp` from
 the shared-arm `family_tandem.tsv`).
 
 | status | meaning |
@@ -381,7 +391,7 @@ and decayed copies have no protein domains. Read it as "not confirmed",
 never as "wrong".
 
 Outputs:
-- `{summary}/class_verification.tsv`: per species, class and status, the
+- `{summary}/class_verification.tsv`: per sample, class and status, the
   families present, the bp they hold, and that bp as a % of the class.
 - `{summary}/class_disagreements.tsv`: families with a disagreeing status
   (`disagree_order`, `retroposon_vs_line`, `domain_conflict`,
@@ -391,13 +401,13 @@ Outputs:
 
 ## Library sources (`library_source.tsv`)
 
-`{summary}/library_source.tsv` splits each species' masked bp by where the
+`{summary}/library_source.tsv` splits each sample's masked bp by where the
 family holding it came from:
 
 | source | meaning |
 |---|---|
-| `own_denovo` | families discovered in this species (`<species_id><sep>...`) |
-| `denovo:<species>` | families discovered in the other species |
+| `own_denovo` | families discovered in this sample (`<sample_id><sep>...`) |
+| `denovo:<sample>` | families discovered in the other samples |
 | `dfam` | the Dfam export (`library.include_dfam` / `dfam_taxon`) |
 | `rm_builtin` | RepeatMasker's own simple-repeat / low-complexity screen |
 | `total` | all of the above |
@@ -436,18 +446,18 @@ Caveats:
   in the library and compete base by base. Where the de novo consensus fits
   better, the bp count as de novo even if Dfam has the same element.
   `dfam_overlap.tsv` lists de novo families that match known Dfam families.
-- A family shared by both species is one cd-hit cluster, kept under its
-  longest member's name, so `denovo:<other species>` includes shared
-  families whose representative came from the other species
+- A family shared by both samples is one cd-hit cluster, kept under its
+  longest member's name, so `denovo:<other samples>` includes shared
+  families whose representative came from the other samples
   (`library_membership.tsv` has the clusters).
 - On the first *E. stoutii* / *M. limosa* run, Dfam held under 1% of masked bp
-  in both species (old, partial matches, ~24% divergence), while about 11% of
-  each genome was masked by the *other* species' de novo families.
+  in both samples (old, partial matches, ~24% divergence), while about 11% of
+  each genome was masked by the *other* samples' de novo families.
 
 ## Curating a family (`curation_candidates.tsv`)
 
 `{summary}/curation_candidates.tsv` ranks families worth a manual recheck:
-those holding >= `summary.curation_min_pct_masked` (0.1%) of a species'
+those holding >= `summary.curation_min_pct_masked` (0.1%) of a sample's
 masked bp and flagged as
 - `unknown` / `unknown_tandem`: still Unknown after the classify screens
 - `long_for_class(len>max)`: consensus longer than plausible for its label
@@ -477,21 +487,21 @@ LTR element split across 26 families):
 
 Curated elements follow the Dfam / RepBase convention:
 
-    <Superfamily>-<n>[N]_<species>      e.g. Gypsy-1_Esto, Gypsy-N1_Esto, hAT-N2_Esto
+    <Superfamily>-<n>[N]_<sample>      e.g. Gypsy-1_Esto, Gypsy-N1_Esto, hAT-N2_Esto
 
 - `<Superfamily>`: the RepeatMasker superfamily (Gypsy, Copia, ERV1, CR1,
   RTE, hAT, TcMar, PiggyBac, Maverick, Helitron, ...), or the class when
   the superfamily is not established (`LTR-N1_Esto`)
-- `<n>`: running number per superfamily and species, in the order elements
+- `<n>`: running number per superfamily and sample, in the order elements
   are curated; never reused
 - `N`: non-autonomous (no coding capacity of its own; mobilised in trans),
   as in RepBase's `hAT-N1_DR`
-- `_<species>`: the pipeline's species ID (`_Esto`, `_Mlim`), matching
+- `_<sample>`: the pipeline's sample ID (`_Esto`, `_Mlim`), matching
   Dfam's `Naiad_Ebur` style
 - LTR elements: the curated library entries are `<name>-LTR` and `<name>-I`
   (internal region), as RepeatMasker libraries store them; the table's
   `part` column records which library families are which
-- satellites: `SAT-<n>_<species>` (Dfam style), with the monomer length in
+- satellites: `SAT-<n>_<sample>` (Dfam style), with the monomer length in
   `note`
 
 The curated-families table maps the original library families (kept as the
@@ -527,13 +537,13 @@ footprint:
    named element with a curated class, use `classify.curated_families`
    instead: it also relabels, and its elements are grouped the same way.)
 
-`element_groups.tsv` has one `group` row per species and element (members
+`element_groups.tsv` has one `group` row per sample and element (members
 present, `.out` hits, bp, % of masked, % non-N) and one `member` row per
 family. Each base still counts for the family that won it, so a group is the
 sum of its members' `owned_bp`, and nothing is remasked.
 
 Insertion ages of an LTR element come from the LTR-pipeline candidates:
-`workflow/scripts/ltr_ages.py` takes the pipeline's `{species}/ltr/rawLTR.scn`,
+`workflow/scripts/ltr_ages.py` takes the pipeline's `{sample}/ltr/rawLTR.scn`,
 keeps candidates whose internal region is covered by the element's
 families, and reports the 5'/3' LTR similarity of each intact copy (with
 `--rate`, ages via the Jukes-Cantor distance, T = d / 2r).
@@ -552,7 +562,7 @@ relabelled or merged.
 **Inputs.** Point `satellite_crosscheck.external_annotations` at a TSV with
 the header `sample_id tidecluster_dir tidecluster_prefix ribotin_fa
 mitohifi_fa` (see `external_annotations.example.tsv`).
-- `sample_id` is the manifest's `species_id`.
+- `sample_id` is the manifest's `sample_id`.
 - Every cell needs a value. `.`, `NA`, `na`, `no`, `false` and `none` mean
   "not provided"; blanks and spaces are refused.
 - From `{tidecluster_dir}/{tidecluster_prefix}_*` (TideCluster 1.21.3
@@ -579,13 +589,13 @@ With `external_annotations` set, `all` builds it too.
 
 | file | content |
 |---|---|
-| `shared/{species}/satellite/trc_crosscheck.trc.tsv` | per TRC: arrays, bp, bp RepeatMasker masks / misses, the families holding it. Row `ALL`: total array bp the library misses, and TideHunter arrays outside any TRC |
-| `shared/{species}/satellite/trc_crosscheck.family.tsv` | per family: share of its bp inside TRC arrays, which TRCs, median TideHunter monomer length of the arrays it sits in |
+| `shared/{sample}/satellite/trc_crosscheck.trc.tsv` | per TRC: arrays, bp, bp RepeatMasker masks / misses, the families holding it. Row `ALL`: total array bp the library misses, and TideHunter arrays outside any TRC |
+| `shared/{sample}/satellite/trc_crosscheck.family.tsv` | per family: share of its bp inside TRC arrays, which TRCs, median TideHunter monomer length of the arrays it sits in |
 | `summary/satellite_family_evidence.tsv` | family × sample. Samples without TideCluster listed in `infer_from` get the donor's TRC evidence, marked `inferred:<donor>` |
 | `summary/satellite_family_calls.tsv` | one row per family: proposed class, confidence, reason |
 | `summary/satellite_family_pairs.tsv` | pairs of tandem families: consensus similarity, shared-TRC fraction, monomers, verdict |
 | `summary/satellite_proposals.tsv` | `classify.curated_families` format; high and medium rows only |
-| `summary/satellite_trc_pairs.tsv` | TideCluster consensi matching across samples: coverage both ways, identity, KITE founder of each. These are the satellites shared between species |
+| `summary/satellite_trc_pairs.tsv` | TideCluster consensi matching across samples: coverage both ways, identity, KITE founder of each. These are the satellites shared between samples |
 
 **Calls**, in priority order:
 1. `rRNA` (high): ≥ `rdna_min_cov` of the consensus matches a ribotin model
@@ -618,7 +628,7 @@ With `external_annotations` set, `all` builds it too.
    - **TideHunter's detection limit:** TideHunter only looks for repeat units up to
      `-P` bp, which is 3000 by default (TideCluster `-T`) or 25000 with
      `--long`. The limit is read from `cmd_args.json` into
-     `shared/{species}/satellite/tidecluster_params.tsv`. A tandem family
+     `shared/{sample}/satellite/tidecluster_params.tsv`. A tandem family
      whose unit (`monomer_period`, else the consensus length) is longer than
      that cannot be in a TRC, so in that sample it neither passes nor fails;
      it is listed under `beyond_tidehunter`. If its `tandem_frac` is
@@ -725,7 +735,7 @@ snakemake -s Snakefile --configfile config.yaml -n -p --restart-times 3
 ```
 
 **Mask with the shared library only (`mask_shared_only`):** to run just
-RepeatMasker with an already-built shared library on every species, with no
+RepeatMasker with an already-built shared library on every sample, with no
 discovery, LTR, clustering, own-arm or summary rules, point
 `mask_shared_library` at the library and ask for the `mask_shared_only` target:
 
@@ -739,7 +749,7 @@ Everything after `--` is a target, so flags like `-n` must go *before* the
 `--` (`... shared_library.fa -n -- mask_shared_only`).
 Only `prep_genome`, `split_genome`, `setup_famdb` (quick ones) and the
 shared-arm `repeatmasker_chunk`/`gather_repeatmasker` jobs are scheduled.
-Output goes to `<outdir>/shared/<species>/repeatmasker/`. Leave
+Output goes to `<outdir>/shared/<sample>/repeatmasker/`. Leave
 `mask_shared_library` unset for a normal run.
 
 **Report on the shared arm only (`report_shared_only`):** after
@@ -764,21 +774,21 @@ actually newer than the masked output.
 
 `mtime` also ignores script changes, so after a pipeline update that changes
 `summarize_rm.py` (for example the overlap-resolved divergence landscape),
-add `--forcerun summarize`. That reruns the per-species summaries and
+add `--forcerun summarize`. That reruns the per-sample summaries and
 everything downstream, but not the masking.
 
 The target refuses to run without `mask_shared_library`. Without it the
 shared arm would mask with `<outdir>/library/shared_library.fa`, which
 schedules the whole discovery chain and re-runs RepeatMasker.
 
-It schedules `assembly_stats`, `divergence` and `summarize` per species,
+It schedules `assembly_stats`, `divergence` and `summarize` per sample,
 then `combine_summaries_shared_only` and `plot_shared_only`:
 - `<outdir>/summary_shared_only/`: `class_composition.tsv`,
   `family_composition.tsv`, `divergence_landscape.tsv`,
   `assembly_covariates.tsv` (same formats as `summary/`);
 - `<outdir>/plots_shared_only/`: `class_composition_shared.png`,
   `divergence_landscape.png`;
-- `<outdir>/shared/<species>/divergence/<species>.landscape.html`:
+- `<outdir>/shared/<sample>/divergence/<sample>.landscape.html`:
   RepeatMasker's own landscape page.
 
 These go to separate directories so a later full run's `summary/` and
@@ -878,7 +888,7 @@ It runs via Singularity with `--bind /net/:/net/`, which is baked into
 it, so no step drifts to a different RepeatModeler/RepeatMasker suite
 version. To check which Dfam/RepeatClassifier partitions the image
 actually bundles, see
-`{outdir}/{species}/repeatmodeler/{species}.repeatmodeler_provenance.txt`
+`{outdir}/{sample}/repeatmodeler/{sample}.repeatmodeler_provenance.txt`
 and `{outdir}/summary/provenance.txt`. The tetools image may ship only the
 root FamDB partition; if Chordata/Vertebrata content is missing, that's
 recorded there, not silently assumed.
@@ -926,7 +936,7 @@ See Quickstart above — this is the same gotcha documented in
 
 ## RepeatMasker scatter/gather
 
-Each species' genome is masked via a 3-rule scatter/gather
+Each sample's genome is masked via a 3-rule scatter/gather
 (`split_genome` → `repeatmasker_chunk` × `repeatmasker.scatter_count` →
 `gather_repeatmasker`), not as one unchunked whole-genome job — adapted
 from `compare_assemblies_satellites`'s stage 03 `-lib`-mode RepeatMasker
@@ -940,7 +950,7 @@ suppresses RepeatMasker's built-in low-complexity/simple-repeat screen) —
 we need that screen to run, since `Simple_repeat` and `Low_complexity`
 are both required canonical output classes here.
 
-`gather_repeatmasker` merges three file types per (arm, species):
+`gather_repeatmasker` merges three file types per (arm, sample):
 `.out` via `gather_rm_out.sh` (keeps one header, strips the zero-hit
 sentinel line per chunk); `.tbl` by summing each chunk's "total
 length"/"bases masked" numbers into a minimal synthetic file (chunks are
@@ -968,7 +978,7 @@ Landscape bins are 1% wide; `pct_non_n` is bp / non-N assembly length.
 Simple_repeat and Low_complexity take part in the overlap resolution but are
 left out of the landscape, because divergence from a consensus means nothing
 for them. RepeatMasker's own `.divsum` and landscape `.html` are still
-written under `{outdir}/{arm}/{species}/divergence/` for reference.
+written under `{outdir}/{arm}/{sample}/divergence/` for reference.
 
 `repeatmasker.scatter_count` (default 10) and the `repeatmasker` resource
 block are **per chunk now**, not per whole genome — untuned placeholders,
@@ -980,14 +990,14 @@ adjust both from real per-chunk runtimes observed in the wiring test.
 |---|---|
 | `BuildDatabase` | none |
 | `RepeatModeler -threads` | partial; plateaus (RepeatScout/RECON serial); rounds only (no `-LTRStruct`) |
-| `ltr_harvest_group` / `ltr_finder_group` | yes: `n_groups` SGE jobs per species × `threads` windows each (threads must be ≥ 2) |
-| `ltr_pipeline` (LTR_retriever, MAFFT, NINJA) | yes, `-threads`; once per species (needs the whole genome's candidates) |
+| `ltr_harvest_group` / `ltr_finder_group` | yes: `n_groups` SGE jobs per sample × `threads` windows each (threads must be ≥ 2) |
+| `ltr_pipeline` (LTR_retriever, MAFFT, NINJA) | yes, `-threads`; once per sample (needs the whole genome's candidates) |
 | `merge_families` (cd-hit-est), `classify_families` (RepeatClassifier) | yes, `-T` / `-threads` |
 | `cd-hit-est -T` | yes |
 | `RepeatMasker -pa` | yes; each slot ~4 cores under RMBlast (`repeatmasker.cores_per_pa`) |
 | `calcDivergenceFromAlign.pl`, `createRepeatLandscape.pl` | none; run per genome as separate jobs |
 | `summarize_rm.py`, plotting | none |
-| species-level independence | all per-species rules run concurrently across species |
+| sample-level independence | all per-sample rules run concurrently across samples |
 
 ## Resource tags
 
@@ -1030,25 +1040,24 @@ is a result in its own right. TEtrimmer/DeepTE are not implemented in v1.
 
 `workflow/scripts/` includes one script beyond the spec's original list:
 `combine_summaries.py`, which concatenates each `summarize_rm.py` per-arm/
-per-species chunk into the final `{outdir}/summary/*.tsv` tables and
+per-sample chunk into the final `{outdir}/summary/*.tsv` tables and
 computes `arm_concordance.tsv`. This keeps `summarize_rm.py` itself focused
-on one (arm, species) at a time (matching the spec's description of what
+on one (arm, sample) at a time (matching the spec's description of what
 it does) rather than overloading it with cross-run aggregation.
 
 ## Known corrections applied vs. the spec's exact rule text (see plan for full rationale)
 
 - `cd-hit-est` is run with `-r 1` (both strands) — the spec's command
   omitted it, which would silently under-merge reverse-complement
-  duplicates between two independently-run species (RepeatModeler2 gives
-  no guarantee two species' assemblies will report the same family on the
+  duplicates between two independently-run samples (RepeatModeler2 gives
+  no guarantee two samples' assemblies will report the same family on the
   same strand).
 - `build_db` runs inside the same Singularity image as `repeatmodeler`,
   not the conda RepeatMasker env, to avoid a version mismatch between the
   database writer and reader.
 - `library_membership.tsv` additionally reports per-cluster
   `label_agreement`/`distinct_labels`, since cd-hit-est keeps one arbitrary
-  representative per cluster and silently discards the rest — if two
-  species' independent RepeatClassifier calls disagreed on a merged
+  representative per cluster and silently discards the rest — if two samples' independent RepeatClassifier calls disagreed on a merged
   family's `Class/Family`, that's now visible instead of silently biasing
   `class_composition.tsv` toward whichever label cd-hit happened to keep.
 
@@ -1056,8 +1065,8 @@ it does) rather than overloading it with cross-run aggregation.
 
 `{outdir}/summary/provenance.txt` records RepeatMasker/RepeatModeler
 versions, the FamDB release info, cd-hit version, which Dfam
-partition(s) each species' RepeatModeler container could see, the pinned
-container tag, each species' genome fingerprint, the LTR tool versions
+partition(s) each sample's RepeatModeler container could see, the pinned
+container tag, each sample's genome fingerprint, the LTR tool versions
 (genometools, LTR_retriever, ltr_finder; vendored script commits are in
 `workflow/vendor/README.md`), LTR candidate counts and window-timeout
 skipped bp, any `curated_override` in effect, and a full `config.yaml`

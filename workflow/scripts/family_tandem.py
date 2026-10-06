@@ -197,7 +197,7 @@ def main():
     ap.add_argument("--library", required=True, help="library FASTA the .out was masked with")
     ap.add_argument("--assembly-stats", required=True)
     ap.add_argument("--arm", required=True)
-    ap.add_argument("--species", required=True)
+    ap.add_argument("--sample", required=True)
     ap.add_argument("--min-len", type=int, default=75)
     ap.add_argument("--max-len", type=int, default=2000)
     ap.add_argument("--min-copies", type=float, default=100)
@@ -237,7 +237,7 @@ def main():
 
     class_rows = {}
     with open(args.out, "w") as out:
-        out.write("arm\tspecies\tfamily\tclass_family\tclass\tcons_len\tn_hits\tgenome_bp\towned_bp\t"
+        out.write("arm\tsample\tfamily\tclass_family\tclass\tcons_len\tn_hits\tgenome_bp\towned_bp\t"
                   "owned_pct_non_n\test_copies\tmedian_div\tn_arrays\tn_isolated_hits\tlargest_array_bp\t"
                   "largest_array_copies\ttandem_bp\ttandem_frac\tshort_period_frac\tmonomer_period\t"
                   "monomer_period_support\tpass_length\tpass_copies\tpass_tandem\tpass_not_simple\t"
@@ -283,7 +283,7 @@ def main():
             own = owned.get(family, 0)
             own_pct = 100.0 * own / non_n_bp if non_n_bp else 0.0
             spf_s = f"{spf:.3f}" if spf is not None else "NA"
-            out.write(f"{args.arm}\t{args.species}\t{family}\t{class_family}\t{cls}\t{cons_len}\t{len(fh_)}\t"
+            out.write(f"{args.arm}\t{args.sample}\t{family}\t{class_family}\t{cls}\t{cons_len}\t{len(fh_)}\t"
                       f"{genome_bp}\t{own}\t{own_pct:.4f}\t{est_copies:.1f}\t{med_div:.1f}\t{n_arrays}\t"
                       f"{n_isolated}\t{largest_bp}\t{largest_copies:.1f}\t{tandem_bp}\t{tandem_frac:.3f}\t"
                       f"{spf_s}\t{period if period else 'NA'}\t{period_support:.2f}\t{p_len}\t{p_copies}\t"
@@ -301,20 +301,20 @@ def main():
                 row[6] += own
 
     with open(args.class_out, "w") as out:
-        out.write("arm\tspecies\tclass\tn_families\towned_bp\towned_pct_non_n\ttandem_bp_sum\t"
+        out.write("arm\tsample\tclass\tn_families\towned_bp\towned_pct_non_n\ttandem_bp_sum\t"
                   "n_satellite_like\tsatellite_like_owned_bp\tsatellite_like_pct_of_class\t"
                   "satellite_like_pct_non_n\tn_tandem_family\ttandem_family_owned_bp\t"
                   "tandem_family_pct_of_class\ttandem_family_pct_non_n\n")
         pct = lambda a, b: 100.0 * a / b if b else 0.0
         for cls, (n_fam, own, tandem_sum, n_sat, sat_own, n_tf, tf_own) in sorted(class_rows.items()):
-            out.write(f"{args.arm}\t{args.species}\t{cls}\t{n_fam}\t{own}\t{pct(own, non_n_bp):.4f}\t"
+            out.write(f"{args.arm}\t{args.sample}\t{cls}\t{n_fam}\t{own}\t{pct(own, non_n_bp):.4f}\t"
                       f"{tandem_sum}\t{n_sat}\t{sat_own}\t{pct(sat_own, own):.2f}\t{pct(sat_own, non_n_bp):.4f}\t"
                       f"{n_tf}\t{tf_own}\t{pct(tf_own, own):.2f}\t{pct(tf_own, non_n_bp):.4f}\n")
 
     for label, i_n, i_bp in (("satellite-like", 3, 4), ("tandem", 5, 6)):
         n = sum(r[i_n] for r in class_rows.values())
         bp = sum(r[i_bp] for r in class_rows.values())
-        print(f"[family_tandem] {args.arm}/{args.species}: {n} {label} families hold "
+        print(f"[family_tandem] {args.arm}/{args.sample}: {n} {label} families hold "
               f"{bp:,} bp ({100.0 * bp / non_n_bp if non_n_bp else 0.0:.2f}% of non-N)",
               file=sys.stderr)
 

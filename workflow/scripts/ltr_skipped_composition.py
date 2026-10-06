@@ -9,7 +9,7 @@ against one RepeatMasker run (meant for the shared arm) and that run's
 family_tandem.tsv.
 
 Every base is given to its single highest-scoring .out hit, the rule
-class_composition.tsv uses, so a base counts once. Rows per (species, tool):
+class_composition.tsv uses, so a base counts once. Rows per (sample, tool):
 
   level=total   name=skipped   bp = skipped bp, pct_of_skipped = 100
   level=total   name=masked    masked bp inside the skipped regions
@@ -92,7 +92,7 @@ def main():
     ap.add_argument("--out-file", required=True, help="RepeatMasker .out (shared arm)")
     ap.add_argument("--tandem-table", required=True, help="family_tandem.tsv of the same run")
     ap.add_argument("--assembly-stats", required=True)
-    ap.add_argument("--species", required=True)
+    ap.add_argument("--sample", required=True)
     ap.add_argument("--top-families", type=int, default=10)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
@@ -107,7 +107,7 @@ def main():
     genome["class"]["unmasked"] = non_n_bp - g_masked
 
     with open(args.out, "w") as out:
-        out.write("species\ttool\tlevel\tname\tbp\tpct_of_skipped\tpct_genome\tenrichment\n")
+        out.write("sample\ttool\tlevel\tname\tbp\tpct_of_skipped\tpct_genome\tenrichment\n")
 
         def row(tool, level, name, bp, skipped_bp):
             pct = 100.0 * bp / skipped_bp if skipped_bp else 0.0
@@ -116,7 +116,7 @@ def main():
                 g_bp = None
             g_pct = 100.0 * g_bp / non_n_bp if g_bp is not None else None
             enr = pct / g_pct if g_pct else None
-            out.write(f"{args.species}\t{tool}\t{level}\t{name}\t{bp}\t{pct:.2f}\t"
+            out.write(f"{args.sample}\t{tool}\t{level}\t{name}\t{bp}\t{pct:.2f}\t"
                       f"{'NA' if g_pct is None else f'{g_pct:.4f}'}\t"
                       f"{'NA' if enr is None else f'{enr:.2f}'}\n")
 

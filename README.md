@@ -157,10 +157,17 @@ current genome matches. Without this, a changed input (pre-scaffold vs
 scaffolded assembly, or a changed `genome_prep.test_subsample_bp`) would be
 silently `-recoverDir`-ed on top of a run built from a different genome.
 
-RepeatModeler's `-recoverDir` exits 0 without doing anything when every
-round already finished ("appears to contain a successful run"). The rule
-accepts that case, since only the rounds are needed, and otherwise
-requires a real completion.
+The rule (`workflow/scripts/rm_extend.sh`) aims for 5 + `repeatmodeler.extra_rounds`
+rounds:
+- **No `RM_*` yet:** a fresh run, with `-numAddlRounds extra_rounds` when it's > 0.
+- **An interrupted `RM_*`** (no `consensi.fa.classified`): it's recovered in
+  place up to the target.
+- **A finished `RM_*` with enough rounds:** it's reused.
+- **A finished `RM_*` with fewer rounds:** it's copied to `RM_*.ext`, and the
+  copy is extended with `-recoverDir`. The original is never modified, and
+  rounds 1–5 of the copy must stay byte-identical to it (checked before and
+  after). Raising `extra_rounds` again later extends the same `.ext`. Delete
+  `RM_*.ext` to start the extension over.
 
 **Rule of thumb:** RepeatModeler and the LTR side pipeline must both run
 on the identical genome FASTA for a sample, every
@@ -185,8 +192,27 @@ by the round that discovered each family (`rnd-1` … `rnd-N`, `ltr`,
 `other`, where `other` means Dfam and RepeatMasker's own simple/low-complexity
 calls). If families from the final round still mask a
 meaningful share (for example >1% of the genome), sampling hasn't
-saturated. In that case set `repeatmodeler.extra_args: "-numAddlRounds 1"`
-(or 2), the same value for every sample, and rerun.
+saturated. In that case set `repeatmodeler.extra_rounds: 1` (the same
+value for every sample) and rerun. The finished rounds are kept, and only
+the new round runs (see the restart section above). Raise it one round at
+a time, checking the table in between. `-numAddlRounds` in `extra_args` is
+refused.
+- **Each extra round samples another 270 Mb** (the cap), not 3× more.
+  - A ~1.2 Gb haploid bird gains about 23% of its non-N bp per round.
+  - A 2.47 Gb dual-haplotype assembly (unphased Verkko) gains about 11%
+    per round, and both alleles of a locus compete for the sample. Expect
+    to need more rounds there before the last one stops adding families.
+- **How RepeatModeler 2.0.9 resumes** (from its source; `rm_extend.sh`
+  handles it):
+  - `-recoverDir` needs an existing, empty `round-(h+1)/` after the last
+    good round h. Without it, it prints "appears to contain a successful
+    run" and stops.
+  - It appends to the top-level `consensi.fa` / `families.stk`.
+  - When it resumes at the 270 Mb cap, `-numAddlRounds N` runs N + 1
+    rounds, so the rule passes `5 + extra_rounds − h − 1`.
+  - After a resume, sampling starts from a fresh shuffle. Blocks from
+    rounds 1–5 can be drawn again, but already-modelled repeats are masked
+    out of each sample first.
 - Judge it by `dispersed_pct_non_n`, not `pct_non_n`: `tandem_bp` is the
   part of a bucket held by `tandem_family` families (own-arm
   `family_tandem.tsv`). One Mb-scale satellite array discovered in the last

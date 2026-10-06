@@ -95,6 +95,14 @@ if "unknown" in tissue_values or len(tissue_values) > 1:
 if not isinstance(config["repeatmasker"]["sensitive"], bool):
     raise ValueError("config['repeatmasker']['sensitive'] must be true or false")
 
+# Extra RepeatModeler rounds: repeatmodeler.extra_rounds (rule repeatmodeler,
+# rm_extend.sh), not -numAddlRounds in extra_args (its meaning changes when a
+# run is resumed).
+RM_EXTRA_ROUNDS = int(config["repeatmodeler"].get("extra_rounds", 0) or 0)
+if "numAddlRounds" in str(config["repeatmodeler"].get("extra_args", "")):
+    raise ValueError("repeatmodeler.extra_args: use repeatmodeler.extra_rounds instead of -numAddlRounds "
+                     "(extra_rounds: 1 = one more 270 Mb round; an existing run is extended, not redone)")
+
 # -LTRStruct is gone on purpose: LTR discovery runs as the side pipeline
 # below (§4 of the restructure plan). Refuse a stale config rather than
 # silently ignoring it.
@@ -617,11 +625,13 @@ rule build_db:
 #    matches it (a -recoverDir on a different genome -- pre-scaffold vs
 #    scaffolded, or a changed test_subsample_bp -- would silently mix two
 #    genomes).
-#  - A finished directory (consensi.fa.classified present) is used as-is.
-#  - Otherwise -recoverDir. RepeatModeler's recovery exits 0 WITHOUT doing
-#    anything ("appears to contain a successful run") when every round
-#    already completed; since only the rounds are needed here, that case
-#    is accepted too.
+#  - repeatmodeler.extra_rounds sets the target, 5 + extra_rounds rounds.
+#    An interrupted run is recovered in place up to it. A finished run with
+#    fewer rounds is copied to RM_*.ext and the copy is extended (the
+#    original is never modified; rounds 1-5 must stay identical). See
+#    workflow/scripts/rm_extend.sh for RepeatModeler 2.0.9's recovery rules
+#    (a round-(h+1)/ dir must exist; resuming at the 270 Mb cap runs
+#    -numAddlRounds + 1 rounds).
 # -----------------------------------------------------------------------------
 rule repeatmodeler:
     input:
@@ -641,6 +651,8 @@ rule repeatmodeler:
     params:
         workdir=f"{OUTDIR}/{{sample}}/repeatmodeler",
         extra_args=config["repeatmodeler"]["extra_args"],
+        extra_rounds=RM_EXTRA_ROUNDS,
+        extend_sh=os.path.abspath(f"{SCRIPTS}/rm_extend.sh"),
         fp_abs=lambda wc, input: os.path.abspath(input.fingerprint),
         script_abs=os.path.abspath(f"{SCRIPTS}/fingerprint.py"),
         out_consensi=lambda wc, output: os.path.abspath(output.consensi),
@@ -653,48 +665,8 @@ rule repeatmodeler:
         exec > {log} 2>&1
         set -euo pipefail
         cd {params.workdir}
-
-        RM_DIR=$(ls -d RM_* 2>/dev/null | head -n1 || true)
-        if [ -z "$RM_DIR" ]; then
-            cp {params.fp_abs} rm_run.fingerprint.tsv
-            RepeatModeler -database {wildcards.sample} -threads {threads} {params.extra_args}
-            RM_DIR=$(ls -d RM_* | head -n1)
-        else
-            if [ ! -s rm_run.fingerprint.tsv ]; then
-                echo "[ERROR] $RM_DIR exists but rm_run.fingerprint.tsv doesn't -- it wasn't started by this rule."
-                echo "[ERROR] Move $RM_DIR out of $(pwd) (or delete it) and rerun."
-                exit 1
-            fi
-            python3 {params.script_abs} check --expected rm_run.fingerprint.tsv --observed {params.fp_abs} || {{
-                echo "[ERROR] $RM_DIR was started on a different genome than the current prepped FASTA."
-                echo "[ERROR] Refusing to -recoverDir it. Move $RM_DIR and rm_run.fingerprint.tsv away and rerun."
-                exit 1
-            }}
-            if [ -s "$RM_DIR/consensi.fa.classified" ]; then
-                echo "[INFO] $RM_DIR already finished; reusing its rounds output"
-            else
-                echo "[INFO] Recovering previous RepeatModeler run from $RM_DIR"
-                RepeatModeler -database {wildcards.sample} -threads {threads} \
-                    -recoverDir "$RM_DIR" {params.extra_args} | tee recover.stdout
-                if [ ! -s "$RM_DIR/consensi.fa.classified" ] && \
-                   ! grep -q "appears to contain a successful run" recover.stdout; then
-                    echo "[ERROR] RepeatModeler recovery did not complete; see above."
-                    exit 1
-                fi
-            fi
-        fi
-
-        test -s "$RM_DIR/consensi.fa" && test -s "$RM_DIR/families.stk"
-        cp "$RM_DIR/consensi.fa" {params.out_consensi}
-        cp "$RM_DIR/families.stk" {params.out_stk}
-        {{
-            echo "=== RepeatModeler version ==="
-            RepeatModeler -version 2>&1 || echo "RepeatModeler -version failed"
-            echo "=== run: rounds only (no -LTRStruct), extra_args='{params.extra_args}', dir $RM_DIR ==="
-            echo
-            echo "=== famdb.py info (as seen by RepeatClassifier inside this container) ==="
-            famdb.py info 2>&1 || echo "famdb.py info failed or not found in container"
-        }} > {params.out_prov}
+        bash {params.extend_sh} {wildcards.sample} {threads} {params.extra_rounds} "{params.extra_args}" \
+            {params.fp_abs} {params.script_abs} {params.out_consensi} {params.out_stk} {params.out_prov}
         """
 
 

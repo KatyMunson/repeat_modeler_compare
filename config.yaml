@@ -32,10 +32,12 @@ repeatmodeler:
   # the LTR side pipeline and RepeatClassifier all run in this one image.
   container: "docker://dfam/tetools:2.00"
   # RepeatModeler runs RECON/RepeatScout rounds only -- there is no
-  # ltrstruct key any more (LTR discovery is the ltr_* rules). Deeper
-  # sampling, if discovery_round_saturation.tsv says the last round still
-  # matters: "-numAddlRounds 1" (same value for every sample).
-  extra_args: ""
+  # ltrstruct key any more (LTR discovery is the ltr_* rules).
+  extra_args: ""               # don't put -numAddlRounds here; use extra_rounds
+  # Rounds beyond RepeatModeler's 5 (each samples another 270 Mb). A finished
+  # run is extended (copied to RM_*.ext; the original stays), not redone.
+  # Raise it one at a time, checking discovery_round_novelty.tsv in between.
+  extra_rounds: 0
 
 ltr_discovery:
   # SGE-level parallelism: whole scaffolds split into this many bp-balanced

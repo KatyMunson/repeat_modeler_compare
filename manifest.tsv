@@ -1,15 +1,19 @@
-# repeat_compare manifest — tab-separated, "#"-prefixed lines and blank lines ignored.
-# Columns: species_id  species_name  fasta  tissue  accession
-#   species_id  short code, [A-Za-z0-9]+, unique. Used as a wildcard and as the
-#               library-name prefix (e.g. Esto, Mlim).
-#   species_name  free text, for reports.
-#   fasta       absolute path to the assembly FASTA (may be gzipped).
-#   tissue      germline | soma | unknown.
-#   accession   optional; metadata only, never downloaded.
+# repeat_compare manifest v2: tab-separated, header-driven (column order is free).
+# One row per assembly ("sample"); "#" lines and blank lines are ignored.
+# Every cell needs a value, no spaces: write NA / . / unknown for "not known".
+#   sample_id      short code, [A-Za-z0-9]+, unique; wildcard and library-name prefix (e.g. ind6)
+#   taxon          species name, [A-Za-z0-9_.-]+ (e.g. Sturnella_neglecta); samples of one
+#                  species share it (cross-taxon cluster counts, satellite cross-check inference)
+#   taxid          NCBI taxonomy id, or NA
+#   fasta          absolute path to the assembly FASTA (may be gzipped)
+#   tissue         germline | soma | unknown
+#   sex            ZW | ZZ | XX | XY | unknown  (W/Y-linked repeats differ by sex)
+#   assembly_type  haploid | primary | hap1 | hap2 | dual_hap | unknown
+#                  dual_hap = both haplotypes in one assembly (e.g. unphased Verkko):
+#                  absolute copy-number thresholds are doubled for it
+#   accession      metadata only (never downloaded), or NA
 #
-# This file is an EXAMPLE with placeholders — replace with real absolute
-# paths and confirmed tissue values before running for real.
-#
-#species_id	species_name	fasta	tissue	accession
-Esto	Eptatretus stoutii	/path/to/eptatretus_stoutii.fasta.gz	unknown	unknown
-Mlim	Myxine limosa	/path/to/myxine_limosa.fasta.gz	unknown	unknown
+# This file is an EXAMPLE with placeholder paths.
+sample_id	taxon	taxid	fasta	tissue	sex	assembly_type	accession
+Esto	Eptatretus_stoutii	7765	/path/to/eptatretus_stoutii.fasta.gz	unknown	unknown	primary	NA
+Mlim	Myxine_limosa	NA	/path/to/myxine_limosa.fasta.gz	unknown	unknown	primary	NA

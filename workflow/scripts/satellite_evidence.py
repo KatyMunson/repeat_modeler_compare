@@ -196,6 +196,7 @@ def cmd_report(args):
         for r in read_tsv(path):
             max_period[r["sample"]] = int(r["tidehunter_max_period"])
     infer = dict(x.split("=", 1) for x in (t.infer or []))  # target=donor
+    scale = {k: int(v) for k, v in (x.split("=", 1) for x in (t.copy_scale or []))}
     focus = list(t.focus or [])
     expected_independent = {frozenset(x.split(",")) for x in (t.expected_independent or [])}
 
@@ -275,7 +276,7 @@ def cmd_report(args):
                 too_long = (not ok and r["tandem_family"] == "True"
                             and (num(ftr.get("tandem_frac")) or 0) >= t.min_tandem_frac_long
                             and unit > max_period.get(s, 3000))
-                if owned >= t.major_min_bp:
+                if owned >= t.major_min_bp * scale.get(s, 1):
                     elig.append(s)
                     if ok:
                         passed.append(s)
@@ -291,7 +292,7 @@ def cmd_report(args):
                 if not r:
                     continue
                 if donor in passed:
-                    has = r["tandem_family"] == "True" and (num(r["owned_bp"], int) or 0) >= t.major_min_bp
+                    has = r["tandem_family"] == "True" and (num(r["owned_bp"], int) or 0) >= t.major_min_bp * scale.get(target, 1)
                     inferred.append(f"{target}:{'confirms' if has else 'no_arrays'}")
             b_trc = best(cov_lib, fam, "trc")
             b_rd = best(cov_rdna, fam, "rdna")
@@ -591,6 +592,7 @@ def main():
     r.add_argument("--min-tandem-frac-long", type=float, default=0.9)
     r.add_argument("--partial-trc-cov", type=float, default=0.3)
     r.add_argument("--min-shared-trc-bp", type=int, default=50000)
+    r.add_argument("--copy-scale", nargs="*", default=[], help="sample=N: multiply --major-min-bp (2 for dual_hap)")
     r.add_argument("--tc-params", nargs="*", default=[], help="tidecluster_regions.py --params tables")
     r.add_argument("--min-shared-trc-frac", type=float, default=0.5)
     r.add_argument("--max-independent-shared-frac", type=float, default=0.1)

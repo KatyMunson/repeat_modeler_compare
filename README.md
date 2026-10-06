@@ -39,6 +39,27 @@ before this rename say `species`; to read them with newer tooling run
 `plot_sample_order` and `sample_prefix_sep`; the old names stop the
 workflow with a message.
 
+## Manifest
+
+`manifest.tsv` is header-driven (manifest v2): the first non-`#` line names
+the columns, in any order. Every cell needs a value with no spaces; write
+`NA`, `.` or `unknown` for "not known".
+
+| column | values | used for |
+|---|---|---|
+| `sample_id` | `[A-Za-z0-9]+`, unique | wildcard, library-name prefix |
+| `taxon` | species name, e.g. `Sturnella_neglecta` | cross-taxon cluster counts in `discovery_summary`; satellite cross-check inference for samples without TideCluster |
+| `taxid` | NCBI taxid or `NA` | provenance |
+| `fasta` | path (may be gzipped) | input |
+| `tissue` | `germline` / `soma` / `unknown` | carried into every summary; warning if mixed |
+| `sex` | `ZW` / `ZZ` / `XX` / `XY` / `unknown` | `assembly_covariates.tsv`; warning if mixed or unknown (W/Y-linked repeats) |
+| `assembly_type` | `haploid` / `primary` / `hap1` / `hap2` / `dual_hap` / `unknown` | `dual_hap` (both haplotypes in one assembly, e.g. unphased Verkko) doubles that sample's absolute copy thresholds: `family_tandem.min_copies` / `major_min_copies` / `major_min_bp`, `classify.host_max_copies` and the cross-check's eligibility bp. Percentages are unaffected |
+| `accession` | token or `NA` | metadata only |
+
+`haploid`, `primary`, `hap1` and `hap2` all mean one copy per locus and behave
+the same; the distinction is provenance. A legacy 5-column manifest stops the
+workflow with your rows converted to the new layout, ready to paste.
+
 ## Pipeline flow
 
 Per sample unless noted:

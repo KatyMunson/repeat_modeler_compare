@@ -55,55 +55,31 @@ configfile: "config.yaml"
 # -----------------------------------------------------------------------------
 # Manifest parsing (stdlib only, no pandas) — §5.1
 # -----------------------------------------------------------------------------
-def parse_manifest(path):
-    manifest = []
-    seen_ids = set()
-    with open(path) as fh:
-        for lineno, raw_line in enumerate(fh, 1):
-            line = raw_line.rstrip("\n")
-            if not line.strip() or line.lstrip().startswith("#"):
-                continue
-            fields = line.split("\t")
-            if len(fields) != 5:
-                extra = (" (a 6th satellite_lib column is no longer supported -- the satellite "
-                         "arm was removed; see README)") if len(fields) == 6 else ""
-                raise ValueError(
-                    f"{path}:{lineno}: expected 5 tab-separated fields "
-                    f"(sample_id, sample_name, fasta, tissue, accession), "
-                    f"got {len(fields)}{extra}: {line!r}"
-                )
-            sample_id, sample_name, fasta, tissue, accession = fields
-            if not re.fullmatch(r"[A-Za-z0-9]+", sample_id):
-                raise ValueError(
-                    f"{path}:{lineno}: sample_id '{sample_id}' must match [A-Za-z0-9]+"
-                )
-            if sample_id in seen_ids:
-                raise ValueError(f"{path}:{lineno}: duplicate sample_id '{sample_id}'")
-            seen_ids.add(sample_id)
-            if tissue not in ("germline", "soma", "unknown"):
-                raise ValueError(
-                    f"{path}:{lineno}: tissue must be one of germline|soma|unknown, got '{tissue}'"
-                )
-            if not os.path.exists(fasta):
-                raise ValueError(f"{path}:{lineno}: fasta path does not exist: {fasta}")
-            manifest.append(
-                {
-                    "sample_id": sample_id,
-                    "sample_name": sample_name,
-                    "fasta": fasta,
-                    "tissue": tissue,
-                    "accession": accession,
-                }
-            )
-    if len(manifest) < 2:
-        raise ValueError(f"{path}: at least 2 samples are required, found {len(manifest)}")
-    return manifest
+# Header-driven manifest v2: workflow/scripts/manifest.py (shared with
+# combine_summaries.py). One row per assembly (sample); see README "Manifest".
+sys.path.insert(0, os.path.join(workflow.basedir, "workflow", "scripts"))
+from manifest import parse_manifest  # noqa: E402
 
 
 MANIFEST = parse_manifest(config["manifest"])
 SAMPLE_IDS = [row["sample_id"] for row in MANIFEST]
 FASTA_BY_SAMPLE = {row["sample_id"]: row["fasta"] for row in MANIFEST}
 TISSUE_BY_SAMPLE = {row["sample_id"]: row["tissue"] for row in MANIFEST}
+TAXON_BY_SAMPLE = {row["sample_id"]: row["taxon"] for row in MANIFEST}
+# Haplotype copies per locus (2 for assembly_type dual_hap): absolute copy
+# thresholds are multiplied by it so a two-haplotype assembly isn't judged by
+# half the bar.
+COPIES_BY_SAMPLE = {row["sample_id"]: row["copies"] for row in MANIFEST}
+_dual = [s for s, c in COPIES_BY_SAMPLE.items() if c > 1]
+if _dual:
+    print(f"[repeat_compare] NOTE: {', '.join(_dual)} are dual_hap assemblies: absolute copy-number "
+          f"thresholds (family_tandem.min_copies / major_min_copies / major_min_bp, classify.host_max_copies) are "
+          f"doubled for them; percentages are unaffected.")
+_sexes = {row["sex"] for row in MANIFEST if row["sex"] != "unknown"}
+if len(_sexes) > 1 or any(row["sex"] == "unknown" for row in MANIFEST):
+    print(f"[repeat_compare] WARNING: manifest sex values are "
+          f"{sorted({row['sex'] for row in MANIFEST})}: W/Y-linked repeats (young ERVs, satellites) "
+          f"can't be compared between samples of different or unknown sex.")
 
 tissue_values = set(TISSUE_BY_SAMPLE.values())
 if "unknown" in tissue_values or len(tissue_values) > 1:
@@ -265,7 +241,12 @@ def parse_external_annotations(path):
 SATX_ANNOT = parse_external_annotations(SATX.get("external_annotations", "") or "")
 SATX_ON = bool(SATX_ANNOT)
 TC_SAMPLES = [s for s in SAMPLE_IDS if SATX_ANNOT.get(s, {}).get("tidecluster_dir")]
-SATX_INFER = {str(k): str(v) for k, v in (SATX.get("infer_from") or {}).items()}
+# Samples without TideCluster borrow evidence from a same-taxon sample that has
+# it (manifest `taxon`); satellite_crosscheck.infer_from overrides.
+SATX_INFER = {s: next(d for d in TC_SAMPLES if TAXON_BY_SAMPLE[d] == TAXON_BY_SAMPLE[s])
+              for s in SAMPLE_IDS
+              if SATX_ON and s not in TC_SAMPLES and any(TAXON_BY_SAMPLE[d] == TAXON_BY_SAMPLE[s] for d in TC_SAMPLES)}
+SATX_INFER.update({str(k): str(v) for k, v in (SATX.get("infer_from") or {}).items()})
 for _t, _d in SATX_INFER.items():
     if _t not in SAMPLE_IDS or _d not in TC_SAMPLES:
         raise ValueError(f"satellite_crosscheck.infer_from {_t}: {_d} -- target must be in the manifest "
@@ -1155,8 +1136,9 @@ rule discovery_summary:
     params:
         sep=config["library"]["sample_prefix_sep"],
         sample=" ".join(SAMPLE_IDS),
+        taxon=" ".join(f"{s}={TAXON_BY_SAMPLE[s]}" for s in SAMPLE_IDS),
     shell:
-        "python3 {SCRIPTS}/discovery_summary.py --sample {params.sample} "
+        "python3 {SCRIPTS}/discovery_summary.py --sample {params.sample} --taxon {params.taxon} "
         "--rounds-fa {input.rounds_fa} --ltr-fa {input.ltr_fa} --merged-fa {input.merged_fa} "
         "--classified-fa {input.classified_fa} --clstr {input.clstr} --membership {input.membership} "
         "--sep {params.sep} --out {output.summary} --by-class-out {output.by_class} > {log} 2>&1"
@@ -1801,13 +1783,14 @@ rule reclassify_unknown:
         max_evalue=CLASSIFY.get("diamond_max_evalue", 1e-10),
         min_rfam_cov=CLASSIFY.get("min_rfam_cov", 0.5),
         host_max_copies=CLASSIFY.get("host_max_copies", 50),
+        copy_scale=" ".join(f"{s}={c}" for s, c in COPIES_BY_SAMPLE.items() if c > 1),
     shell:
         "python3 {SCRIPTS}/reclassify_unknown.py merge --consensi {input.fa} --classes {input.classes} "
         "--tesorter-rexdb {input.rexdb} --tesorter-gydb {input.gydb} "
         "{params.diamond_arg} {params.rfam_arg} --min-domains {params.min_domains} "
         "--min-host-cov {params.min_host_cov} --max-evalue {params.max_evalue} "
         "--min-rfam-cov {params.min_rfam_cov} --family-tandem {input.family_tandem} "
-        "--host-max-copies {params.host_max_copies} --out {output.tsv} > {log} 2>&1"
+        "--host-max-copies {params.host_max_copies} --copy-scale {params.copy_scale} --out {output.tsv} > {log} 2>&1"
 
 
 DFAM_MATCHES = f"{OUTDIR}/library/dfam_overlap/dfam_matches.tsv"
@@ -1954,12 +1937,13 @@ rule verify_classes:
         max_evalue=CLASSIFY.get("diamond_max_evalue", 1e-10),
         min_rfam_cov=CLASSIFY.get("min_rfam_cov", 0.5),
         host_max_copies=CLASSIFY.get("host_max_copies", 50),
+        copy_scale=" ".join(f"{s}={c}" for s, c in COPIES_BY_SAMPLE.items() if c > 1),
     shell:
         "python3 {SCRIPTS}/reclassify_unknown.py verify --consensi {input.fa} --classes {input.classes} "
         "--tesorter-rexdb {input.rexdb} --tesorter-gydb {input.gydb} {params.diamond_arg} {params.rfam_arg} "
         "--family-tandem {input.family_tandem} --min-domains {params.min_domains} "
         "--min-host-cov {params.min_host_cov} --max-evalue {params.max_evalue} "
-        "--min-rfam-cov {params.min_rfam_cov} --host-max-copies {params.host_max_copies} "
+        "--min-rfam-cov {params.min_rfam_cov} --host-max-copies {params.host_max_copies} --copy-scale {params.copy_scale} "
         "--out {output.verification} "
         "--disagreements-out {output.disagreements} > {log} 2>&1"
 
@@ -1988,16 +1972,21 @@ rule family_tandem:
         f"{OUTDIR}/logs/{{arm}}/{{sample}}/family_tandem.log",
     params:
         t=config["family_tandem"],
+        # dual_hap assemblies hold two copies of every locus: double the
+        # absolute copy thresholds (percent-based thresholds are unaffected)
+        min_copies=lambda wc: config["family_tandem"]["min_copies"] * COPIES_BY_SAMPLE[wc.sample],
+        major_min_copies=lambda wc: config["family_tandem"]["major_min_copies"] * COPIES_BY_SAMPLE[wc.sample],
+        major_min_bp=lambda wc: config["family_tandem"]["major_min_bp"] * COPIES_BY_SAMPLE[wc.sample],
     shell:
         "python3 workflow/scripts/family_tandem.py "
         "--out-file {input.out_file} --library {input.library} "
         "--assembly-stats {input.assembly_stats} "
         "--arm {wildcards.arm} --sample {wildcards.sample} "
         "--min-len {params.t[min_cons_len]} --max-len {params.t[max_cons_len]} "
-        "--min-copies {params.t[min_copies]} --min-array-copies {params.t[min_array_copies]} "
+        "--min-copies {params.min_copies} --min-array-copies {params.t[min_array_copies]} "
         "--min-tandem-frac {params.t[min_tandem_frac]} "
         "--max-short-period-frac {params.t[max_short_period_frac]} "
-        "--major-min-copies {params.t[major_min_copies]} --major-min-bp {params.t[major_min_bp]} "
+        "--major-min-copies {params.major_min_copies} --major-min-bp {params.major_min_bp} "
         "--out {output.family_chunk} --class-out {output.class_chunk} > {log} 2>&1"
 
 
@@ -2227,12 +2216,13 @@ rule satellite_evidence:
         indep=" ".join(",".join(p) for p in (SATX.get("expected_independent") or [])),
         x=SATX,
         major_min_bp=config["family_tandem"]["major_min_bp"],
+        copy_scale=" ".join(f"{s}={c}" for s, c in COPIES_BY_SAMPLE.items() if c > 1),
     shell:
         "python3 {SCRIPTS}/satellite_evidence.py report --family-tandem {input.family_tandem} "
         "--crosscheck {input.crosscheck} --trc-info {input.trc_info} --tc-params {input.tc_params} "
         "--sat-blast {input.sat} --ref-blast {input.ref} --infer {params.infer} "
         "--focus {params.focus} --expected-independent {params.indep} "
-        "--min-trc-cov {params.x[min_trc_cov]} --major-min-bp {params.major_min_bp} "
+        "--min-trc-cov {params.x[min_trc_cov]} --major-min-bp {params.major_min_bp} --copy-scale {params.copy_scale} "
         "--min-pair-id {params.x[min_pair_id]} --min-pair-cov {params.x[min_pair_cov]} "
         "--related-min-id {params.x[related_min_id]} --independent-max-cov {params.x[independent_max_cov]} "
         "--min-tandem-frac-long {params.x[min_tandem_frac_long]} --partial-trc-cov {params.x[partial_trc_cov]} "

@@ -155,9 +155,10 @@ satellite_crosscheck:
   # TSV, header: sample_id tidecluster_dir tidecluster_prefix ribotin_fa mitohifi_fa
   # (example: external_annotations.example.tsv). No blank cells: "." / NA = not provided.
   external_annotations: ""
-  # Samples without TideCluster whose evidence is inferred from another
-  # individual of the same sample, e.g. {ind8: ind6}. Inferred evidence can
-  # confirm a call made from the donor, never create one.
+  # Samples without TideCluster borrow evidence from a same-taxon sample with
+  # it (manifest `taxon`) automatically; list pairs here only to override,
+  # e.g. {ind8: ind6}. Inferred evidence can confirm a call made from the
+  # donor, never create one.
   infer_from: {}
   # Always evaluated in the pair table (full library names).
   focus_families: []

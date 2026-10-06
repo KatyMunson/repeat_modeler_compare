@@ -13,19 +13,12 @@ without the own arm, RepeatModeler rounds or LTR side pipeline.
 
 import argparse
 
+from manifest import parse_manifest
 
-def parse_manifest_tissue(manifest_path):
-    tissue_by_sample = {}
-    with open(manifest_path) as fh:
-        for line in fh:
-            line = line.rstrip("\n")
-            if not line or line.startswith("#"):
-                continue
-            fields = line.split("\t")
-            if len(fields) < 4:
-                continue
-            tissue_by_sample[fields[0]] = fields[3]
-    return tissue_by_sample
+
+def manifest_by_sample(manifest_path):
+    """{sample_id: manifest row} via the shared v2 parser (no FASTA check)."""
+    return {r["sample_id"]: r for r in parse_manifest(manifest_path, check_fasta=False)}
 
 
 def concat_chunks(chunk_paths, out_path):
@@ -43,18 +36,19 @@ def concat_chunks(chunk_paths, out_path):
                     fh_out.write(line)
 
 
-def combine_assembly_covariates(chunk_paths, tissue_by_sample, out_path):
+def combine_assembly_covariates(chunk_paths, manifest, out_path):
     with open(out_path, "w") as fh_out:
         fh_out.write(
-            "sample_id\ttissue\tcontig_count\ttotal_bp\tn_bp\tnon_n_bp\tcontig_n50\tlargest_contig\n"
+            "sample_id\ttaxon\ttissue\tsex\tassembly_type\tcontig_count\ttotal_bp\tn_bp\t"
+            "non_n_bp\tcontig_n50\tlargest_contig\n"
         )
         for path in chunk_paths:
             with open(path) as fh_in:
                 fh_in.readline()  # header
                 row = fh_in.readline().strip().split("\t")
-            sample_id = row[0]
-            tissue = tissue_by_sample.get(sample_id, "unknown")
-            fh_out.write("\t".join([sample_id, tissue] + row[1:]) + "\n")
+            m = manifest.get(row[0], {})
+            meta = [m.get(k, "unknown") for k in ("taxon", "tissue", "sex", "assembly_type")]
+            fh_out.write("\t".join([row[0]] + meta + row[1:]) + "\n")
 
 
 def build_arm_concordance(class_composition_path, out_path):
@@ -111,12 +105,13 @@ def main():
     ap.add_argument("--ltr-skipped-out")
     args = ap.parse_args()
 
-    tissue_by_sample = parse_manifest_tissue(args.manifest)
+    manifest = manifest_by_sample(args.manifest)
+    tissue_by_sample = {k: v["tissue"] for k, v in manifest.items()}
 
     concat_chunks(args.class_chunks, args.class_composition_out)
     concat_chunks(args.family_chunks, args.family_composition_out)
     concat_chunks(args.divergence_chunks, args.divergence_landscape_out)
-    combine_assembly_covariates(args.assembly_stats_chunks, tissue_by_sample, args.assembly_covariates_out)
+    combine_assembly_covariates(args.assembly_stats_chunks, manifest, args.assembly_covariates_out)
     if args.arm_concordance_out:
         build_arm_concordance(args.class_composition_out, args.arm_concordance_out)
     if args.round_saturation_out:

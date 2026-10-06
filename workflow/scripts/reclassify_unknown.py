@@ -306,12 +306,20 @@ def domain_evidence(fam, rex, gydb, min_domains):
     return (max(cands, key=lambda c: c.count("/")) if cands else None), ""
 
 
-def multicopy_families(paths, max_copies):
-    """Families with more than max_copies .out hits in any sample."""
+def copy_scale(specs):
+    """--copy-scale sample=N pairs -> {sample: N} (dual_hap assemblies: 2)."""
+    return {k: int(v) for k, v in (x.split("=", 1) for x in specs or [])}
+
+
+def multicopy_families(paths, max_copies, scale=None):
+    """Families with more than max_copies .out hits in any sample (the cap is
+    multiplied by the sample's copy scale: a dual_hap assembly holds every
+    locus twice)."""
     if not paths:
         return set()
-    return {fam for per_sp in read_family_tandem(paths).values()
-            for fam, (_bp, _t, n_hits) in per_sp.items() if n_hits > max_copies}
+    scale = scale or {}
+    return {fam for sp, per_sp in read_family_tandem(paths).items()
+            for fam, (_bp, _t, n_hits) in per_sp.items() if n_hits > max_copies * scale.get(sp, 1)}
 
 
 def cmd_merge(args):
@@ -332,7 +340,7 @@ def cmd_merge(args):
     # Only qualifying hits can relabel or conflict; every hit is reported.
     host = {q: h for q, h in host_all.items() if h[2] >= args.min_host_cov}
     rfam = {q: r for q, r in rfam_all.items() if r[2] >= args.min_rfam_cov}
-    multicopy = multicopy_families(args.family_tandem, args.host_max_copies)
+    multicopy = multicopy_families(args.family_tandem, args.host_max_copies, copy_scale(args.copy_scale))
 
     counts = {}
     with open(args.out, "w") as out:
@@ -439,7 +447,9 @@ def cmd_verify(args):
     rfam = {q: r for q, r in rfam_all.items() if r[2] >= args.min_rfam_cov}
     bp = read_family_tandem(args.family_tandem)
     sample = sorted(bp)
-    multicopy = {fam for per_sp in bp.values() for fam, v in per_sp.items() if v[2] > args.host_max_copies}
+    scale = copy_scale(args.copy_scale)
+    multicopy = {fam for sp, per_sp in bp.items() for fam, v in per_sp.items()
+                 if v[2] > args.host_max_copies * scale.get(sp, 1)}
 
     rows = []
     for fam, cls in sorted(rm_class.items()):
@@ -536,6 +546,8 @@ def main():
                    help="per-sample family_tandem.tsv (n_hits) for --host-max-copies")
     m.add_argument("--host-max-copies", type=int, default=50,
                    help="host_protein only for families with <= this many .out hits in every sample")
+    m.add_argument("--copy-scale", nargs="*", default=[],
+                   help="sample=N: multiply --host-max-copies for that sample (2 for dual_hap)")
     m.add_argument("--out", required=True)
     v = sub.add_parser("verify")
     v.add_argument("--consensi", required=True)
@@ -550,6 +562,7 @@ def main():
     v.add_argument("--max-evalue", type=float, default=1e-10)
     v.add_argument("--min-rfam-cov", type=float, default=0.5)
     v.add_argument("--host-max-copies", type=int, default=50)
+    v.add_argument("--copy-scale", nargs="*", default=[], help="sample=N (2 for dual_hap)")
     v.add_argument("--out", required=True, help="class_verification.tsv")
     v.add_argument("--disagreements-out", required=True, help="class_disagreements.tsv")
     args = ap.parse_args()

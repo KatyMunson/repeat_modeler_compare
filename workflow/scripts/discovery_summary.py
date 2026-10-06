@@ -11,6 +11,11 @@ Writes two tables:
   --by-class-out  the same family/cluster split per Class (the part of the
                   '#Class/Family' label before '/'), per sample + ALL
 
+With --taxon (sample=taxon pairs from the manifest), clusters are also
+counted as cross_taxon (members from more than one taxon). Two individuals
+of one species sharing a family is then "shared" but not "cross_taxon", so
+same-species samples don't inflate cross-species sharing.
+
 Every sample's family count is checked against its members in the .clstr;
 a mismatch means the inputs come from different runs and is an error.
 Stdlib only.
@@ -45,6 +50,7 @@ def main():
     ap.add_argument("--clstr", required=True, help="cluster_library's shared_denovo.nr.fa.clstr")
     ap.add_argument("--membership", required=True, help="library_membership.tsv (for the Dfam count)")
     ap.add_argument("--sep", default="_")
+    ap.add_argument("--taxon", nargs="*", default=[], help="sample=taxon (manifest); default: each sample its own")
     ap.add_argument("--out", required=True)
     ap.add_argument("--by-class-out", required=True)
     args = ap.parse_args()
@@ -54,6 +60,8 @@ def main():
         if len(getattr(args, opt)) != len(sample):
             raise ValueError(f"--{opt.replace('_', '-')} needs one file per sample ({len(sample)})")
     known = set(sample)
+    taxon = {sp: sp for sp in sample}
+    taxon.update(dict(x.split("=", 1) for x in args.taxon))
 
     rows = {}
     for i, sp in enumerate(sample):
@@ -76,15 +84,19 @@ def main():
             "families_in_sample_only_clusters": 0,
             "families_in_shared_clusters": 0,
             "shared_clusters_label_conflict": 0,
+            "cross_taxon_clusters": 0,
+            "families_in_cross_taxon_clusters": 0,
         }
 
     by_class = {}  # (sample, class) -> [families, in_only, in_shared]
     totals = {"clusters": 0, "sample_only_clusters": 0, "shared_clusters": 0,
-              "shared_clusters_label_conflict": 0}
+              "shared_clusters_label_conflict": 0, "cross_taxon_clusters": 0}
     for cluster in parse_clstr(args.clstr):
         members = [(sample_of(m["name"], args.sep, known), m["name"]) for m in cluster["members"]]
         present = {sp for sp, _ in members}
         shared = len(present) > 1
+        cross = len({taxon[sp] for sp in present}) > 1
+        totals["cross_taxon_clusters"] += cross
         conflict = shared and len({class_family_of(n) for _, n in members}) > 1
         totals["clusters"] += 1
         totals["shared_clusters" if shared else "sample_only_clusters"] += 1
@@ -94,8 +106,10 @@ def main():
             row["clusters"] += 1
             row["shared_clusters" if shared else "sample_only_clusters"] += 1
             row["shared_clusters_label_conflict"] += conflict
+            row["cross_taxon_clusters"] += cross
         for sp, name in members:
             rows[sp]["families_in_shared_clusters" if shared else "families_in_sample_only_clusters"] += 1
+            rows[sp]["families_in_cross_taxon_clusters"] += cross
             for key in ((sp, class_of(name)), ("ALL", class_of(name))):
                 counts = by_class.setdefault(key, [0, 0, 0])
                 counts[0] += 1
@@ -128,13 +142,16 @@ def main():
             "putative_subfamilies", "classified_families", "unknown_families", "clusters",
             "sample_only_clusters", "shared_clusters", "families_in_sample_only_clusters",
             "families_in_shared_clusters", "pct_families_in_shared_clusters",
-            "shared_clusters_label_conflict", "dfam_entries"]
+            "shared_clusters_label_conflict", "cross_taxon_clusters", "families_in_cross_taxon_clusters",
+            "pct_families_in_cross_taxon_clusters", "dfam_entries"]
     with open(args.out, "w") as fh:
         fh.write("sample\t" + "\t".join(cols) + "\n")
         for sp, row in list(rows.items()) + [("ALL", all_row)]:
             row = dict(row)
             row["pct_families_in_shared_clusters"] = pct(row["families_in_shared_clusters"],
                                                          row["classified_families"])
+            row["pct_families_in_cross_taxon_clusters"] = pct(row["families_in_cross_taxon_clusters"],
+                                                              row["classified_families"])
             row["dfam_entries"] = n_dfam if sp == "ALL" else "NA"
             fh.write(sp + "\t" + "\t".join(str(row[c]) for c in cols) + "\n")
 

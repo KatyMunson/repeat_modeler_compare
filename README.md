@@ -187,16 +187,34 @@ bp, whatever its scaffold's length.
   single block, so it's slightly *over*-represented per bp.
 - Splitting contigs at Ns first would only dilute them.
 
-`{outdir}/summary/discovery_round_saturation.tsv` shows own-arm masked bp
-by the round that discovered each family (`rnd-1` … `rnd-N`, `ltr`,
-`other`, where `other` means Dfam and RepeatMasker's own simple/low-complexity
-calls). If families from the final round still mask a
-meaningful share (for example >1% of the genome), sampling hasn't
-saturated. In that case set `repeatmodeler.extra_rounds: 1` (the same
-value for every sample) and rerun. The finished rounds are kept, and only
-the new round runs (see the restart section above). Raise it one round at
-a time, checking the table in between. `-numAddlRounds` in `extra_args` is
-refused.
+Two tables answer "should we sample more deeply?":
+- **`{outdir}/summary/discovery_round_novelty.tsv`** (the one to decide
+  on). Each round's families are clustered with every earlier family
+  (earlier rounds plus the LTR families) by RepeatModeler's own redundancy
+  rule, cd-hit-est 80% identity over 80% of the shorter sequence. A family
+  that clusters with an earlier one is a `refinement` (a sharper or longer
+  consensus of something already in the library). Every other family is
+  `new`. The bp each set owns comes from the own-arm `family_tandem.tsv`.
+  - **Stopping rule:** another round is worth it while the last round's
+    `new_dispersed_pct_non_n` is still ≥ ~0.5% of the genome.
+    `refinement_pct_non_n` doesn't count: those bases were already masked
+    by the earlier family. `new_tandem_pct_non_n` doesn't count either: one
+    newly found satellite array says nothing about missed TE families.
+- **`{outdir}/summary/discovery_round_saturation.tsv`** (kept for
+  continuity): own-arm masked bp by the round that discovered each family
+  (`rnd-1` … `rnd-N`, `ltr`, `other`, where `other` means Dfam and
+  RepeatMasker's own simple/low-complexity calls), split into `tandem_bp`
+  and `dispersed_pct_non_n`. It overstates late rounds, because a
+  refinement takes over bases its earlier family already masked.
+- **The gold standard, not built:** mask with and without the last round's
+  families and take the difference. That's one extra RepeatMasker run per
+  sample.
+
+If sampling hasn't saturated, set `repeatmodeler.extra_rounds: 1` (the
+same value for every sample) and rerun. The finished rounds are kept, and
+only the new round runs (see the restart section above). Raise it one
+round at a time, checking the novelty table in between. `-numAddlRounds`
+in `extra_args` is refused.
 - **Each extra round samples another 270 Mb** (the cap), not 3× more.
   - A ~1.2 Gb haploid bird gains about 23% of its non-N bp per round.
   - A 2.47 Gb dual-haplotype assembly (unphased Verkko) gains about 11%
@@ -213,11 +231,6 @@ refused.
   - After a resume, sampling starts from a fresh shuffle. Blocks from
     rounds 1–5 can be drawn again, but already-modelled repeats are masked
     out of each sample first.
-- Judge it by `dispersed_pct_non_n`, not `pct_non_n`: `tandem_bp` is the
-  part of a bucket held by `tandem_family` families (own-arm
-  `family_tandem.tsv`). One Mb-scale satellite array discovered in the last
-  round inflates `pct_non_n` without saying anything about missed TE
-  families.
 - Each extra round costs about as much as the most expensive round, and
   later rounds mostly add low-copy `Unknown` families.
 - Prefer extra rounds over a larger `-genomeSampleSizeMax`: RECON's
@@ -850,8 +863,8 @@ then `combine_summaries_shared_only` and `plot_shared_only`:
 
 These go to separate directories so a later full run's `summary/` and
 `plots/` are never mixed with them. Not produced: `arm_concordance` (needs
-the own arm), `discovery_round_saturation` (own arm + RepeatModeler
-rounds), `ltr_discovery`, `discovery_summary`, `dfam_overlap` and
+the own arm), `discovery_round_saturation` / `discovery_round_novelty` (own arm +
+RepeatModeler rounds), `ltr_discovery`, `discovery_summary`, `dfam_overlap` and
 `provenance.txt` (discovery chain).
 
 **`--configfile`-before-targets caveat:** passing a target name immediately

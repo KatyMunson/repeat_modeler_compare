@@ -338,6 +338,7 @@ rule all:
         f"{OUTDIR}/summary/arm_concordance.tsv",
         f"{OUTDIR}/summary/assembly_covariates.tsv",
         f"{OUTDIR}/summary/discovery_round_saturation.tsv",
+        f"{OUTDIR}/summary/discovery_round_novelty.tsv",
         f"{OUTDIR}/summary/ltr_discovery.tsv",
         f"{OUTDIR}/summary/ltr_skipped_composition.tsv",
         [f"{OUTDIR}/summary/satellite_family_calls.tsv"] if SATX_ON else [],
@@ -2014,6 +2015,56 @@ rule round_saturation:
         "python3 {SCRIPTS}/round_saturation.py --out-file {input.out_file} "
         "--assembly-stats {input.assembly_stats} --sample {wildcards.sample} "
         "--tandem-table {input.tandem_table} --out {output} > {log} 2>&1"
+
+
+rule round_novelty:
+    # Per round: families that are new vs refinements of earlier families
+    # (RepeatModeler's 80/80 cd-hit rule), with the own-arm bp each set owns.
+    # The "another round?" number is new_dispersed_pct_non_n (README).
+    input:
+        rounds_fa=f"{OUTDIR}/{{sample}}/repeatmodeler/{{sample}}.rounds.consensi.fa",
+        ltr_fa=f"{OUTDIR}/{{sample}}/ltr/{{sample}}.ltrs.fa",
+        tandem_table=f"{OUTDIR}/own/{{sample}}/summary/family_tandem.tsv",
+        assembly_stats=f"{OUTDIR}/{{sample}}/genome/{{sample}}.assembly_stats.tsv",
+    output:
+        f"{OUTDIR}/own/{{sample}}/summary/round_novelty.tsv",
+    threads: config["resources"]["merge_families"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["merge_families"]["mem"] * attempt,
+        hrs=config["resources"]["merge_families"]["hrs"],
+        shell_exec="bash",
+    singularity:
+        TETOOLS
+    log:
+        f"{OUTDIR}/logs/own/{{sample}}/round_novelty.log",
+    params:
+        workdir=f"{OUTDIR}/own/{{sample}}/summary/round_novelty_work",
+        rm_cfg=f"{SCRIPTS}/rm_config_path.sh",
+    shell:
+        """
+        exec > {log} 2>&1
+        set -euo pipefail
+        CDHIT="$(bash {params.rm_cfg} CDHIT_DIR)/cd-hit-est"
+        python3 {SCRIPTS}/round_novelty.py --rounds-fa {input.rounds_fa} --ltr-fa {input.ltr_fa} \
+            --tandem-table {input.tandem_table} --assembly-stats {input.assembly_stats} \
+            --sample {wildcards.sample} --cdhit "$CDHIT" --threads {threads} \
+            --workdir {params.workdir} --out {output}
+        rm -rf {params.workdir}
+        """
+
+
+rule combine_round_novelty:
+    input:
+        expand(f"{OUTDIR}/own/{{sample}}/summary/round_novelty.tsv", sample=SAMPLE_IDS),
+    output:
+        f"{OUTDIR}/summary/discovery_round_novelty.tsv",
+    threads: 1
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["combine_summaries"]["mem"] * attempt,
+        hrs=config["resources"]["combine_summaries"]["hrs"],
+        shell_exec="bash",
+    shell:
+        "awk 'FNR == 1 && NR != 1 {{next}} {{print}}' {input} > {output}"
 
 
 rule ltr_skipped_composition:

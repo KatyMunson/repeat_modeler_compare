@@ -8,8 +8,9 @@ parsed from the family name in the .out "matching repeat" column:
   anything else              -> other (Dfam export)
 bp are merged per contig within each bucket. If the final round's
 families still mask a meaningful share of the genome (e.g. >1%), the
-RepeatModeler sampling has not saturated -- consider
-repeatmodeler.extra_args: "-numAddlRounds 1" (same for every sample).
+RepeatModeler sampling may not have saturated -- check
+discovery_round_novelty.tsv (round_novelty.py), which separates new families
+from refinements of earlier ones, then consider repeatmodeler.extra_rounds.
 
 With --tandem-table (this run's family_tandem.tsv), tandem_bp is the part
 of a bucket held by tandem_family families and dispersed_pct_non_n the

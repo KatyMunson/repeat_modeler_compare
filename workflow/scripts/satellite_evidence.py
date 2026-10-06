@@ -13,6 +13,9 @@ Subcommands
                           against it (rDNA / NUMT pieces under TE labels)
            Candidates: tandem_family in any sample, >= --min-trc-bp inside
            TRCs in any sample, or listed in --focus.
+  apply    satellite_proposals.tsv -> the rows summarize applies
+           (satellite_crosscheck.apply): only --confidence levels, minus
+           families the user's curated table already labels (theirs wins)
   report   merge everything into four tables (see README "Satellite, rDNA
            and mito cross-check"):
              satellite_family_evidence.tsv  family x sample
@@ -559,6 +562,30 @@ def cmd_report(args):
                       f"{'45S_unit' if c['prop'] == 'rRNA' else '.'}\tsatellite_crosscheck\t{note}\t{c['conf']}\n")
 
 
+def cmd_apply(args):
+    from family_groups import read_groups
+    user = {fam for _g, fam, _r in read_groups(args.user_table)} if args.user_table else set()
+    keep = set(args.confidence)
+    n_in = n_out = n_user = 0
+    with open(args.proposals) as fh, open(args.out, "w") as out:
+        header = fh.readline()
+        out.write(header)
+        cols = header.rstrip("\n").split("\t")
+        i_fam, i_conf = cols.index("family"), cols.index("confidence")
+        for line in fh:
+            f = line.rstrip("\n").split("\t")
+            n_in += 1
+            if f[i_conf] not in keep:
+                continue
+            if f[i_fam] in user:
+                n_user += 1
+                continue
+            out.write(line)
+            n_out += 1
+    print(f"[satellite_evidence] apply: {n_out} of {n_in} proposals applied (confidence {sorted(keep)}); "
+          f"{n_user} left to the user's curated table", file=sys.stderr)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -607,8 +634,14 @@ def main():
     r.add_argument("--proposals-out", required=True)
     r.add_argument("--trc-pairs-out", required=True)
 
+    a = sub.add_parser("apply")
+    a.add_argument("--proposals", required=True)
+    a.add_argument("--user-table", default="", help="classify.curated_families (wins on conflict)")
+    a.add_argument("--confidence", nargs="+", default=["high"])
+    a.add_argument("--out", required=True)
+
     args = ap.parse_args()
-    cmd_select(args) if args.cmd == "select" else cmd_report(args)
+    {"select": cmd_select, "report": cmd_report, "apply": cmd_apply}[args.cmd](args)
 
 
 if __name__ == "__main__":

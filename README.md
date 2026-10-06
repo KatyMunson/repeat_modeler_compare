@@ -713,6 +713,16 @@ How monomers and consensi are compared:
 - **Simple repeats:** RepeatMasker's built-in `Simple_repeat` /
   `Low_complexity` entries are never called.
 
+**Applying the labels (`satellite_crosscheck.apply: true`).**
+`satellite_apply` keeps the proposals at `apply_confidence` (default
+`[high]`) and drops any family your `classify.curated_families` already
+lists, giving `summary/satellite_applied.tsv`. `summarize` then reads both
+tables, yours first, and the first table that lists a family wins.
+`family_composition.tsv` shows the effect: `bp_curated` holds what your
+table relabelled, `bp_crosscheck` what the applied proposals relabelled.
+Nothing is remasked. Grouping (shared `group` names) never changes labels.
+With `apply: false` the proposals stay report-only, and you curate by hand.
+
 A pair listed in `expected_independent` is never grouped. If the test calls
 it `same_satellite`, it is flagged `CONTRADICTS expected_independent` for a
 manual look. Only `same_satellite` pairs share a `group` name in the

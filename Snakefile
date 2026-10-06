@@ -267,6 +267,13 @@ def _tc_file(sample, suffix):
     return os.path.join(r["tidecluster_dir"], f"{r['tidecluster_prefix']}_{suffix}")
 
 
+# satellite_crosscheck.apply: summarize also applies the cross-check's
+# proposals at apply_confidence (default high), after the user's
+# classify.curated_families table (which wins on conflict).
+SATX_APPLY = SATX_ON and _as_bool(SATX.get("apply", False))
+SATX_APPLIED = f"{OUTDIR}/summary/satellite_applied.tsv"
+CURATED_TABLES = ([CURATED_FAMILIES] if CURATED_FAMILIES else []) + ([SATX_APPLIED] if SATX_APPLY else [])
+
 SATX_REFS = [f"{lab}={SATX_ANNOT[s][col]}" for s in SAMPLE_IDS if s in SATX_ANNOT
              for lab, col in (("rdna", "ribotin_fa"), ("mito", "mitohifi_fa")) if SATX_ANNOT[s][col]]
 
@@ -1470,7 +1477,7 @@ rule summarize:
             else []
         ),
         reclass_table=[f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
-        curated_table=[CURATED_FAMILIES] if CURATED_FAMILIES else [],
+        curated_table=CURATED_TABLES,
     output:
         class_chunk=f"{OUTDIR}/{{arm}}/{{sample}}/summary/class_composition.tsv",
         family_chunk=f"{OUTDIR}/{{arm}}/{{sample}}/summary/family_composition.tsv",
@@ -1487,7 +1494,11 @@ rule summarize:
         landscape_max_div=config["summary"]["landscape_max_div"],
         tandem_arg=lambda wc, input: f"--tandem-table {input.tandem_table}" if input.tandem_table else "",
         reclass_arg=lambda wc, input: f"--reclass-table {input.reclass_table}" if input.reclass_table else "",
-        curated_arg=lambda wc, input: f"--curated-table {input.curated_table}" if input.curated_table else "",
+        # user table first: the first table listing a family wins
+        curated_arg=lambda wc, input: (
+            f"--curated-table {input.curated_table}"
+            + (f" --crosscheck-table {SATX_APPLIED}" if SATX_APPLY else "")
+        ) if input.curated_table else "",
     shell:
         "python3 workflow/scripts/summarize_rm.py "
         "--out-file {input.out_file} --tbl-file {input.tbl_file} "
@@ -1878,7 +1889,7 @@ rule curation_candidates:
         family_tandem=f"{OUTDIR}/{{sumdir}}/family_tandem.tsv",
         reclass=[f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
         disagreements=[f"{OUTDIR}/{{sumdir}}/class_disagreements.tsv"] if CLASSIFY_ON else [],
-        groups=GROUP_TABLES,
+        groups=GROUP_TABLES + ([SATX_APPLIED] if SATX_APPLY else []),
     output:
         tsv=f"{OUTDIR}/{{sumdir}}/curation_candidates.tsv",
     wildcard_constraints:
@@ -2235,6 +2246,29 @@ rule satellite_evidence:
         "--evidence-out {output.evidence} --calls-out {output.calls} "
         "--pairs-out {output.pairs} --proposals-out {output.proposals} "
         "--trc-pairs-out {output.trc_pairs} > {log} 2>&1"
+
+
+rule satellite_apply:
+    # The cross-check proposals summarize applies (satellite_crosscheck.apply):
+    # rows at apply_confidence, minus families the user's curated table lists.
+    input:
+        proposals=f"{OUTDIR}/summary/satellite_proposals.tsv",
+        user=[CURATED_FAMILIES] if CURATED_FAMILIES else [],
+    output:
+        SATX_APPLIED,
+    threads: config["resources"]["satellite_evidence"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["satellite_evidence"]["mem"] * attempt,
+        hrs=config["resources"]["satellite_evidence"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/satellite_crosscheck/satellite_apply.log",
+    params:
+        user=lambda wc, input: f"--user-table {input.user}" if input.user else "",
+        conf=" ".join(SATX.get("apply_confidence") or ["high"]),
+    shell:
+        "python3 {SCRIPTS}/satellite_evidence.py apply --proposals {input.proposals} {params.user} "
+        "--confidence {params.conf} --out {output} > {log} 2>&1"
 
 
 # Input-only target (no run/shell), like library_only: a target with a body

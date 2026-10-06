@@ -155,6 +155,11 @@ satellite_crosscheck:
   # TSV, header: sample_id tidecluster_dir tidecluster_prefix ribotin_fa mitohifi_fa
   # (example: external_annotations.example.tsv). No blank cells: "." / NA = not provided.
   external_annotations: ""
+  # true: summarize also applies the proposals (summary/satellite_proposals.tsv)
+  # at apply_confidence, after classify.curated_families (yours wins on
+  # conflict). false: report only (review the proposals, curate by hand).
+  apply: false
+  apply_confidence: [high]     # add medium to apply those too
   # Samples without TideCluster borrow evidence from a same-taxon sample with
   # it (manifest `taxon`) automatically; list pairs here only to override,
   # e.g. {ind8: ind6}. Inferred evidence can confirm a call made from the

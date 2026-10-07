@@ -160,7 +160,7 @@ satellite_crosscheck:
   # true: summarize also applies the proposals (summary/satellite_proposals.tsv)
   # at apply_confidence, after classify.curated_families (yours wins on
   # conflict). false: report only (review the proposals, curate by hand).
-  apply: false
+  apply: true
   apply_confidence: [high]     # add medium to apply those too
   # Samples without TideCluster borrow evidence from a same-taxon sample with
   # it (manifest `taxon`) automatically; list pairs here only to override,

@@ -41,19 +41,10 @@ Gypsy-N1_Esto	Esto_rnd-1_family-670	LTR/Gypsy	mixed	88.1	0.62	1048	8087	blastn v
 Gypsy-N1_Esto	Esto_rnd-1_family-683	LTR/Gypsy	mixed	84.3	0.68	1685	2105	blastn vs Gypsy-N1_Esto consensus	also matches Gypsy-1_Esto:83.2
 Gypsy-N1_Esto	Esto_rnd-1_family-70	LTR/Gypsy	mixed	90.5	1.00	4	7005	blastn vs Gypsy-N1_Esto consensus	also matches Gypsy-1_Esto:90.4
 Gypsy-N1_Esto	Esto_rnd-3_family-47	LTR/Gypsy	mixed	83.0	0.56	6103	6482	blastn vs Gypsy-N1_Esto consensus	also matches Gypsy-1_Esto:81.6
-MLI_SAT32_a	Mlim_rnd-1_family-3	Satellite	.	94.2	0.81	1	2360	harmonized motif match (windowed)	TRC_1; 542 Mb in Mlim
-MLI_SAT32_a	Mlim_rnd-5_family-7820	Satellite	.	93.3	0.72	1	4080	harmonized motif match (windowed)	second TRC_1 consensus (same_satellite with family-3)
-MLI_SAT32_d	Mlim_rnd-5_family-3270	Satellite	.	95.8	0.76	1	6120	harmonized motif match (windowed)	SAT32 variant d
-MLI_SAT1016_a	Mlim_rnd-1_family-587	Satellite	.	99.2	0.97	41	2600	harmonized motif match (windowed)	1,075 bp unit, young (2.4% div)
 MLI_SAT320_a	Mlim_rnd-4_family-31	Satellite	.	87.5	0.71	241	1280	harmonized motif match (windowed)	.
-MYX2_SAT49_a	Mlim_rnd-4_family-274	Satellite	.	87.9	0.90	1	160	harmonized motif match (windowed)	.
-MLI_SAT1980_a	Mlim_rnd-5_family-7244	Satellite	.	99.2	0.99	1	1960	harmonized motif match (windowed)	1,980 bp unit, 0.9% div
-EST_SAT179_b	Esto_rnd-1_family-686	Satellite	.	95.8	0.94	1	280	harmonized motif match (windowed)	7.6 Mb in Esto
-EST_SAT41_c	Esto_rnd-5_family-6663	Satellite	.	91.2	0.90	1	4480	harmonized motif match (windowed)	.
 MLI_SAT2947_a	Mlim_ltr-1_family-549	Satellite	.	99.2	1.00	1	5880	harmonized motif match (windowed)	was LTR/Unknown (LTR-pipeline family); 2,944 bp unit
 MLI_SAT1120_a	Mlim_rnd-4_family-4989	Satellite	.	98.3	0.99	1	2520	harmonized motif match (windowed)	was SINE/tRNA
 MLI_SAT27_cs	Mlim_ltr-1_family-690	Satellite	.	100.0	0.91	1	280	harmonized motif match (windowed)	was LTR/Unknown
-MYX2_SAT36_a	Mlim_rnd-3_family-37	Satellite	.	88.3	0.82	1	2160	harmonized motif match (windowed)	17.4 Mb Mlim / 2.7 Mb Esto; tandem_frac only 0.35/0.51 - confirm with satellite pipeline
 MLI_SAT187_a	Mlim_rnd-3_family-866	Satellite	.	80.0	0.54	41	3240	harmonized motif match (windowed)	partial-good match (0.54 cov)
 MLI_SAT40_a	Mlim_rnd-5_family-198	Satellite	.	91.7	0.65	1	1080	harmonized motif match (windowed)	was SINE/B2 (implausible in hagfish); 44 bp unit
 EST_SAT23_a	Esto_rnd-5_family-2166	Satellite	.	80.0	0.80	1	2920	harmonized motif match (windowed)	.

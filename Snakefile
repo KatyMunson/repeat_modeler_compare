@@ -1835,9 +1835,10 @@ rule library_source:
 rule element_groups:
     # Sum the bp of library families that are pieces of one element
     # (summary.element_groups, from family_groups.py members). README
-    # "Element groups".
+    # "Element groups". With satellite_crosscheck.apply, the applied
+    # proposals' groups (harmonized motif names) are reported too.
     input:
-        groups=GROUP_TABLES,
+        groups=GROUP_TABLES + ([SATX_APPLIED] if SATX_APPLY else []),
         family_tandem=f"{OUTDIR}/{{sumdir}}/family_tandem.tsv",
         assembly_covariates=f"{OUTDIR}/{{sumdir}}/assembly_covariates.tsv",
     output:

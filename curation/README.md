@@ -36,3 +36,17 @@ fraction covered, `pident` = median window identity).
 - `TRC1-junction_Mlim` (Mlim_rnd-5_family-3676, was LTR/Gypsy): TRC_1 array
   edge + CR1 fragment + family-99 post-gag segment, no coding domains ->
   Unknown.
+
+Rows the satellite cross-check now reproduces (harmonized motif evidence,
+`satellite_crosscheck.harmonized_library`) were removed: it proposes them
+at high confidence with the same name and `satellite_crosscheck.apply`
+(`apply_confidence: [high]`) applies them from `summary/satellite_applied.tsv`.
+These are Mlim_rnd-1_family-3 and Mlim_rnd-5_family-7820 (MLI_SAT32_a),
+Mlim_rnd-5_family-3270 (MLI_SAT32_d), Mlim_rnd-1_family-587 (MLI_SAT1016_a),
+Mlim_rnd-4_family-274 (MYX2_SAT49_a), Mlim_rnd-5_family-7244
+(MLI_SAT1980_a), Esto_rnd-1_family-686 (EST_SAT179_b) and
+Esto_rnd-5_family-6663 (EST_SAT41_c). Mlim_rnd-3_family-37 was also removed:
+the cross-check names it MYX2_SAT25_a (25 bp motif = its 25 bp KITE founder),
+replacing the earlier windowed MYX2_SAT36_a. Rows kept here are medium or
+partial calls (not auto-applied), provisional SAT-n names, rDNA_45S and the
+junction; if `apply` is turned off, restore the removed rows from git history.

@@ -231,10 +231,16 @@ def cmd_report(args):
     # library family covered by tiled motifs: HSPs >= motif_min_id
     cov_motif = coverage([h for h in sat_hits if h[0].startswith("lib" + SEP) and h[1].startswith("motif" + SEP)],
                          t.motif_min_id)
+    # Best motif per family: coverage weighted by identity above the floor,
+    # so a near-identical long unit over half the consensus (MLI_SAT728_a,
+    # 0.45 at 99.7%) beats a short motif loosely tiled over more of it
+    # (MLI_SAT28_ap, 0.58 at 81%); plain cov * identity picked the latter.
+    def motif_score(c, i):
+        return c * (i - t.motif_min_id + 1)
     motif_best = {}
     for (q, sub), (c, i) in cov_motif.items():
         fam = bare(strip(q))
-        if fam not in motif_best or c * i > motif_best[fam][0] * motif_best[fam][1]:
+        if fam not in motif_best or motif_score(c, i) > motif_score(*motif_best[fam][:2]):
             motif_best[fam] = (c, i, strip(sub))
 
     def motif_tier(fam):
@@ -639,12 +645,15 @@ def cmd_report(args):
             c = calls[fam]
             if c["conf"] not in ("high", "medium"):
                 continue
-            # Named after the matching harmonized motif (this family's, else its
-            # same_satellite group's); otherwise same_satellite pairs share one
-            # group name (never merged, only grouped)
+            # Named after the matching harmonized motif (this family's, a partial
+            # match included, else its same_satellite group's high/medium one);
+            # otherwise same_satellite pairs share one group name (never
+            # merged, only grouped)
             root = find(fam)
             named = next((calls[x]["motif"][2] for x in (fam, root)
-                          if x in calls and calls[x]["motif"] and calls[x]["motif_tier"] in ("high", "medium")), None)
+                          if x in calls and calls[x]["motif"]
+                          and calls[x]["motif_tier"] in (("high", "medium", "partial") if x == fam
+                                                         else ("high", "medium"))), None)
             group = named if named and c["prop"] == "Satellite" else f"{c['prop'].split('/')[-1]}-{root}"
             note = f"{c['class_family']}-derived" if c["class_family"] not in ("NA", "Unknown", c["prop"]) else "."
             part = "45S_unit" if c["prop"] == "rRNA" else "partial" if c["motif_tier"] == "partial" else "."

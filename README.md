@@ -735,8 +735,11 @@ With `external_annotations` set, `all` builds it too.
    motif?"); TE-labelled families with arrays stop at `medium` ("TE-derived
    satellite?"). Families RepeatMasker already labels `Satellite` skip the
    array test: the motif only names them. Proposals take the motif ID as
-   the `group` name, so curated satellites carry the satellite pipeline's
-   names (README "Naming curated elements").
+   the `group` name (a partial match too, with `part = partial`), so
+   curated satellites carry the satellite pipeline's names (README "Naming
+   curated elements"). The best motif per family maximizes coverage ×
+   (identity − `motif_min_id` + 1): a near-identical long unit over part of
+   the consensus beats a short motif loosely tiled over more of it.
 
 A family currently under a TE label keeps that label in its `reason` / `note`
 (e.g. `LTR/ERVK-derived`). Inferred samples can confirm a call (`ind8:confirms`)

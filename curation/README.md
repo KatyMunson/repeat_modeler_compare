@@ -17,3 +17,22 @@ consensi against `results_v3/classify/library_consensi.fa`, `members` per
 element (`--class-family LTR/Gypsy`, `--ltr-len` 1695 / 1608), `resolve`; the
 four Mlim LTR-pipeline families matching Gypsy-1_Esto (Mlim's own Gypsy
 relatives, already LTR/Gypsy, < 0.03 Mb) were removed.
+
+### Satellites, rDNA and other relabels (added to hagfish_curated.tsv)
+
+Satellite groups are named after the satellite pipeline's harmonized motifs
+(`harmonized_repeatmasker_lib.fasta`, `<SP>_SAT<unit>_<letter>`): each tandem
+library family was scored against every motif tiled to the consensus length,
+in 120 bp windows (>= 70% identity per window; `family_cov` = consensus
+fraction covered, `pident` = median window identity).
+- `part = .`: the consensus is the satellite (>= ~0.5 coverage).
+- `part = partial`: a satellite segment plus other sequence (RepeatModeler
+  chimeras such as Mlim_rnd-4_family-317 = MLI_SAT33_a + ~1.4 kb non-coding;
+  no REXdb/GyDB domains at E <= 1, so not a Gypsy).
+- `SAT-<n>_<sample>`: satellite by the cross-check (TideCluster arrays) but no
+  harmonized motif matched; provisional names to reconcile with the
+  satellite pipeline.
+- `rDNA_45S`: ribotin rDNA matches (high).
+- `TRC1-junction_Mlim` (Mlim_rnd-5_family-3676, was LTR/Gypsy): TRC_1 array
+  edge + CR1 fragment + family-99 post-gag segment, no coding domains ->
+  Unknown.

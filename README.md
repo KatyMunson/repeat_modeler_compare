@@ -569,7 +569,11 @@ permanent IDs for traceability) to the element and its RepeatMasker
 `class_family` (`LTR/Gypsy`, never the element name): the format of
 `family_groups.py members` output, with `class_family` filled
 (`members --class-family LTR/Gypsy --ltr-len 1695`). Rows from several
-elements go in one file. Set `classify.curated_families` to it:
+elements go in one file; when elements are related (a non-autonomous
+element and its partner share LTRs and other pieces), run `members` per
+element and `family_groups.py resolve` to keep each library family under
+the element it matches best. Curated consensi live in `curation/elements/`.
+Set `classify.curated_families` to it:
 - `summarize_rm.py` labels every member family's hits with `class_family`,
   over RepeatClassifier, the tandem carve-out and the classify screens
   (`family_composition.tsv` column `bp_curated` shows how much)

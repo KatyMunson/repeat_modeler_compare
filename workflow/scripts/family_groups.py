@@ -26,6 +26,11 @@ Subcommands:
             region, or both. --class-family fills class_family.
             blastn -query elem.fa -db library -outfmt \\
               "6 qseqid sseqid pident length qstart qend sstart send qlen slen evalue bitscore"
+  resolve   merge several members outputs (related elements, e.g. a
+            non-autonomous element and its autonomous partner, share
+            LTRs and other pieces) keeping each family only under the
+            element it matches best (highest pident, then family_cov);
+            the losing matches are listed in `note`
   report    sum owned_bp per sample and group from the combined
             family_tandem.tsv. Writes one row per sample x group plus one
             per member family (row_type = group / member).
@@ -134,6 +139,35 @@ def cmd_members(args):
           f">= {args.min_cov:.0%} of their length", file=sys.stderr)
 
 
+def cmd_resolve(args):
+    best = {}
+    header = None
+    for path in args.groups:
+        with open(path) as fh:
+            h = fh.readline().rstrip("\n").split("\t")
+            header = header or h
+            for line in fh:
+                f = line.rstrip("\n").split("\t")
+                row = dict(zip(h, f))
+                fam = bare(row["family"])
+                key = (float(row.get("pident") or 0), float(row.get("family_cov") or 0))
+                prev = best.get(fam)
+                if prev is None or key > prev[0]:
+                    lost = ([f"{prev[1]['group']}:{prev[0][0]:.1f}"] + prev[2]) if prev else []
+                    best[fam] = (key, row, lost)
+                else:
+                    prev[2].append(f"{row['group']}:{key[0]:.1f}")
+    with open(args.out, "w") as out:
+        out.write("\t".join(header) + "\n")
+        for fam, (_k, row, lost) in sorted(best.items(), key=lambda kv: (kv[1][1]["group"], kv[0])):
+            if lost:
+                row["note"] = "also matches " + ",".join(lost)
+            out.write("\t".join(row.get(c, ".") for c in header) + "\n")
+    n_shared = sum(1 for v in best.values() if v[2])
+    print(f"[family_groups] resolve: {len(best)} families, {n_shared} matched more than one element "
+          f"(kept under the best)", file=sys.stderr)
+
+
 def cmd_report(args):
     members = defaultdict(list)
     seen = defaultdict(list)
@@ -199,6 +233,9 @@ def main():
     m.add_argument("--ltr-len", type=int, default=0, help="LTR length in the consensus: fills `part`")
     m.add_argument("--class-family", default="", help="Class/Superfamily for every member (curated label)")
     m.add_argument("--out", required=True)
+    v = sub.add_parser("resolve")
+    v.add_argument("--groups", nargs="+", required=True, help="members outputs, one per element")
+    v.add_argument("--out", required=True)
     r = sub.add_parser("report")
     r.add_argument("--groups", nargs="+", required=True,
                    help="groups / curated-families TSVs (group or element, family columns)")
@@ -207,7 +244,7 @@ def main():
     r.add_argument("--sample-ids", nargs="*", default=[])
     r.add_argument("--out", required=True)
     args = ap.parse_args()
-    {"members": cmd_members, "report": cmd_report}[args.cmd](args)
+    {"members": cmd_members, "resolve": cmd_resolve, "report": cmd_report}[args.cmd](args)
 
 
 if __name__ == "__main__":

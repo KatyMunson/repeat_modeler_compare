@@ -1,0 +1,43 @@
+group	family	class_family	part	pident	family_cov	element_start	element_end	evidence	note
+Gypsy-1_Esto	Esto_ltr-1_family-191	LTR/Gypsy	I	98.0	0.76	5608	6310	blastn vs Gypsy-1_Esto consensus	.
+Gypsy-1_Esto	Esto_ltr-1_family-203	LTR/Gypsy	I	88.3	0.63	7936	8382	blastn vs Gypsy-1_Esto consensus	.
+Gypsy-1_Esto	Esto_ltr-1_family-231	LTR/Gypsy	I	86.4	0.72	6613	8475	blastn vs Gypsy-1_Esto consensus	.
+Gypsy-1_Esto	Esto_ltr-1_family-263	LTR/Gypsy	I	91.5	0.53	8128	8315	blastn vs Gypsy-1_Esto consensus	.
+Gypsy-1_Esto	Esto_ltr-1_family-299	LTR/Gypsy	I	97.7	0.98	3630	7289	blastn vs Gypsy-1_Esto consensus	.
+Gypsy-1_Esto	Esto_ltr-1_family-361	LTR/Gypsy	I	94.7	0.99	2139	3803	blastn vs Gypsy-1_Esto consensus	.
+Gypsy-1_Esto	Esto_ltr-1_family-38	LTR/Gypsy	LTR	83.3	0.56	4	11758	blastn vs Gypsy-1_Esto consensus	.
+Gypsy-1_Esto	Esto_ltr-1_family-515	LTR/Gypsy	I	90.9	0.55	2759	3607	blastn vs Gypsy-1_Esto consensus	.
+Gypsy-1_Esto	Esto_ltr-1_family-516	LTR/Gypsy	I	94.1	0.67	3888	9871	blastn vs Gypsy-1_Esto consensus	.
+Gypsy-1_Esto	Esto_ltr-1_family-524	LTR/Gypsy	I	88.1	0.79	2759	6305	blastn vs Gypsy-1_Esto consensus	.
+Gypsy-1_Esto	Esto_ltr-1_family-614	LTR/Gypsy	I	96.6	0.62	3609	5426	blastn vs Gypsy-1_Esto consensus	.
+Gypsy-1_Esto	Esto_rnd-1_family-31	LTR/Gypsy	mixed	89.3	0.57	1	11758	blastn vs Gypsy-1_Esto consensus	.
+Gypsy-1_Esto	Esto_rnd-1_family-536	LTR/Gypsy	LTR	84.8	0.59	950	11758	blastn vs Gypsy-1_Esto consensus	.
+Gypsy-1_Esto	Esto_rnd-4_family-61	LTR/Gypsy	mixed	82.7	0.54	988	11758	blastn vs Gypsy-1_Esto consensus	.
+Gypsy-1_Esto	Esto_rnd-5_family-1394	LTR/Gypsy	LTR	84.1	0.69	989	11758	blastn vs Gypsy-1_Esto consensus	.
+Gypsy-1_Esto	Esto_rnd-5_family-3054	LTR/Gypsy	I	96.8	1.00	2070	10044	blastn vs Gypsy-1_Esto consensus	.
+Gypsy-N1_Esto	Esto_ltr-1_family-13	LTR/Gypsy	LTR	85.7	0.58	1048	8087	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_ltr-1_family-16	LTR/Gypsy	LTR	85.3	0.53	1038	8087	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_ltr-1_family-22	LTR/Gypsy	LTR	87.7	0.74	4	8087	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_ltr-1_family-236	LTR/Gypsy	I	85.5	0.54	2646	4893	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_ltr-1_family-31	LTR/Gypsy	LTR	84.3	0.58	4	8087	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_ltr-1_family-312	LTR/Gypsy	I	89.9	0.95	2293	3912	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_ltr-1_family-318	LTR/Gypsy	I	86.9	0.58	2483	3244	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_ltr-1_family-364	LTR/Gypsy	I	85.8	0.74	2633	4289	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_ltr-1_family-365	LTR/Gypsy	I	82.7	0.63	2069	2868	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_ltr-1_family-366	LTR/Gypsy	I	80.0	0.62	2215	2870	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_ltr-1_family-42	LTR/Gypsy	mixed	84.2	0.55	987	8087	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_ltr-1_family-424	LTR/Gypsy	I	87.4	0.76	2483	4385	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_ltr-1_family-544	LTR/Gypsy	I	91.5	0.71	2234	4156	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_ltr-1_family-60	LTR/Gypsy	LTR	83.3	0.53	998	8087	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_rnd-1_family-125	LTR/Gypsy	mixed	89.3	0.73	1	8087	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_rnd-1_family-168	LTR/Gypsy	mixed	86.3	0.54	1048	8087	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_rnd-1_family-328	LTR/Gypsy	LTR	91.6	0.50	877	7565	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_rnd-1_family-332	LTR/Gypsy	mixed	89.8	1.00	656	8087	blastn vs Gypsy-N1_Esto consensus	also matches Gypsy-1_Esto:88.7
+Gypsy-N1_Esto	Esto_rnd-1_family-409	LTR/Gypsy	mixed	87.8	0.56	4502	6561	blastn vs Gypsy-N1_Esto consensus	also matches Gypsy-1_Esto:87.3
+Gypsy-N1_Esto	Esto_rnd-1_family-43	LTR/Gypsy	mixed	92.3	0.84	3303	6561	blastn vs Gypsy-N1_Esto consensus	also matches Gypsy-1_Esto:89.8
+Gypsy-N1_Esto	Esto_rnd-1_family-537	LTR/Gypsy	mixed	89.5	0.88	1	8087	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_rnd-1_family-63	LTR/Gypsy	mixed	89.1	0.77	1	8087	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_rnd-1_family-670	LTR/Gypsy	mixed	88.1	0.62	1048	8087	blastn vs Gypsy-N1_Esto consensus	.
+Gypsy-N1_Esto	Esto_rnd-1_family-683	LTR/Gypsy	mixed	84.3	0.68	1685	2105	blastn vs Gypsy-N1_Esto consensus	also matches Gypsy-1_Esto:83.2
+Gypsy-N1_Esto	Esto_rnd-1_family-70	LTR/Gypsy	mixed	90.5	1.00	4	7005	blastn vs Gypsy-N1_Esto consensus	also matches Gypsy-1_Esto:90.4
+Gypsy-N1_Esto	Esto_rnd-3_family-47	LTR/Gypsy	mixed	83.0	0.56	6103	6482	blastn vs Gypsy-N1_Esto consensus	also matches Gypsy-1_Esto:81.6

@@ -172,6 +172,20 @@ satellite_crosscheck:
   # Pairs a previous analysis judged independent: flagged if the pair test
   # says otherwise, and never grouped. e.g. [[famA, famB]]
   expected_independent: []
+  # Optional: the satellite pipeline's harmonized motif library (one unit
+  # per record, e.g. harmonized_repeatmasker_lib.fasta). Adds sequence
+  # evidence and names: a family made of a known unit is called Satellite
+  # and grouped under the motif ID, even where TideCluster missed its arrays.
+  harmonized_library: ""
+  motif_high_cov: 0.7          # high: >= this fraction of the consensus matches a tiled motif ...
+  motif_high_id: 85            # ... at >= this % identity
+  motif_min_cov: 0.5           # medium: >= this fraction at >= motif_min_id
+  motif_min_id: 75
+  motif_partial_cov: 0.15      # partial (chimera flag): >= this fraction at >= motif_high_id
+  motif_array_tandem_frac: 0.5 # motif alone: above "low" only with arrays (tandem_family, tandem_frac >= this, or frac_in_trc >= partial_trc_cov)
+  # A non-tandem sample counts toward "all eligible samples" only if it holds
+  # >= this share of the family's top-sample bp (stray copies don't veto).
+  eligible_min_share: 0.1
   allow_seqid_mismatch: false  # true = keep going when TideCluster's assembly differs (drops those contigs)
   candidate_min_trc_bp: 10000  # library families with this much bp in TRC arrays enter the blastn
   blast_evalue: 1.0e-10

@@ -282,6 +282,11 @@ SATX_APPLY = SATX_ON and _as_bool(SATX.get("apply", False))
 SATX_APPLIED = f"{OUTDIR}/summary/satellite_applied.tsv"
 CURATED_TABLES = ([CURATED_FAMILIES] if CURATED_FAMILIES else []) + ([SATX_APPLIED] if SATX_APPLY else [])
 
+# Optional harmonized satellite motif library (satellite pipeline output):
+# names satellites and adds sequence evidence next to the TideCluster arrays.
+SATX_MOTIFS = SATX.get("harmonized_library", "") or ""
+if SATX_MOTIFS and not os.path.exists(SATX_MOTIFS):
+    raise ValueError(f"satellite_crosscheck.harmonized_library not found: {SATX_MOTIFS}")
 SATX_REFS = [f"{lab}={SATX_ANNOT[s][col]}" for s in SAMPLE_IDS if s in SATX_ANNOT
              for lab, col in (("rdna", "ribotin_fa"), ("mito", "mitohifi_fa")) if SATX_ANNOT[s][col]]
 
@@ -2180,6 +2185,7 @@ rule satellite_consensus_blast:
         crosscheck=expand(f"{OUTDIR}/shared/{{sample}}/satellite/trc_crosscheck.family.tsv", sample=TC_SAMPLES),
         trc_consensus=expand(f"{OUTDIR}/shared/{{sample}}/satellite/trc_consensus.fa", sample=TC_SAMPLES),
         refs=[r.split("=", 1)[1] for r in SATX_REFS],
+        motifs=[SATX_MOTIFS] if SATX_MOTIFS else [],
     output:
         db_fa=f"{SATDIR}/blast/satellite_db.fa",
         refs_fa=f"{SATDIR}/blast/refs.fa",
@@ -2199,6 +2205,8 @@ rule satellite_consensus_blast:
         focus=" ".join(SATX.get("focus_families") or []),
         min_trc_bp=SATX.get("candidate_min_trc_bp", 10000),
         evalue=SATX.get("blast_evalue", 1e-10),
+        motifs=lambda wc, input: f"--motifs {input.motifs}" if input.motifs else "",
+        max_targets=lambda wc, input: 2000 if input.motifs else 500,
         fmt="6 qseqid sseqid pident length qstart qend sstart send qlen slen evalue bitscore",
     shell:
         """
@@ -2209,10 +2217,11 @@ rule satellite_consensus_blast:
         python3 {SCRIPTS}/satellite_evidence.py select --library {input.library} \
             --family-tandem {input.family_tandem} --crosscheck {input.crosscheck} \
             --trc-consensus {input.trc_consensus} --ref {params.refs} --focus {params.focus} \
-            --min-trc-bp {params.min_trc_bp} --db-fasta {output.db_fa} --refs-fasta {output.refs_fa}
+            --min-trc-bp {params.min_trc_bp} {params.motifs} \
+            --db-fasta {output.db_fa} --refs-fasta {output.refs_fa}
         makeblastdb -in {output.db_fa} -dbtype nucl -out $d/satellite_db
         blastn -task blastn -query {output.db_fa} -db $d/satellite_db -evalue {params.evalue} \
-            -dust no -num_threads {threads} -max_target_seqs 500 -outfmt "{params.fmt}" -out {output.sat}
+            -dust no -num_threads {threads} -max_target_seqs {params.max_targets} -outfmt "{params.fmt}" -out {output.sat}
         if [ -s {output.refs_fa} ]; then
             makeblastdb -in {output.refs_fa} -dbtype nucl -out $d/refs
             blastn -task dc-megablast -query {input.library} -db $d/refs -evalue {params.evalue} \
@@ -2251,6 +2260,10 @@ rule satellite_evidence:
         x=SATX,
         major_min_bp=config["family_tandem"]["major_min_bp"],
         copy_scale=" ".join(f"{s}={c}" for s, c in COPIES_BY_SAMPLE.items() if c > 1),
+        eligible_min_share=SATX.get("eligible_min_share", 0.1),
+        motif_args=" ".join(f"--{k.replace('_', '-')} {SATX[k]}" for k in
+                            ("motif_min_id", "motif_high_cov", "motif_high_id", "motif_min_cov", "motif_partial_cov", "motif_array_tandem_frac")
+                            if k in SATX),
     shell:
         "python3 {SCRIPTS}/satellite_evidence.py report --family-tandem {input.family_tandem} "
         "--crosscheck {input.crosscheck} --trc-info {input.trc_info} --tc-params {input.tc_params} "
@@ -2266,6 +2279,7 @@ rule satellite_evidence:
         "--monomer-tol {params.x[monomer_tol]} "
         "--rdna-min-cov {params.x[rdna_min_cov]} --rdna-min-id {params.x[rdna_min_id]} "
         "--mito-min-cov {params.x[mito_min_cov]} --mito-min-id {params.x[mito_min_id]} "
+        "--eligible-min-share {params.eligible_min_share} {params.motif_args} "
         "--evidence-out {output.evidence} --calls-out {output.calls} "
         "--pairs-out {output.pairs} --proposals-out {output.proposals} "
         "--trc-pairs-out {output.trc_pairs} > {log} 2>&1"

@@ -618,7 +618,18 @@ families, and reports the 5'/3' LTR similarity of each intact copy (with
 cross-check tests library families against three independent tools:
 - TideCluster (tandem-repeat arrays clustered into TRCs);
 - ribotin (rDNA unit models);
-- MitoHiFi (mitogenomes).
+- MitoHiFi (mitogenomes);
+- optionally, the satellite pipeline's harmonized motif library
+  (`harmonized_library`, e.g. `harmonized_repeatmasker_lib.fasta`).
+
+The two satellite sources answer different questions, and either works
+alone. TideCluster says whether a family *sits in arrays in this assembly*;
+the harmonized library says *which known satellite unit* a consensus is
+made of, and names it. Without the harmonized library (before the full
+satellite pipeline has run), calls rest on TideCluster alone, as before.
+The library also holds TE-derived and dispersed "satellite" units (the
+reason the old satellite arm was removed, below), so a motif match alone
+never makes a satellite: see the motif rule under **Calls**.
 
 It is **report-only**: it writes evidence and proposals, and nothing is
 relabelled or merged.
@@ -667,9 +678,13 @@ With `external_annotations` set, `all` builds it too.
 2. `Other/NUMT` (high): the same test against the mitogenome, with the
    `mito_*` thresholds.
 3. `Satellite`:
-   - **high:** the family is `tandem_family`, with ≥ `min_trc_cov` of its bp
-     in TRC arrays, in every TideCluster sample where it holds
-     ≥ `family_tandem.major_min_bp`;
+   - **high:** ≥ `min_trc_cov` of its bp in TRC arrays (that alone is
+     array evidence; the `tandem_family` flag is not needed, since long
+     units with few copies per array can miss its thresholds), in every
+     *eligible* TideCluster sample. A sample is eligible when the family
+     holds ≥ `family_tandem.major_min_bp` there AND is tandem there or
+     holds ≥ `eligible_min_share` of its bp in its top sample, so a few
+     scattered copies in the other species don't veto the call;
    - **medium:** only some of those samples pass;
    - **medium (partial):** tandem, with between `partial_trc_cov` and
      `min_trc_cov` of its bp in TRCs. Typically these are arrays only partly
@@ -703,6 +718,25 @@ With `external_annotations` set, `all` builds it too.
      these into a real TRC test.
    - A TRC that TideCluster flags as rDNA turns a Satellite call into
      `rRNA` (medium).
+4. **Harmonized motifs** (with `harmonized_library`). Each motif is tiled
+   (rotation-safe) and the library consensi are searched against it; the
+   best motif per family is reported (`best_motif`, `motif_cov`,
+   `motif_id`, `motif_tier`):
+   - **high:** ≥ `motif_high_cov` of the consensus at ≥ `motif_high_id` %;
+   - **medium:** ≥ `motif_min_cov` at ≥ `motif_min_id` %;
+   - **partial:** ≥ `motif_partial_cov` at ≥ `motif_high_id` %: a satellite
+     segment plus other sequence (chimeric consensus?). Adds `low` at most,
+     and `part = partial` in the proposals.
+
+   A high/medium motif tier can raise a Satellite call (or an empty one) to
+   that tier, but only with array evidence in some sample (`tandem_family`,
+   `tandem_frac` ≥ `motif_array_tandem_frac`, or `frac_in_trc` ≥
+   `partial_trc_cov`). Without it the call stays `low` ("TE-derived
+   motif?"); TE-labelled families with arrays stop at `medium` ("TE-derived
+   satellite?"). Families RepeatMasker already labels `Satellite` skip the
+   array test: the motif only names them. Proposals take the motif ID as
+   the `group` name, so curated satellites carry the satellite pipeline's
+   names (README "Naming curated elements").
 
 A family currently under a TE label keeps that label in its `reason` / `note`
 (e.g. `LTR/ERVK-derived`). Inferred samples can confirm a call (`ind8:confirms`)

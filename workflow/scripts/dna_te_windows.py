@@ -113,6 +113,9 @@ def main():
     if args.overlap >= args.window_size:
         sys.exit("--overlap must be smaller than --window-size")
 
+    if not shutil.which("EDTA_raw.pl"):
+        sys.exit("[dna_te] EDTA_raw.pl is not on PATH: is this running in the dna_te.container image "
+                 "(snakemake --use-singularity)?")
     pcs = pieces(args.fasta, args.window_size, args.overlap)
     wins = pack(pcs, args.window_size)
     where = {p[0]: (p[1], p[2]) for p in pcs}

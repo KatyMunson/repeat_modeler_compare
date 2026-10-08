@@ -238,6 +238,22 @@ numt:
   merge_gap: 500               # ... and the genome gap <= this. Check numt_gap_hist.tsv before raising it
   min_len: 50                  # aligned bp a hit-level or compound call needs
 
+# Structural TIR / Helitron pilot (README "Structural TIR / Helitron pilot").
+# EDTA's TIR-Learner and HelitronScanner (EDTA_raw.pl --type tir|helitron),
+# per ltr_discovery.n_groups bp-balanced group, in windows with a timeout.
+# Report-only (summary/dna_te_pilot.tsv); run with the dna_te_pilot_only target.
+dna_te:
+  # biocontainers edta 2.3.0--hdfd78af_0, pinned by digest so the image can't
+  # change under the tag
+  container: "docker://quay.io/biocontainers/edta@sha256:6dfb5313b05caf4d6cafa724d6c5a95365e0471adee29005c42a338dfdf358c5"
+  tir_species: others          # EDTA_raw --species (TIR-Learner model): rice | maize | others
+  window_size: 5000000         # bp per EDTA_raw run (small scaffolds are packed together)
+  overlap: 100000              # between windows of one long scaffold
+  window_timeout_s: 21600      # a window still running after this is killed and logged in skipped_windows.tsv
+  threads_per_window: 4        # windows per job = resources.dna_te_candidates_group.threads / this
+  blast_evalue: 1.0e-10        # unmatched consensi vs the genome (masked-bp proxy)
+  min_new_pct_non_n: 0.5       # decision: integrate if unmatched clusters add >= this % of non-N bp
+
 # TEtrimmer (README "TEtrimmer"): automated extension / boundary / structure /
 # classification of the largest families still Unknown after curation,
 # cross-check and family_neighbors. Run with the tetrimmer_only target;
@@ -294,6 +310,9 @@ resources:
   # --- NUMT calls ---
   numt_blast:       {threads: 8,  mem: 2,  hrs: 8}    # makeblastdb + dc-megablast of the mitogenome vs the genome
   numt_calls:       {threads: 1,  mem: 16, hrs: 2}    # holds the shared-arm .out in memory
+  # --- structural TIR / Helitron pilot ---
+  dna_te_candidates_group: {threads: 16, mem: 4, hrs: 72}  # per group and type; mem per slot
+  dna_te_pilot:     {threads: 8,  mem: 4,  hrs: 12}   # cd-hit-est, makeblastdb, dc-megablast
   # --- LTR side pipeline ---
   ltr_group_genome: {threads: 1,  mem: 16, hrs: 2}
   # per group; threads must be >= 2 (see Snakefile). mem is per slot.

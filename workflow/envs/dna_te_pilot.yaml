@@ -1,0 +1,9 @@
+name: dna_te_pilot
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - cd-hit>=4.8.1
+  - blast>=2.12
+  - python>=3.8

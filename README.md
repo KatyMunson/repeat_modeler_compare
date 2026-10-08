@@ -1002,6 +1002,69 @@ cross-check).
 Unit tests for the origin folding and the merge logic:
 `python3 -m unittest discover tests`.
 
+## Structural TIR / Helitron pilot (`dna_te_pilot_only`)
+
+RepeatModeler's RECON/RepeatScout rounds model TIR elements poorly, and
+Helitrons hardly at all. The LTR side pipeline already adds structure-based
+LTR families; this is the DNA-TE analogue, starting as a **pilot**. The pilot
+is report-only and changes nothing in the library. Adding families would
+change the library, so both masking arms and everything downstream would
+rerun. That integration (Stage B2) is only worth building if the pilot shows
+real new bp.
+
+    snakemake dna_te_pilot_only --rerun-triggers mtime -n   # only dna_te_* jobs on finished results
+    snakemake dna_te_pilot_only --rerun-triggers mtime ...  # usual runsnake arguments, + --use-singularity
+
+It is not part of `all`.
+
+**Callers.** EDTA's structural modules run standalone: `EDTA_raw.pl --type tir`
+(TIR-Learner) and `--type helitron` (HelitronScanner). Each module's own
+filters (flank-repeat test, tandem and TEsorter cleanup) are applied, so the
+output is EDTA's `*.intact.raw.fa`. They run in the EDTA image `dna_te.container`
+(biocontainers `edta:2.3.0--hdfd78af_0`, pinned by digest). TIR-Learner's
+model is `dna_te.tir_species` (`others`; EDTA only has rice and maize models
+besides it).
+
+**Parallelism and stalls**, mirroring the LTR tools:
+- `dna_te_group_genome` writes the same bp-balanced whole-scaffold groups as
+  `ltr_group_genome` (`ltr_discovery.n_groups`). They are written separately:
+  the LTR groups are `temp()`, and re-making them would make every finished
+  `ltr_*` job look out of date.
+- `dna_te_candidates_group` (one job per group and type) cuts the group into
+  windows of `window_size` bp. Long scaffolds overlap by `overlap`; small
+  scaffolds are packed together. It runs `threads / threads_per_window`
+  windows at once, each under `window_timeout_s`.
+- A window that times out is killed and logged in
+  `{sample}/dna_te/skipped_windows.tsv` (tool, contig, start, end), like
+  `ltr/skipped_windows.tsv`. A window that fails any other way fails the job.
+- Whether TIR-Learner or HelitronScanner stall on the hagfish assemblies is
+  still to be seen on the first run. Check the skipped windows, and tune the
+  timeout from the per-window times in the log.
+
+**Pilot** (`dna_te_pilot`, per sample and type):
+1. Candidates (window-overlap duplicates dropped, `candidates.tsv` with
+   scaffold coordinates) are clustered with cd-hit-est (`library.cdhit`
+   settings, both strands).
+2. Each cluster representative is matched with cd-hit-est-2d against the
+   sample's own `-families.fa` and against the shared library.
+3. `pilot_clusters.tsv` lists every cluster with the family it matches and
+   that family's Class/Family (the library header label, i.e.
+   RepeatClassifier's).
+4. **Masked-bp proxy:** the unmatched representatives are blastn'd
+   (dc-megablast) against the genome. `unmatched_cover_bp` is the union of
+   their HSPs; `unmatched_new_bp` is the part the shared-arm `.out` does not
+   mask yet. This is a lower bound: blastn misses old copies that
+   RepeatMasker -s would find. It was chosen over a RepeatMasker run for cost.
+
+`summary/dna_te_pilot.tsv` has one row per sample × type: candidates,
+clusters, matched (own / shared / either), unmatched, the bp above, the
+Class/Family counts of the matched clusters, `absent_superfamilies`, and a
+`decision`. The decision rule is on the table's first line:
+- integrate if the unmatched clusters add ≥ `dna_te.min_new_pct_non_n` %
+  (0.5, the same scale as the round-novelty stopping rule) of non-N bp, or
+- if they carry a superfamily with no family in the shared library (EDTA's
+  DTA/DTC/DTH/DTM/DTT/Helitron, mapped to hAT/CMC/PIF-Harbinger/MULE/TcMar/Helitron).
+
 ## Satellite analysis (removed)
 
 A satellite arm existed briefly. It was a satellite-only RepeatMasker

@@ -612,6 +612,89 @@ keeps candidates whose internal region is covered by the element's
 families, and reports the 5'/3' LTR similarity of each intact copy (with
 `--rate`, ages via the Jukes-Cantor distance, T = d / 2r).
 
+## Placing Unknown families by their neighbours (`family_neighbors`)
+
+Many Unknown families are pieces of elements whose other pieces are
+classified: the LTRs of a Gypsy internal region, the 5' end of a LINE, a
+split consensus. Their copies sit next to those pieces again and again, on a
+fixed side and in the same orientation. `family_neighbors.py` counts each
+family's neighbours on its 5' and 3' sides (in the family's own orientation)
+in the shared-arm `.out` files, within `summary.neighbors.max_gap` bp, and
+calls the patterns:
+
+| pattern | copies look like | proposal |
+|---|---|---|
+| `LTR_of` P | P (same strand) on the family's 3' side in some copies, 5' side in others; the family also sits at both ends of P's copies | P's class, `part = LTR` |
+| `internal_of` P | P on both sides, same strand | P's class, `part = I` |
+| `5prime_of` / `3prime_of` P | P continues the family on one side, same strand | P's class, `part = 5prime` / `3prime` |
+
+- Targets are families labelled `Unknown` or `<Order>/Unknown` after the
+  curated, cross-check and reclassification labels, with ≥ `min_copies`
+  copies. A call needs ≥ `min_pairs` copies and ≥ `min_frac` of them;
+  `high` needs ≥ `high_frac` and twice `min_pairs`.
+- An `<Order>/Unknown` partner (e.g. LTR/Unknown LTRs) lifts a plain Unknown
+  to that order. A target linked only to another Unknown gets no class but a
+  note; if that partner is called in the first pass, the target inherits
+  the call (medium).
+- Notes only: `3' poly(A)` (an A-rich simple repeat right after the 3' end:
+  non-LTR retrotransposon or SINE) and `tandem` (copies next to copies of
+  the same family).
+- Random insertions near other repeats give mixed partners and 50/50
+  strands, so they rarely reach `min_frac`.
+
+Outputs in `summary*/`: `family_neighbors.tsv` (top partners per side),
+`family_neighbors_calls.tsv` (one row per tested family) and
+`family_neighbors_proposals.tsv` (`classify.curated_families` format;
+`group` is the partner's curated element name when it has one, else
+`with-<partner>`). Report-only: copy accepted rows into your curated table.
+Built by `all` and `report_shared_only` (`summary.family_neighbors: false`
+turns it off).
+
+## TEtrimmer (`tetrimmer_only`)
+
+[TEtrimmer](https://github.com/qjiangzhao/TEtrimmer) automates the manual
+curation steps (copy extraction, extension, MSA cleaning, boundary,
+LTR/TIR/poly(A)/TSD and Pfam checks, RepeatClassifier) and writes a PDF
+report per consensus. Here it runs only on the largest families still
+unresolved, to classify them, not to replace the library:
+
+1. `tetrimmer_select`, per sample: families still `Unknown` /
+   `<Order>/Unknown` after the curated, cross-check and reclassification
+   labels and the `family_neighbors` calls at `tetrimmer.neighbor_confidence`,
+   not tandem in any sample, whose largest footprint is in this sample: the
+   top `tetrimmer.top_n` by owned bp with ≥ `tetrimmer.min_bp`. Each family
+   runs once, on the genome where it is largest.
+2. `tetrimmer`, per sample, conda env `workflow/envs/tetrimmer.yaml`
+   (`--classify_unknown` by default; `tetrimmer.preset`, `classify`,
+   `pfam_dir`, `extra_args`). Resources: `resources.tetrimmer` (32 threads,
+   120 h by default; TEtrimmer's own benchmark was ~2-5 h for 3,500-8,600
+   families on a 1.7 Gb genome with 48 cores, and hagfish families have far
+   more copies). The run directory `tetrimmer/{sample}/run` is not a
+   declared output: a killed job resumes with `--continue_analysis`; delete
+   it to start over.
+3. `tetrimmer_report`: `tetrimmer/tetrimmer_summary.tsv` (every output
+   consensus, mapped back to library family IDs) and
+   `tetrimmer/tetrimmer_proposals.tsv` (curated-table format, one row per
+   family whose label TEtrimmer changed, from its best output: Perfect →
+   high, Good → medium, else low; split families noted).
+
+Review before accepting: the PDFs in
+`tetrimmer/{sample}/run/TEtrimmer_for_proof_curation/` (or TEtrimmerGUI, which
+needs only Python), then copy rows into your curated table.
+
+    ./runsnake 4 --configfile config.yaml --config mask_shared_library=results_v3/library/shared_library.fa \
+        --rerun-triggers mtime -- tetrimmer_only
+
+Notes:
+- Pfam: TEtrimmer downloads it on first use. Compute nodes without
+  internet need `tetrimmer.pfam_dir` pointing at a local copy.
+- RepeatClassifier inside the TEtrimmer env uses that env's RepeatMasker
+  libraries (the Dfam root partition bioconda ships), not the pipeline's
+  FamDB setup.
+- The env is unpinned (`tetrimmer` from bioconda); after the first build,
+  pin the resolved version in `workflow/envs/tetrimmer.yaml`. Upstream notes
+  the bioconda package can lag GitHub.
+
 ## Satellite, rDNA and mito cross-check (`satellite_crosscheck`)
 
 `family_tandem` infers arrays from RepeatMasker hits alone. This

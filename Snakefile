@@ -282,6 +282,13 @@ SATX_APPLY = SATX_ON and _as_bool(SATX.get("apply", False))
 SATX_APPLIED = f"{OUTDIR}/summary/satellite_applied.tsv"
 CURATED_TABLES = ([CURATED_FAMILIES] if CURATED_FAMILIES else []) + ([SATX_APPLIED] if SATX_APPLY else [])
 
+# family_neighbors (summary.family_neighbors): Unknown families placed by
+# their neighbours in the shared-arm .out. TEtrimmer (tetrimmer_only target)
+# then takes the largest families still unresolved, per sample.
+NEIGHBORS_ON = _as_bool(config["summary"].get("family_neighbors", True))
+TETRIMMER = config.get("tetrimmer", {}) or {}
+TETRIMMER_SUMDIR = "summary_shared_only" if MASK_SHARED_LIBRARY else "summary"
+
 # Optional harmonized satellite motif library (satellite pipeline output):
 # names satellites and adds sequence evidence next to the TideCluster arrays.
 SATX_MOTIFS = SATX.get("harmonized_library", "") or ""
@@ -333,6 +340,7 @@ rule all:
         f"{OUTDIR}/summary/library_source.tsv",
         [f"{OUTDIR}/summary/element_groups.tsv"] if GROUP_TABLES else [],
         f"{OUTDIR}/summary/curation_candidates.tsv",
+        [f"{OUTDIR}/summary/family_neighbors_proposals.tsv"] if NEIGHBORS_ON else [],
         [f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
         [f"{OUTDIR}/summary/class_verification.tsv", f"{OUTDIR}/summary/class_disagreements.tsv"] if CLASSIFY_ON else [],
         expand(
@@ -410,6 +418,7 @@ rule report_shared_only:
         f"{OUTDIR}/summary_shared_only/library_source.tsv",
         [f"{OUTDIR}/summary_shared_only/element_groups.tsv"] if GROUP_TABLES else [],
         f"{OUTDIR}/summary_shared_only/curation_candidates.tsv",
+        [f"{OUTDIR}/summary_shared_only/family_neighbors_proposals.tsv"] if NEIGHBORS_ON else [],
         [f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
         [f"{OUTDIR}/summary_shared_only/class_verification.tsv",
          f"{OUTDIR}/summary_shared_only/class_disagreements.tsv"] if CLASSIFY_ON else [],
@@ -1893,6 +1902,157 @@ rule curation_candidates:
         "python3 {SCRIPTS}/curation_candidates.py --family-tandem {input.family_tandem} {params.opt} "
         "--sample-ids {params.sample} --min-pct-masked {params.min_pct} --young-div {params.young} "
         "--out {output.tsv} > {log} 2>&1"
+
+
+rule family_neighbors:
+    # Unknown families placed by what sits next to their copies (README
+    # "Placing Unknown families by their neighbours"). Report-only.
+    input:
+        outs=expand(f"{OUTDIR}/shared/{{sample}}/repeatmasker/{{sample}}.fa.out", sample=SAMPLE_IDS),
+        family_tandem=f"{OUTDIR}/{{sumdir}}/family_tandem.tsv",
+        reclass=[f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
+        curated=CURATED_TABLES,
+    output:
+        neighbors=f"{OUTDIR}/{{sumdir}}/family_neighbors.tsv",
+        calls=f"{OUTDIR}/{{sumdir}}/family_neighbors_calls.tsv",
+        proposals=f"{OUTDIR}/{{sumdir}}/family_neighbors_proposals.tsv",
+    wildcard_constraints:
+        sumdir="summary|summary_shared_only",
+    threads: config["resources"]["family_neighbors"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["family_neighbors"]["mem"] * attempt,
+        hrs=config["resources"]["family_neighbors"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/summary/family_neighbors_{{sumdir}}.log",
+    params:
+        outs=" ".join(f"{s}={OUTDIR}/shared/{s}/repeatmasker/{s}.fa.out" for s in SAMPLE_IDS),
+        opt=lambda wc, input: " ".join(
+            ([f"--reclass {input.reclass}"] if input.reclass else [])
+            + ([f"--curated {input.curated}"] if input.curated else [])
+        ),
+        n=lambda wc: " ".join(
+            f"--{k.replace('_', '-')} {v}" for k, v in (config["summary"].get("neighbors") or {}).items()
+        ),
+    shell:
+        "python3 {SCRIPTS}/family_neighbors.py --out-file {params.outs} "
+        "--family-tandem {input.family_tandem} {params.opt} {params.n} "
+        "--neighbors-out {output.neighbors} --calls-out {output.calls} "
+        "--proposals-out {output.proposals} > {log} 2>&1"
+
+
+rule tetrimmer_select:
+    # The largest families still unresolved whose biggest footprint is in
+    # this sample (tetrimmer.top_n / min_bp).
+    input:
+        family_tandem=f"{OUTDIR}/{TETRIMMER_SUMDIR}/family_tandem.tsv",
+        library=f"{OUTDIR}/classify/library_consensi.fa",
+        reclass=[f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
+        curated=CURATED_TABLES,
+        neighbors=[f"{OUTDIR}/{TETRIMMER_SUMDIR}/family_neighbors_proposals.tsv"] if NEIGHBORS_ON else [],
+    output:
+        fa=f"{OUTDIR}/tetrimmer/{{sample}}/input_families.fa",
+    threads: 1
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["classify_light"]["mem"] * attempt,
+        hrs=config["resources"]["classify_light"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/tetrimmer/{{sample}}_select.log",
+    params:
+        opt=lambda wc, input: " ".join(
+            ([f"--reclass {input.reclass}"] if input.reclass else [])
+            + ([f"--curated {input.curated}"] if input.curated else [])
+            + ([f"--neighbor-proposals {input.neighbors} --neighbor-confidence "
+                + " ".join(TETRIMMER.get("neighbor_confidence") or ["high"])] if input.neighbors else [])
+        ),
+        top_n=TETRIMMER.get("top_n", 200),
+        min_bp=TETRIMMER.get("min_bp", 500000),
+    shell:
+        "python3 {SCRIPTS}/tetrimmer_curation.py select --family-tandem {input.family_tandem} "
+        "--library {input.library} --sample {wildcards.sample} {params.opt} "
+        "--top-n {params.top_n} --min-bp {params.min_bp} --out {output.fa} > {log} 2>&1"
+
+
+rule tetrimmer:
+    # TEtrimmer on the selected families against this sample's genome. The
+    # run directory is not a declared output, so a killed job resumes
+    # (--continue_analysis) instead of starting over; delete
+    # tetrimmer/{sample}/run to force a fresh run.
+    input:
+        fa=f"{OUTDIR}/tetrimmer/{{sample}}/input_families.fa",
+        genome=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fa",
+    output:
+        done=f"{OUTDIR}/tetrimmer/{{sample}}/tetrimmer.done",
+    threads: config["resources"]["tetrimmer"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["tetrimmer"]["mem"] * attempt,
+        hrs=config["resources"]["tetrimmer"]["hrs"],
+        shell_exec="bash",
+    conda:
+        "workflow/envs/tetrimmer.yaml"
+    log:
+        f"{OUTDIR}/logs/tetrimmer/{{sample}}.log",
+    params:
+        run=f"{OUTDIR}/tetrimmer/{{sample}}/run",
+        opt=" ".join(
+            ([f"--preset {TETRIMMER['preset']}"] if TETRIMMER.get("preset") else [])
+            + {"unknown": ["--classify_unknown"], "all": ["--classify_all"], "none": []}[
+                str(TETRIMMER.get("classify", "unknown")).lower()]
+            + ([f"--pfam_dir {os.path.abspath(TETRIMMER['pfam_dir'])}"] if TETRIMMER.get("pfam_dir") else [])
+            + ([str(TETRIMMER["extra_args"])] if TETRIMMER.get("extra_args") else [])
+        ),
+    shell:
+        """
+        exec > {log} 2>&1
+        {ENV_PATH_GUARD}
+        if [ ! -s {input.fa} ] || ! grep -q '^>' {input.fa}; then
+            echo "[tetrimmer] no families selected for {wildcards.sample}; nothing to run"
+            mkdir -p {params.run}
+            printf 'original_input_seq_name\\tTEtrimmer_modified_seq_name\\n' > {params.run}/Sequence_name_mapping.txt
+            echo "input_name,output_name,status" > {params.run}/summary.txt
+            touch {params.run}/.no_families {output.done}
+            exit 0
+        fi
+        resume=""
+        if [ -s {params.run}/summary.txt ] && [ ! -e {params.run}/.no_families ]; then
+            resume="--continue_analysis"
+            echo "[tetrimmer] resuming the run in {params.run}"
+        else
+            rm -rf {params.run}
+        fi
+        TEtrimmer --input_file {input.fa} --genome_file {input.genome} --output_dir {params.run} \
+            --num_threads {threads} {params.opt} $resume
+        test -s {params.run}/summary.txt
+        touch {output.done}
+        """
+
+
+rule tetrimmer_report:
+    input:
+        done=expand(f"{OUTDIR}/tetrimmer/{{sample}}/tetrimmer.done", sample=SAMPLE_IDS),
+    output:
+        summary=f"{OUTDIR}/tetrimmer/tetrimmer_summary.tsv",
+        proposals=f"{OUTDIR}/tetrimmer/tetrimmer_proposals.tsv",
+    threads: 1
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["classify_light"]["mem"] * attempt,
+        hrs=config["resources"]["classify_light"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/tetrimmer/report.log",
+    params:
+        runs=" ".join(f"{s}={OUTDIR}/tetrimmer/{s}/run" for s in SAMPLE_IDS),
+    shell:
+        "python3 {SCRIPTS}/tetrimmer_curation.py report --run {params.runs} "
+        "--summary-out {output.summary} --proposals-out {output.proposals} > {log} 2>&1"
+
+
+rule tetrimmer_only:
+    # TEtrimmer on the families still Unknown (README "TEtrimmer"). Pair
+    # with mask_shared_library like report_shared_only.
+    input:
+        f"{OUTDIR}/tetrimmer/tetrimmer_proposals.tsv",
 
 
 rule verify_classes:

@@ -148,6 +148,17 @@ summary:
   # or younger than curation_young_div (median .out divergence %).
   curation_min_pct_masked: 0.1
   curation_young_div: 3.0
+  # family_neighbors.tsv / _calls / _proposals: Unknown families placed by what
+  # sits next to their copies in the shared-arm .out (LTR of / internal region
+  # of / 5' or 3' piece of a classified family). Report-only.
+  family_neighbors: true
+  neighbors:
+    max_gap: 100        # bp between a copy and its neighbour
+    max_overlap: 50     # bp a neighbour may overlap the copy
+    min_copies: 50      # target copies (all samples) to be tested
+    min_pairs: 20       # copies showing the pattern
+    min_frac: 0.2       # medium: share of the target's copies showing it
+    high_frac: 0.4      # high
 
 # Satellite / rDNA / mito cross-check (README "Satellite, rDNA and mito
 # cross-check"). Report-only for now: writes summary/satellite_*.tsv,
@@ -208,6 +219,20 @@ satellite_crosscheck:
   mito_min_cov: 0.5            # Other/NUMT: same against the MitoHiFi mitogenome
   mito_min_id: 80
 
+# TEtrimmer (README "TEtrimmer"): automated extension / boundary / structure /
+# classification of the largest families still Unknown after curation,
+# cross-check and family_neighbors. Run with the tetrimmer_only target;
+# report-only (tetrimmer/tetrimmer_proposals.tsv). Conda env:
+# workflow/envs/tetrimmer.yaml.
+tetrimmer:
+  top_n: 200                  # families per sample (each runs on the genome where it is largest)
+  min_bp: 500000              # owned_bp floor
+  neighbor_confidence: [high] # family_neighbors calls at these confidences count as resolved
+  preset: ""                  # "" (TEtrimmer defaults) | conserved | divergent
+  classify: "unknown"         # unknown (--classify_unknown) | all (--classify_all) | none
+  pfam_dir: ""                # local Pfam dir (compute nodes without internet); "" = TEtrimmer downloads it
+  extra_args: ""              # appended verbatim
+
 resources:
   prep_genome:      {threads: 1,  mem: 8,  hrs: 4}
   genome_fingerprint: {threads: 1, mem: 8, hrs: 2}
@@ -234,7 +259,9 @@ resources:
   summarize:        {threads: 1,  mem: 16, hrs: 6}   # parses the multi-Gb .align for the landscape
   family_tandem:    {threads: 1,  mem: 16, hrs: 4}
   classify_light:   {threads: 1,  mem: 4,  hrs: 1}    # extract / host_proteins_prep / reclassify_unknown
-  tesorter:         {threads: 16, mem: 1,  hrs: 12}   # Unknown consensi (fast) and annotation proteins (hours)
+  tesorter:         {threads: 16, mem: 1,  hrs: 12}
+  family_neighbors: {threads: 1,  mem: 24, hrs: 4}    # holds every .out copy in memory
+  tetrimmer:        {threads: 32, mem: 4,  hrs: 120}  # per sample; resumes with --continue_analysis   # Unknown consensi (fast) and annotation proteins (hours)
   diamond:          {threads: 16, mem: 2,  hrs: 6}
   rfam_scan:        {threads: 16, mem: 1,  hrs: 6}
   combine_summaries: {threads: 1, mem: 8,  hrs: 1}

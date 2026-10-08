@@ -1,0 +1,13 @@
+name: tetrimmer
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  # TEtrimmer (Qian et al.) and its dependencies (BLAST, MAFFT, CD-HIT, HMMER,
+  # pfam_scan, RepeatMasker/RepeatModeler for RepeatClassifier, TRF, R ...).
+  # Upstream recommends python 3.10 + samtools 1.22.1 next to bioconda::tetrimmer.
+  # "ClobberWarning" for blast vs rmblast binaries during the build is expected.
+  # After the first build, pin the resolved version here (conda list tetrimmer).
+  - python=3.10
+  - samtools=1.22.1
+  - tetrimmer

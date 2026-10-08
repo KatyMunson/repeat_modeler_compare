@@ -78,7 +78,7 @@ Check before accepting:
   2. Dot-plot a handful of loci to get the unit length and structure.
   3. Check whether the block is Mlim-specific and, given the germline/somatic
      question, whether it is enriched on the eliminated fraction (needs the
-     depth data, see section 8).
+     depth data, see section 9).
 - Related large Unknowns, also candidates for block membership:
   - Mlim_rnd-1_family-26 (37,700 copies; chain-1 with Esto_rnd-1_family-319;
     matched satellite motif MLI_SAT955_a at 97.8% earlier, tandem_frac 0.15);
@@ -173,7 +173,50 @@ Check before accepting:
 - Write `library_release.tsv` with columns: old ID, new name, class,
   orientation, cue, reverse-complemented yes/no.
 
-## 8. Other open threads
+## 8. NUMT follow-ups (Mlim; `numt_only`, `numt_gap_check.py`)
+
+Context: `results_v3/numt/Mlim/numts.bed` after the BLAST-name fix (the
+assembly's own mitogenome NC_002639.1 excluded as the mito contig). The 20
+compound calls with >= 5 kb aligned were checked for flanking assembly gaps
+(`workflow/scripts/numt_gap_check.py`, output
+`results_v3/numt/Mlim/numt_gap_check.tsv`):
+- none has a gap or contig end within 5 kb on both sides (chance 0.0001),
+  and 17 / 20 have no gap within 10 kb on either side, so they are not
+  scaffolded mito contigs. Keep them as NUMTs;
+- 2 / 20 have a gap on one side within 5 kb (10 % vs 1.5 % by chance;
+  small numbers, and repeat-rich regions are harder to assemble).
+
+To check:
+- **`Mlim_numt_485`** (NW_027149408.1:470775-478247, 7.5 kb, 97.0 %, minus
+  strand) ends exactly at the scaffold end. The scaffold may end inside a
+  NUMT, or the assembler may have attached mito sequence. Dot plot of the
+  last ~20 kb of NW_027149408.1 against the mitogenome. The left side is
+  continuous for 470 kb, so it is not a mito contig on its own.
+- **One-sided 500-N gaps** (NCBI's standard gap size, so assembly joins):
+  - `Mlim_numt_120` (NC_090426.1:127037945-127044612): gap 2.6 kb to the left;
+  - `Mlim_numt_388` (NW_027146820.1:33081-38642, a 70 kb scaffold): gap
+    1.7 kb to the right.
+- **Two identity groups** among the long calls:
+  - about 96-97 % (9 calls): mostly single NUMTs on chromosomes
+    (NC_090422 / 425 / 426 / 432). These look like independent recent
+    insertions;
+  - about 92-93 % (11 calls), clustered:
+    - NW_027145999.1: 4 calls between 98 and 297 kb;
+    - NW_027147682.1: 3 calls within 30 kb (`numt_454` and `numt_455`
+      overlap by 1.4 kb on the same strand but were not merged, so their
+      mito coordinates don't continue);
+    - NW_027145878.1: 2 calls 20 kb apart;
+    - NC_090430.1: 2 calls 30 kb apart near the chromosome start.
+  - Hypothesis: one old insertion, later duplicated (segmental duplication
+    of a NUMT region), rather than 11 events. Test: all-vs-all blastn of
+    the 92-93 % copies. If they match each other at >= 98 % but the
+    mitogenome only at 92 %, they were copied after insertion. This matters
+    for counting insertion events, not for NUMT bp.
+- **`merge_gap`:** still to choose from `numt_gap_hist.tsv` after the rerun
+  with real gap fills (Mlim has ~13 mito-colinear pairs with 4-8 kb genome
+  gaps; Esto has a single pair, > 50 kb apart).
+
+## 9. Other open threads
 
 - `family_profile.py` multi-family mode (several families profiled as one
   element), promised earlier.

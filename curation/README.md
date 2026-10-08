@@ -50,3 +50,18 @@ the cross-check names it MYX2_SAT25_a (25 bp motif = its 25 bp KITE founder),
 replacing the earlier windowed MYX2_SAT36_a. Rows kept here are medium or
 partial calls (not auto-applied), provisional SAT-n names, rDNA_45S and the
 junction; if `apply` is turned off, restore the removed rows from git history.
+
+### Neighbour-placed families (family_neighbors, first full run)
+
+35 rows with `evidence = family_neighbors (...)`, from
+`summary_shared_only/family_neighbors_proposals.tsv`:
+- 18 more pieces of Gypsy-N1_Esto (16, mostly LTR-pipeline families next to
+  the family-332 internal region: likely LTR variants) and Gypsy-1_Esto (2);
+- 3 rDNA spacer pieces next to the 45S families (rDNA_45S);
+- 14 high-confidence calls on the families' own copies (not partner-anchored,
+  not propagated).
+Not added: medium calls, propagated calls and all partner-anchored calls.
+Several large families are anchored by a few dozen copies of a Dfam
+consensus from another species (e.g. Mlim_rnd-1_family-48 by
+Gypsy-85_LTR_AstCal): more likely a partial match of that consensus to the
+hagfish family than a separate piece of one element.

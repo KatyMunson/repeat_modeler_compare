@@ -145,7 +145,7 @@ class Stats:
     def __init__(self):
         self.n = 0
         self.side = {"5p": Counter(), "3p": Counter()}   # (partner_idx, rel_strand) -> copies
-        self.both = Counter()                            # partner_idx -> copies flanked same-strand both sides
+        self.both = Counter()                            # (partner_idx, rel) -> copies flanked by P on both sides
         self.polya = 0
         self.tandem = 0
 
@@ -205,8 +205,8 @@ def scan(by_contig, stats, gaps, max_gap, max_overlap):
                 sides[side] = (nb[2], rel)
                 gap = (nb[0] - e) if nb[0] > s else (s - nb[1])
                 gaps[(fam, side, nb[2], rel)].append(gap)
-            if "5p" in sides and sides.get("5p") == sides.get("3p") and sides["5p"][1] == "same":
-                st.both[sides["5p"][0]] += 1
+            if "5p" in sides and sides.get("5p") == sides.get("3p"):
+                st.both[sides["5p"]] += 1        # (partner, rel): flanked by P in one orientation
 
 
 def read_tsv(path):
@@ -241,6 +241,8 @@ def main():
                     help="partner-anchored call: the partner needs at least this many copies")
     ap.add_argument("--own-prefix", nargs="*", default=[],
                     help="name prefixes of this library's own families (e.g. Esto_ Mlim_): only they anchor")
+    ap.add_argument("--pool-min-copies", type=int, default=5,
+                    help="LTR pooling: a partner counts only with this many copies in its dominant orientation")
     ap.add_argument("--no-transfer", nargs="*", default=["SINE/Alu"],
                     help="partner labels never passed on (implausible here), besides non-TE orders")
     ap.add_argument("--top", type=int, default=5, help="partners per side in --neighbors-out")
@@ -345,32 +347,41 @@ def main():
     pooled_class = {}
 
     def best_call(idx, S):
+        # Consensus orientation is arbitrary (RepeatModeler / LTR pipeline), so a
+        # partner consistently on the OPPOSITE strand is as good as one on the
+        # same strand: what matters is one orientation dominating. Candidates
+        # carry rel (same / opp) as their 7th field.
         st = S[idx]
         cands = []
-        for p, n in st.both.items():        # flanked by P on both sides: internal region
-            cands.append((n / st.n, n, "internal_of", p, "I", False))
-        same5 = {p: n for (p, rel), n in st.side["5p"].items() if rel == "same"}
-        same3 = {p: n for (p, rel), n in st.side["3p"].items() if rel == "same"}
-        for p in set(same5) & set(same3):
-            # LTR: P on its 3' side (5' LTR) in some copies, on its 5' side (3' LTR) in others;
-            # from P's side, this family sits at both of P's ends
-            if not (biased(same5[p], st.side["5p"].get((p, "opp"), 0))
-                    and biased(same3[p], st.side["3p"].get((p, "opp"), 0))):
-                continue
-            p_st = S[p]
-            p5 = p_st.side["5p"].get((idx, "same"), 0)
-            p3 = p_st.side["3p"].get((idx, "same"), 0)
-            frac_p = min(p5, p3) / max(p_st.n, 1)
-            n = min(same5[p], same3[p])
-            if frac_p >= args.min_frac and n >= args.min_pairs and st.both.get(p, 0) < n:
-                cands.append((min(frac_p, (same5[p] + same3[p]) / st.n), n, "LTR_of", p, "LTR", False))
-        mirror = {"3p": "5p", "5p": "3p"}
-        for side, part in (("3p", "5prime_of"), ("5p", "3prime_of")):
-            for (p, rel), n in st.side[side].items():
-                if rel != "same":
+        other = {"same": "opp", "opp": "same"}
+        for (p, rel), n in st.both.items():   # flanked by P on both sides: internal region
+            if biased(n, st.both.get((p, other[rel]), 0)):
+                cands.append((n / st.n, n, "internal_of", p, "I", False, rel))
+        for rel in ("same", "opp"):
+            r5 = {p: n for (p, r), n in st.side["5p"].items() if r == rel}
+            r3 = {p: n for (p, r), n in st.side["3p"].items() if r == rel}
+            for p in set(r5) & set(r3):
+                # LTR: P on its 3' side (5' LTR) in some copies, on its 5' side (3' LTR) in others;
+                # from P's side, this family sits at both of P's ends
+                if not (biased(r5[p], st.side["5p"].get((p, other[rel]), 0))
+                        and biased(r3[p], st.side["3p"].get((p, other[rel]), 0))):
                     continue
-                if biased(n, st.side[side].get((p, "opp"), 0)):
-                    cands.append((n / st.n, n, part, p, part.split("_")[0], False))
+                p_st = S[p]
+                p5 = p_st.side["5p"].get((idx, rel), 0)
+                p3 = p_st.side["3p"].get((idx, rel), 0)
+                frac_p = min(p5, p3) / max(p_st.n, 1)
+                n = min(r5[p], r3[p])
+                if frac_p >= args.min_frac and n >= args.min_pairs and st.both.get((p, rel), 0) < n:
+                    cands.append((min(frac_p, (r5[p] + r3[p]) / st.n), n, "LTR_of", p, "LTR", False, rel))
+        mirror = {"3p": "5p", "5p": "3p"}
+        for side in ("3p", "5p"):
+            for (p, rel), n in st.side[side].items():
+                # In P's orientation: same strand, P on this family's 3' side ->
+                # this family is 5' of P; opposite strand flips it.
+                part = ("5prime_of" if side == "3p" else "3prime_of") if rel == "same" else \
+                       ("3prime_of" if side == "3p" else "5prime_of")
+                if biased(n, st.side[side].get((p, other[rel]), 0)):
+                    cands.append((n / st.n, n, part, p, part.split("_")[0], False, rel))
                 # Partner-anchored: most of P's copies carry this family on the
                 # facing side, though this (much larger) family is mostly
                 # elsewhere: still pieces of one element.
@@ -380,28 +391,38 @@ def main():
                 p_st = S[p]
                 if not own_family(p) or p_st.n < args.anchor_min_copies:
                     continue
-                m = p_st.side[mirror[side]].get((idx, "same"), 0)
-                mo = p_st.side[mirror[side]].get((idx, "opp"), 0)
+                p_side = mirror[side] if rel == "same" else side   # the side of P facing this family
+                m = p_st.side[p_side].get((idx, rel), 0)
+                mo = p_st.side[p_side].get((idx, other[rel]), 0)
                 if m / p_st.n >= args.anchor_frac and biased(m, mo):
-                    cands.append((m / p_st.n, m, part, p, part.split("_")[0], True))
+                    cands.append((m / p_st.n, m, part, p, part.split("_")[0], True, rel))
         # LTR variants pooled: an internal region whose LTRs are split across
         # many LTR-pipeline (or LTR-labelled) families, none frequent enough
         # alone. 5' side = 5' LTR, 3' side = 3' LTR.
+        # Each LTR partner counts in its own dominant orientation (consensus
+        # orientations are arbitrary), and only if that orientation dominates
+        # (random LTR neighbours, common in these genomes, are 50/50).
         pool = {}
         for side in ("5p", "3p"):
-            same = opp = 0
+            tot = 0
             by_p = Counter()
             for (p, rel), n in st.side[side].items():
-                if p != idx and ltr_piece(p):
-                    if rel == "same":
-                        same += n
-                        by_p[p] += n
-                    else:
-                        opp += n
-            pool[side] = (same, opp, by_p)
-        (s5, o5, b5), (s3, o3, b3) = pool["5p"], pool["3p"]
-        ok5 = biased(s5, o5) and s5 >= args.min_pairs and s5 / st.n >= args.min_frac
-        ok3 = biased(s3, o3) and s3 >= args.min_pairs and s3 / st.n >= args.min_frac
+                if rel != "same" or p == idx or not ltr_piece(p):
+                    continue
+                o = st.side[side].get((p, "opp"), 0)
+                dom, minor = max(n, o), min(n, o)
+                if dom >= args.pool_min_copies and biased(dom, minor):
+                    tot += dom
+                    by_p[p] += dom
+            for (p, rel), o in st.side[side].items():   # opposite-strand-only partners
+                if rel == "opp" and p != idx and ltr_piece(p) and (p, "same") not in st.side[side] \
+                        and o >= args.pool_min_copies:
+                    tot += o
+                    by_p[p] += o
+            pool[side] = (tot, by_p)
+        (s5, b5), (s3, b3) = pool["5p"], pool["3p"]
+        ok5 = s5 >= args.min_pairs and s5 / st.n >= args.min_frac
+        ok3 = s3 >= args.min_pairs and s3 / st.n >= args.min_frac
         if ok5 or ok3:
             parts = b5 + b3
             top = parts.most_common(1)[0][0]
@@ -414,10 +435,10 @@ def main():
             pooled_class[(id(S), idx)] = (best[0][0] if best and best[0][1] >= 0.5 * sum(parts.values())
                                           else "LTR/Unknown")
             if ok5 and ok3:
-                cands.append((min(s5, s3) / st.n, min(s5, s3), "internal_of_LTRs", top, "I", False))
+                cands.append((min(s5, s3) / st.n, min(s5, s3), "internal_of_LTRs", top, "I", False, "pooled"))
             else:
                 n1 = s5 if ok5 else s3
-                cands.append((n1 / st.n, n1, "next_to_LTRs", top, ".", False))
+                cands.append((n1 / st.n, n1, "next_to_LTRs", top, ".", False, "pooled"))
         cands = [c for c in cands if c[1] >= args.min_pairs and c[0] >= args.min_frac]
         # The family's own copies first; partner-anchored only when they show nothing.
         own = [c for c in cands if not c[5]]
@@ -428,7 +449,7 @@ def main():
         return max(cands, key=lambda c: (c[0] * (1.25 if rank[c[2]] == 2 else 1), c[1]), default=None)
 
     def resolve(idx, c, propagated, t):
-        frac, n, pattern, p, part, anchored = c
+        frac, n, pattern, p, part, anchored, _rel = c
         if pattern in ("internal_of_LTRs", "next_to_LTRs"):
             pcls = pooled_class.get((id(stats[t]), idx), "LTR/Unknown")
             if not informative(cls_of(idx), pcls):
@@ -481,7 +502,7 @@ def main():
         t, c = tc
         for t2 in tiers:
             c2 = per_tier[t2][idx] if t2 > t else None
-            if c2 and c2[2:4] == c[2:4] and c2[0] > c[0]:
+            if c2 and c2[2:4] == c[2:4] and c2[6] == c[6] and c2[0] > c[0]:
                 r2 = resolve(idx, c2, first, t2) if idx in resolved else None
                 calls[idx] = (t2, c2)
                 if r2:
@@ -547,6 +568,9 @@ def main():
                              + ("classify that first" if is_target(pc) else "label not passed on"))
             if c and c[5]:
                 notes.append(f"partner-anchored: {c[0]:.2f} of {fam_names[c[3]]}'s copies sit next to it")
+            if c and c[6] == "opp":
+                notes.append(f"{fam_names[c[3]]} on the opposite strand: this consensus is reverse-complemented "
+                             "relative to it (orientation is arbitrary)")
             pattern = c[2] if c else "none"
             out.write(f"{fam}\t{cls_of(idx)}\t{st.n}\t{fam in tandem_fam}\t{pa:.3f}\t{td:.3f}\t{t}\t{pattern}\t"
                       + (f"{fam_names[c[3]]}\t{cls_of(c[3])}\t{c[1]}\t{c[0]:.3f}\t" if c else "NA\tNA\t0\t0\t")
@@ -557,7 +581,8 @@ def main():
                 by_tier[t] += 1
                 p = fam_names[c[3]]
                 group = group_of.get(p, f"with-{p}")
-                note = (f"{pattern}{' (partner-anchored)' if c[5] else ''} {p} ({c[1]} copies, {c[0]:.2f}, gap <= {t} bp)"
+                note = (f"{pattern}{' (partner-anchored)' if c[5] else ''}{' (reverse strand)' if c[6] == 'opp' else ''} "
+                        f"{p} ({c[1]} copies, {c[0]:.2f}, gap <= {t} bp)"
                         + (f"; {r[2]} class" if r[2] != "label" else ""))
                 prop.write(f"{group}\t{fam}\t{r[0]}\t{c[4]}\tfamily_neighbors\t{note}\t{r[1]}\n")
     print(f"[family_neighbors] {len(targets)} target families tested; proposals: "

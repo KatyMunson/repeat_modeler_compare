@@ -647,6 +647,13 @@ in windows wider than `high_max_gap` are capped at medium.
   to that order. A target linked only to another Unknown gets no class but a
   note; if that partner is called in the first pass, the target inherits
   the call (medium).
+- Orientation: RepeatModeler and LTR-pipeline consensi are oriented
+  arbitrarily, so one piece of an element can be stored reverse-complemented
+  relative to another. A partner consistently on the opposite strand counts
+  like one on the same strand (the note says "reverse strand"); what is
+  required is that one orientation dominates (`strand_ratio`). Pooled LTR
+  partners each count in their own dominant orientation, with at least
+  `pool_min_copies` copies.
 - Only TE orders (DNA, LINE, SINE, LTR, RC, Retroposon, PLE) and rRNA
   (rDNA spacer pieces) pass their label on; `RNA`, `tRNA`, `Other` ... and
   the labels in `no_transfer` (default `SINE/Alu`, implausible in hagfish)

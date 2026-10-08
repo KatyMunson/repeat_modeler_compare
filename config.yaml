@@ -163,6 +163,7 @@ summary:
     high_frac: 0.4      # high
     anchor_frac: 0.4    # partner-anchored call: >= this share of the PARTNER's copies next to the family (medium)
     anchor_min_copies: 100     # ... and the partner (one of this library's own families) has >= this many copies
+    pool_min_copies: 5  # LTR pooling: a partner counts with >= this many copies in its dominant orientation
     no_transfer: ["SINE/Alu"]  # partner labels never passed on, besides non-TE orders (RNA, tRNA, Other ...)
 
 # Satellite / rDNA / mito cross-check (README "Satellite, rDNA and mito

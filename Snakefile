@@ -1928,6 +1928,7 @@ rule family_neighbors:
         f"{OUTDIR}/logs/summary/family_neighbors_{{sumdir}}.log",
     params:
         outs=" ".join(f"{s}={OUTDIR}/shared/{s}/repeatmasker/{s}.fa.out" for s in SAMPLE_IDS),
+        own=" ".join(f"{s}{config['library']['sample_prefix_sep']}" for s in SAMPLE_IDS),
         opt=lambda wc, input: " ".join(
             ([f"--reclass {input.reclass}"] if input.reclass else [])
             + ([f"--curated {input.curated}"] if input.curated else [])
@@ -1938,7 +1939,7 @@ rule family_neighbors:
         ),
     shell:
         "python3 {SCRIPTS}/family_neighbors.py --out-file {params.outs} "
-        "--family-tandem {input.family_tandem} {params.opt} {params.n} "
+        "--family-tandem {input.family_tandem} {params.opt} {params.n} --own-prefix {params.own} "
         "--neighbors-out {output.neighbors} --calls-out {output.calls} "
         "--proposals-out {output.proposals} --chains-out {output.chains} > {log} 2>&1"
 

@@ -636,7 +636,8 @@ in windows wider than `high_max_gap` are capped at medium.
 | `LTR_of` P | P (same strand) on the family's 3' side in some copies, 5' side in others; the family also sits at both ends of P's copies | P's class, `part = LTR` |
 | `internal_of` P | P on both sides, same strand | P's class, `part = I` |
 | `5prime_of` / `3prime_of` P | P continues the family on one side, same strand | P's class, `part = 5prime` / `3prime` |
-| partner-anchored | as above, but seen from P: ≥ `anchor_frac` of P's copies carry the family on the facing side, though the (much larger) family is mostly elsewhere | P's class, capped at medium; used only when the family's own copies show no pattern |
+| partner-anchored | as above, but seen from P: ≥ `anchor_frac` of P's copies carry the family on the facing side, though the (much larger) family is mostly elsewhere. P must be one of this library's own families (sample-prefixed) with ≥ `anchor_min_copies` copies: a foreign Dfam consensus with a few dozen hits is usually a partial match to the family itself | P's class, capped at medium; used only when the family's own copies show no pattern |
+| `internal_of_LTRs` / `next_to_LTRs` | LTR variants pooled: LTR-pipeline (or LTR-labelled) families, summed, sit on both sides (or one side) of the family, same strand. Catches internal regions whose LTRs are split across many variant families, none frequent enough alone | `LTR/Unknown` (or the LTR class carrying most of the pooled support), `part = I`; one side only: medium |
 
 - Targets are families labelled `Unknown` or `<Order>/Unknown` after the
   curated, cross-check and reclassification labels, with ≥ `min_copies`

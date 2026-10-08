@@ -40,6 +40,13 @@ always next to it. When the family's own copies show no pattern, >=
 --anchor-frac of the PARTNER's copies carrying it on the facing side (same
 strand) gives the call, capped at medium.
 
+Partners that anchor must be this library's own families (--own-prefix)
+with >= --anchor-min-copies copies.
+
+LTR variants pooled (internal_of_LTRs / next_to_LTRs): the support of all
+LTR-pipeline or LTR-labelled neighbours is summed per side, for internal
+regions whose LTRs are split across many variant families.
+
 Only TE orders and rRNA pass their label on (TRANSFER_ORDERS; plus
 --no-transfer, default SINE/Alu). Unknown families that keep joining
 each other are grouped into chains (--chains-out).
@@ -65,6 +72,7 @@ copy rows into your curated table. Stdlib only.
 
 import argparse
 import bisect
+import re
 import statistics
 import sys
 from collections import Counter, defaultdict
@@ -75,6 +83,7 @@ SIMPLE_CLASSES = ("Simple_repeat", "Low_complexity")
 # Orders whose label a neighbour may pass on (rRNA: spacer pieces of the
 # rDNA unit). Others (RNA, tRNA, snRNA, Other, ...) only give a note.
 TRANSFER_ORDERS = ("DNA", "LINE", "SINE", "LTR", "RC", "Retroposon", "PLE", "rRNA")
+LTR_PIPELINE = re.compile(r"_ltr-\d+_family-")
 COMP = str.maketrans("ACGTacgt", "TGCAtgca")
 
 
@@ -228,6 +237,10 @@ def main():
     ap.add_argument("--anchor-frac", type=float, default=0.4,
                     help="partner-anchored call: >= this share of the PARTNER's copies carry the family on "
                          "the facing side, same strand (capped at medium)")
+    ap.add_argument("--anchor-min-copies", type=int, default=100,
+                    help="partner-anchored call: the partner needs at least this many copies")
+    ap.add_argument("--own-prefix", nargs="*", default=[],
+                    help="name prefixes of this library's own families (e.g. Esto_ Mlim_): only they anchor")
     ap.add_argument("--no-transfer", nargs="*", default=["SINE/Alu"],
                     help="partner labels never passed on (implausible here), besides non-TE orders")
     ap.add_argument("--top", type=int, default=5, help="partners per side in --neighbors-out")
@@ -321,6 +334,16 @@ def main():
         """same-strand partner well above the 50/50 of random neighbours"""
         return same >= args.strand_ratio * max(opp, 0) and same > opp
 
+    own_prefixes = tuple(args.own_prefix)
+
+    def own_family(p):
+        return not own_prefixes or fam_names[p].startswith(own_prefixes)
+
+    def ltr_piece(p):
+        return bool(LTR_PIPELINE.search(fam_names[p])) or cls_of(p).startswith("LTR")
+
+    pooled_class = {}
+
     def best_call(idx, S):
         st = S[idx]
         cands = []
@@ -351,21 +374,68 @@ def main():
                 # Partner-anchored: most of P's copies carry this family on the
                 # facing side, though this (much larger) family is mostly
                 # elsewhere: still pieces of one element.
+                # Only our own library's families anchor (a foreign Dfam
+                # consensus with a few dozen hits is usually a partial match
+                # to this family itself), and only with enough copies.
                 p_st = S[p]
+                if not own_family(p) or p_st.n < args.anchor_min_copies:
+                    continue
                 m = p_st.side[mirror[side]].get((idx, "same"), 0)
                 mo = p_st.side[mirror[side]].get((idx, "opp"), 0)
-                if p_st.n and m / p_st.n >= args.anchor_frac and biased(m, mo):
+                if m / p_st.n >= args.anchor_frac and biased(m, mo):
                     cands.append((m / p_st.n, m, part, p, part.split("_")[0], True))
+        # LTR variants pooled: an internal region whose LTRs are split across
+        # many LTR-pipeline (or LTR-labelled) families, none frequent enough
+        # alone. 5' side = 5' LTR, 3' side = 3' LTR.
+        pool = {}
+        for side in ("5p", "3p"):
+            same = opp = 0
+            by_p = Counter()
+            for (p, rel), n in st.side[side].items():
+                if p != idx and ltr_piece(p):
+                    if rel == "same":
+                        same += n
+                        by_p[p] += n
+                    else:
+                        opp += n
+            pool[side] = (same, opp, by_p)
+        (s5, o5, b5), (s3, o3, b3) = pool["5p"], pool["3p"]
+        ok5 = biased(s5, o5) and s5 >= args.min_pairs and s5 / st.n >= args.min_frac
+        ok3 = biased(s3, o3) and s3 >= args.min_pairs and s3 / st.n >= args.min_frac
+        if ok5 or ok3:
+            parts = b5 + b3
+            top = parts.most_common(1)[0][0]
+            # a specific class only when most pooled support carries it
+            cls_n = Counter()
+            for p, n in parts.items():
+                if not is_target(cls_of(p)) and cls_of(p).startswith("LTR/"):
+                    cls_n[cls_of(p)] += n
+            best = cls_n.most_common(1)
+            pooled_class[(id(S), idx)] = (best[0][0] if best and best[0][1] >= 0.5 * sum(parts.values())
+                                          else "LTR/Unknown")
+            if ok5 and ok3:
+                cands.append((min(s5, s3) / st.n, min(s5, s3), "internal_of_LTRs", top, "I", False))
+            else:
+                n1 = s5 if ok5 else s3
+                cands.append((n1 / st.n, n1, "next_to_LTRs", top, ".", False))
         cands = [c for c in cands if c[1] >= args.min_pairs and c[0] >= args.min_frac]
         # The family's own copies first; partner-anchored only when they show nothing.
         own = [c for c in cands if not c[5]]
         cands = own or cands
         # LTR/internal patterns outrank one-sided continuation at similar support
-        rank = {"LTR_of": 2, "internal_of": 2, "5prime_of": 1, "3prime_of": 1}
+        rank = {"LTR_of": 2, "internal_of": 2, "internal_of_LTRs": 2,
+                "5prime_of": 1, "3prime_of": 1, "next_to_LTRs": 1}
         return max(cands, key=lambda c: (c[0] * (1.25 if rank[c[2]] == 2 else 1), c[1]), default=None)
 
     def resolve(idx, c, propagated, t):
         frac, n, pattern, p, part, anchored = c
+        if pattern in ("internal_of_LTRs", "next_to_LTRs"):
+            pcls = pooled_class.get((id(stats[t]), idx), "LTR/Unknown")
+            if not informative(cls_of(idx), pcls):
+                return None
+            conf = "high" if (pattern == "internal_of_LTRs" and frac >= args.high_frac
+                              and t <= args.high_max_gap) else "medium"
+            return pcls, conf, "pooled LTR variants"
         pcls = cls_of(p)
         source = "label"
         if not informative(cls_of(idx), pcls) and propagated and p in propagated:

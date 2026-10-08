@@ -155,5 +155,16 @@ class TestMitoContigs(unittest.TestCase):
         self.assertEqual(set(mito), {"m"})
 
 
+class TestBlastNames(unittest.TestCase):
+    def test_accession_tags_resolved(self):
+        from fasta_utils import blast_subject_resolver
+        r = blast_subject_resolver(["NC_002639.1", "ptg001005l", "scaf_1"])
+        self.assertEqual(r("ref|NC_002639.1|"), "NC_002639.1")
+        self.assertEqual(r("lcl|ptg001005l"), "ptg001005l")
+        self.assertEqual(r("scaf_1"), "scaf_1")
+        with self.assertRaises(ValueError):
+            r("ref|NC_999999.1|")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -56,3 +56,26 @@ def merge_half_open(intervals):
         else:
             merged.append((start, end))
     return merged
+
+
+def blast_subject_resolver(known):
+    """Map BLAST sseqid back to the FASTA's own sequence names. With
+    makeblastdb -parse_seqids, IDs that look like NCBI accessions come back
+    with their database tag (NC_002639.1 -> ref|NC_002639.1|; also gb|, emb|,
+    lcl|, ...), so the raw sseqid can differ from the name in the FASTA, the
+    .out and every other table. Returns a function name -> known name that
+    raises on a name it can't place, rather than letting it through."""
+    known = set(known)
+    cache = {}
+
+    def resolve(name):
+        if name in known:
+            return name
+        if name not in cache:
+            hits = [t for t in name.split("|") if t in known]
+            if len(hits) != 1:
+                raise ValueError(f"BLAST subject '{name}' matches no unique sequence name in the genome")
+            cache[name] = hits[0]
+        return cache[name]
+
+    return resolve

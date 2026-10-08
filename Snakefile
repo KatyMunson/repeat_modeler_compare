@@ -2772,7 +2772,8 @@ rule dna_te_pilot:
         rm -rf {params.workdir}
         python3 {SCRIPTS}/dna_te_pilot.py pilot --sample {wildcards.sample} \
             --tir {input.tir} --helitron {input.helitron} --own-families {input.own} \
-            --shared-library {input.shared} --genome {input.genome} --out-file {input.out_file} \
+            --shared-library {input.shared} --genome {input.genome} --fingerprint {input.fingerprint} \
+            --out-file {input.out_file} \
             --assembly-stats {input.assembly_stats} --identity {params.cdhit[identity]} \
             --coverage-short {params.cdhit[coverage_short]} --word-size {params.cdhit[word_size]} \
             --evalue {params.evalue} --max-targets $((n_seqs + 10)) --threads {threads} \

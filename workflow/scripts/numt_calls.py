@@ -51,7 +51,7 @@ import bisect
 import statistics
 import sys
 
-from fasta_utils import iter_fasta, merge_half_open, seq_id, write_fasta
+from fasta_utils import blast_subject_resolver, iter_fasta, merge_half_open, seq_id, write_fasta
 from intervals import clip
 from summarize_rm import CANONICAL_CLASSES, collapse_class, owned_segments, parse_out_file, read_assembly_stats
 
@@ -96,7 +96,7 @@ def fold(qstart, qend, mito_len):
     return ms, me, wraps
 
 
-def read_blast(path):
+def read_blast(path, resolve=lambda n: n):
     hits = []
     with open(path) as fh:
         for line in fh:
@@ -104,7 +104,7 @@ def read_blast(path):
                 continue
             f = dict(zip(BLAST_FIELDS, line.rstrip("\n").split("\t")))
             h = Hit()
-            h.mito, h.contig = f["qseqid"], f["sseqid"]
+            h.mito, h.contig = f["qseqid"], resolve(f["sseqid"])
             h.pident, h.aln_len, h.bitscore = float(f["pident"]), int(f["length"]), float(f["bitscore"])
             qlen = int(f["qlen"])
             if qlen % 2:
@@ -352,7 +352,7 @@ def bin_label(gap):
 def call(args):
     contig_len = read_fingerprint(args.fingerprint)
     _total_bp, non_n_bp = read_assembly_stats(args.assembly_stats)
-    raw = read_blast(args.blast)
+    raw = read_blast(args.blast, blast_subject_resolver(contig_len))
     print(f"[numt] {args.sample}: {len(raw)} blastn HSPs")
 
     mito = mito_contigs(raw, contig_len, args.mito_contig_cov, args.mito_contig_id)

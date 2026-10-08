@@ -28,7 +28,7 @@ import re
 import subprocess
 import sys
 
-from fasta_utils import iter_fasta, merge_half_open, seq_id, write_fasta
+from fasta_utils import blast_subject_resolver, iter_fasta, merge_half_open, seq_id, write_fasta
 from summarize_rm import read_assembly_stats
 
 TYPES = ("tir", "helitron")
@@ -152,7 +152,7 @@ def blast_cover(args, reps_fa, wd, tag):
         for line in fh:
             f = line.split("\t")
             s, e = sorted((int(f[6]), int(f[7])))
-            ivs.setdefault(f[1], []).append((s - 1, e))
+            ivs.setdefault(args.resolve(f[1]), []).append((s - 1, e))
     return {c: merge_half_open(v) for c, v in ivs.items()}
 
 
@@ -197,6 +197,8 @@ def superfamily(label):
 def pilot(args):
     wd = args.workdir
     os.makedirs(wd, exist_ok=True)
+    with open(args.fingerprint) as fh:
+        args.resolve = blast_subject_resolver(l.split("\t", 1)[0] for l in fh if not l.startswith("#"))
     _total, non_n = read_assembly_stats(args.assembly_stats)
     shared_classes = {label_of(n) for n in lib_names(args.shared_library)}
     masked = out_masked(args.out_file)
@@ -311,6 +313,7 @@ def main():
     p.add_argument("--own-families", required=True)
     p.add_argument("--shared-library", required=True)
     p.add_argument("--genome", required=True)
+    p.add_argument("--fingerprint", required=True, help="genome fingerprint.tsv (sequence names)")
     p.add_argument("--out-file", required=True, help="shared-arm .out (bp already masked)")
     p.add_argument("--assembly-stats", required=True)
     p.add_argument("--identity", type=float, default=0.8)

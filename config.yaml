@@ -153,7 +153,9 @@ summary:
   # of / 5' or 3' piece of a classified family). Report-only.
   family_neighbors: true
   neighbors:
-    max_gap: 100        # bp between a copy and its neighbour
+    max_gap: [100, 500, 2000]  # windows (bp between a copy and its neighbour), tightest first
+    high_max_gap: 500   # calls only found in wider windows are capped at medium
+    strand_ratio: 3     # partner on the same strand >= this x the opposite (random = 50/50)
     max_overlap: 50     # bp a neighbour may overlap the copy
     min_copies: 50      # target copies (all samples) to be tested
     min_pairs: 20       # copies showing the pattern

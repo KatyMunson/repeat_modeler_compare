@@ -619,8 +619,17 @@ classified: the LTRs of a Gypsy internal region, the 5' end of a LINE, a
 split consensus. Their copies sit next to those pieces again and again, on a
 fixed side and in the same orientation. `family_neighbors.py` counts each
 family's neighbours on its 5' and 3' sides (in the family's own orientation)
-in the shared-arm `.out` files, within `summary.neighbors.max_gap` bp, and
-calls the patterns:
+in the shared-arm `.out` files and calls the patterns below. Neighbours are
+looked for in widening windows (`summary.neighbors.max_gap`, default 100,
+500 and 2000 bp between the copy and its neighbour). Each family takes its
+call from the tightest window that gives one; pieces of young elements
+abut, while old copies are split by unmasked, diverged stretches. If a
+wider window finds the same pattern and partner with more support, that
+support is reported, with its window in `max_gap`. Because a 2 kb window in
+a repeat-dense genome nearly always holds some neighbour, every pattern
+also needs the partner on the same strand ≥ `strand_ratio` times as often
+as on the opposite one (random neighbours are 50/50), and calls found only
+in windows wider than `high_max_gap` are capped at medium.
 
 | pattern | copies look like | proposal |
 |---|---|---|

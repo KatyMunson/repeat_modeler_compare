@@ -23,6 +23,17 @@ the family's own orientation), and calls the patterns:
                 retrotransposon or SINE; note only)
   tandem        copies next to copies of the same family (note only)
 
+Windows: neighbours are looked for within --max-gap bp of each copy, in
+widening windows (default 100, 500, 2000). Each family takes its call from
+the tightest window that gives one (pieces of young elements abut, while
+old copies are split by unmasked, diverged stretches); a wider window that
+finds the same pattern and partner with more support then supplies the
+support (and its max_gap is reported). A wide window in a
+repeat-dense genome almost always finds some neighbour, so every pattern
+also needs the partner on the same strand >= --strand-ratio times as often
+as on the opposite one (random neighbours are 50/50), and calls from
+windows wider than --high-max-gap are capped at medium.
+
 Targets are families labelled Unknown or <Order>/Unknown after the curated,
 cross-check and reclassification labels; partners are any non-simple
 family. A call needs >= --min-pairs copies and >= --min-frac of the target's
@@ -189,7 +200,13 @@ def main():
     ap.add_argument("--family-tandem", default="", help="combined family_tandem.tsv (labels, tandem flag)")
     ap.add_argument("--reclass", default="", help="unknown_reclassification.tsv")
     ap.add_argument("--curated", nargs="*", default=[], help="curated / applied tables (first wins)")
-    ap.add_argument("--max-gap", type=int, default=100, help="bp between a copy and its neighbour")
+    ap.add_argument("--max-gap", type=int, nargs="+", default=[100, 500, 2000],
+                    help="windows (bp between a copy and its neighbour), tried tightest first: each family "
+                         "takes its call from the first window that gives one")
+    ap.add_argument("--high-max-gap", type=int, default=500,
+                    help="calls from wider windows are capped at medium")
+    ap.add_argument("--strand-ratio", type=float, default=3.0,
+                    help="same-strand partner copies >= this x opposite-strand ones (random neighbours are 50/50)")
     ap.add_argument("--max-overlap", type=int, default=50, help="bp a neighbour may overlap the copy")
     ap.add_argument("--min-copies", type=int, default=50, help="target copies (all samples) to be tested")
     ap.add_argument("--min-pairs", type=int, default=20, help="copies showing the pattern")
@@ -222,14 +239,18 @@ def main():
 
     fam_index, fam_names = {}, []
     stats = defaultdict(Stats)
-    gaps = defaultdict(list)
+    tiers = sorted(set(args.max_gap))
+    stats = {t: defaultdict(Stats) for t in tiers}
+    gaps = {t: defaultdict(list) for t in tiers}
     out_label = {}
     for spec in args.out_file:
         sample, _, path = spec.partition("=")
         by_contig = read_out(path, fam_index, fam_names)
         print(f"[family_neighbors] {sample}: {sum(len(v) for v in by_contig.values()):,} copies "
               f"on {len(by_contig):,} contigs", file=sys.stderr)
-        scan(by_contig, stats, gaps, args.max_gap, args.max_overlap)
+        for t in tiers:
+            scan(by_contig, stats[t], gaps[t], t, args.max_overlap)
+        del by_contig
         # .out labels for families missing from the tables
         with open(path) as fh:
             for line in fh:
@@ -257,23 +278,31 @@ def main():
             return partner_cls.split("/", 1)[0] == target_cls.split("/", 1)[0]
         return True
 
-    # ---- neighbour table
+    base = stats[tiers[0]]      # copy counts and the poly(A) / tandem notes: tightest window
+    targets = [idx for idx, st in base.items() if st.n >= args.min_copies and is_target(cls_of(idx))]
+    targets.sort(key=lambda k: -base[k].n)
+
+    # ---- neighbour table (every window)
     with open(args.neighbors_out, "w") as out:
-        out.write("family\tclass_family\tn_copies\tside\tpartner\tpartner_class\trel_strand\tn\tfrac_of_family\t"
-                  "frac_of_partner\tmedian_gap\n")
-        for idx in sorted(stats, key=lambda k: -stats[k].n):
-            st = stats[idx]
-            if st.n < args.min_copies or not is_target(cls_of(idx)):
-                continue
-            for side in ("5p", "3p"):
-                for (p, rel), n in st.side[side].most_common(args.top):
-                    out.write(f"{fam_names[idx]}\t{cls_of(idx)}\t{st.n}\t{side}\t{fam_names[p]}\t{cls_of(p)}\t"
-                              f"{rel}\t{n}\t{n / st.n:.3f}\t{n / max(stats[p].n, 1):.3f}\t"
-                              f"{statistics.median(gaps[(idx, side, p, rel)]):.0f}\n")
+        out.write("family\tclass_family\tn_copies\tmax_gap\tside\tpartner\tpartner_class\trel_strand\tn\t"
+                  "frac_of_family\tfrac_of_partner\tmedian_gap\n")
+        for idx in targets:
+            for t in tiers:
+                st = stats[t][idx]
+                for side in ("5p", "3p"):
+                    for (p, rel), n in st.side[side].most_common(args.top):
+                        out.write(f"{fam_names[idx]}\t{cls_of(idx)}\t{st.n}\t{t}\t{side}\t{fam_names[p]}\t"
+                                  f"{cls_of(p)}\t{rel}\t{n}\t{n / st.n:.3f}\t"
+                                  f"{n / max(stats[t][p].n, 1):.3f}\t"
+                                  f"{statistics.median(gaps[t][(idx, side, p, rel)]):.0f}\n")
 
     # ---- calls
-    def best_call(idx):
-        st = stats[idx]
+    def biased(same, opp):
+        """same-strand partner well above the 50/50 of random neighbours"""
+        return same >= args.strand_ratio * max(opp, 0) and same > opp
+
+    def best_call(idx, S):
+        st = S[idx]
         cands = []
         for p, n in st.both.items():        # flanked by P on both sides: internal region
             cands.append((n / st.n, n, "internal_of", p, "I"))
@@ -282,7 +311,10 @@ def main():
         for p in set(same5) & set(same3):
             # LTR: P on its 3' side (5' LTR) in some copies, on its 5' side (3' LTR) in others;
             # from P's side, this family sits at both of P's ends
-            p_st = stats[p]
+            if not (biased(same5[p], st.side["5p"].get((p, "opp"), 0))
+                    and biased(same3[p], st.side["3p"].get((p, "opp"), 0))):
+                continue
+            p_st = S[p]
             p5 = p_st.side["5p"].get((idx, "same"), 0)
             p3 = p_st.side["3p"].get((idx, "same"), 0)
             frac_p = min(p5, p3) / max(p_st.n, 1)
@@ -291,19 +323,14 @@ def main():
                 cands.append((min(frac_p, (same5[p] + same3[p]) / st.n), n, "LTR_of", p, "LTR"))
         for side, part in (("3p", "5prime_of"), ("5p", "3prime_of")):
             for (p, rel), n in st.side[side].items():
-                if rel == "same":
+                if rel == "same" and biased(n, st.side[side].get((p, "opp"), 0)):
                     cands.append((n / st.n, n, part, p, part.split("_")[0]))
         cands = [c for c in cands if c[1] >= args.min_pairs and c[0] >= args.min_frac]
         # LTR/internal patterns outrank one-sided continuation at similar support
         rank = {"LTR_of": 2, "internal_of": 2, "5prime_of": 1, "3prime_of": 1}
         return max(cands, key=lambda c: (c[0] * (1.25 if rank[c[2]] == 2 else 1), c[1]), default=None)
 
-    calls = {}
-    for idx, st in stats.items():
-        if st.n >= args.min_copies and is_target(cls_of(idx)):
-            calls[idx] = best_call(idx)
-
-    def resolve(idx, c, propagated):
+    def resolve(idx, c, propagated, t):
         frac, n, pattern, p, part = c
         pcls = cls_of(p)
         source = "label"
@@ -312,30 +339,61 @@ def main():
         if not informative(cls_of(idx), pcls):
             return None
         conf = "high" if frac >= args.high_frac and n >= 2 * args.min_pairs else "medium"
-        if source == "propagated":
+        if source == "propagated" or t > args.high_max_gap:
             conf = "medium"
         return pcls, conf, source
 
-    resolved = {}
-    for idx, c in calls.items():
-        if c:
-            r = resolve(idx, c, None)
-            if r:
-                resolved[idx] = r
+    # Per family, the tightest window giving a usable call; failing that, the
+    # tightest giving any call (a link to another Unknown, for propagation).
+    per_tier = {t: {idx: best_call(idx, stats[t]) for idx in targets} for t in tiers}
+    calls, resolved = {}, {}
+    for idx in targets:
+        calls[idx] = None
+        for t in tiers:
+            c = per_tier[t][idx]
+            if c:
+                r = resolve(idx, c, None, t)
+                if r:
+                    calls[idx], resolved[idx] = (t, c), r
+                    break
+                if calls[idx] is None:
+                    calls[idx] = (t, c)
     first = {idx: r[0] for idx, r in resolved.items()}
-    for idx, c in calls.items():
-        if c and idx not in resolved:
-            r = resolve(idx, c, first)
+    for idx in targets:
+        if idx in resolved:
+            continue
+        for t in tiers:
+            c = per_tier[t][idx]
+            r = resolve(idx, c, first, t) if c else None
             if r:
-                resolved[idx] = r
+                calls[idx], resolved[idx] = (t, c), r
+                break
+
+    # The same pattern and partner in a wider window with more support (old
+    # copies split by longer unmasked stretches): report that support.
+    for idx, tc in calls.items():
+        if not tc or not tc[1]:
+            continue
+        t, c = tc
+        for t2 in tiers:
+            c2 = per_tier[t2][idx] if t2 > t else None
+            if c2 and c2[2:4] == c[2:4] and c2[0] > c[0]:
+                r2 = resolve(idx, c2, first, t2) if idx in resolved else None
+                calls[idx] = (t2, c2)
+                if r2:
+                    resolved[idx] = r2
+                t, c = t2, c2
 
     n_called = Counter()
+    by_tier = Counter()
     with open(args.calls_out, "w") as out, open(args.proposals_out, "w") as prop:
-        out.write("family\tclass_family\tn_copies\ttandem_family\tpolyA_3p_frac\ttandem_neighbor_frac\tpattern\t"
-                  "partner\tpartner_class\tsupport_copies\tsupport_frac\tproposed_class_family\tconfidence\tnote\n")
+        out.write("family\tclass_family\tn_copies\ttandem_family\tpolyA_3p_frac\ttandem_neighbor_frac\tmax_gap\t"
+                  "pattern\tpartner\tpartner_class\tsupport_copies\tsupport_frac\tproposed_class_family\t"
+                  "confidence\tnote\n")
         prop.write("group\tfamily\tclass_family\tpart\tevidence\tnote\tconfidence\n")
-        for idx in sorted(calls, key=lambda k: -stats[k].n):
-            st, c = stats[idx], calls[idx]
+        for idx in targets:
+            st = base[idx]
+            t, c = calls[idx] if calls[idx] else ("NA", None)
             fam = fam_names[idx]
             notes = []
             pa, td = st.polya / st.n, st.tandem / st.n
@@ -347,18 +405,21 @@ def main():
             if c and not r:
                 notes.append(f"linked to {fam_names[c[3]]} ({cls_of(c[3])}): classify that first")
             pattern = c[2] if c else "none"
-            out.write(f"{fam}\t{cls_of(idx)}\t{st.n}\t{fam in tandem_fam}\t{pa:.3f}\t{td:.3f}\t{pattern}\t"
+            out.write(f"{fam}\t{cls_of(idx)}\t{st.n}\t{fam in tandem_fam}\t{pa:.3f}\t{td:.3f}\t{t}\t{pattern}\t"
                       + (f"{fam_names[c[3]]}\t{cls_of(c[3])}\t{c[1]}\t{c[0]:.3f}\t" if c else "NA\tNA\t0\t0\t")
                       + (f"{r[0]}\t{r[1]}\t" if r else "NA\tnone\t")
                       + ("; ".join(notes) or ".") + "\n")
             if r:
                 n_called[r[1]] += 1
+                by_tier[t] += 1
                 p = fam_names[c[3]]
                 group = group_of.get(p, f"with-{p}")
-                note = f"{pattern} {p} ({c[1]} copies, {c[0]:.2f})" + (f"; {r[2]} class" if r[2] != "label" else "")
+                note = (f"{pattern} {p} ({c[1]} copies, {c[0]:.2f}, gap <= {t} bp)"
+                        + (f"; {r[2]} class" if r[2] != "label" else ""))
                 prop.write(f"{group}\t{fam}\t{r[0]}\t{c[4]}\tfamily_neighbors\t{note}\t{r[1]}\n")
-    print(f"[family_neighbors] {len(calls)} target families tested; proposals: "
-          f"{n_called['high']} high, {n_called['medium']} medium", file=sys.stderr)
+    print(f"[family_neighbors] {len(targets)} target families tested; proposals: "
+          f"{n_called['high']} high, {n_called['medium']} medium; by window: "
+          + ", ".join(f"<= {t} bp: {by_tier[t]}" for t in tiers), file=sys.stderr)
 
 
 if __name__ == "__main__":

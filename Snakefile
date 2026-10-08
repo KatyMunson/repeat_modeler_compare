@@ -1932,7 +1932,8 @@ rule family_neighbors:
             + ([f"--curated {input.curated}"] if input.curated else [])
         ),
         n=lambda wc: " ".join(
-            f"--{k.replace('_', '-')} {v}" for k, v in (config["summary"].get("neighbors") or {}).items()
+            f"--{k.replace('_', '-')} " + (" ".join(map(str, v)) if isinstance(v, (list, tuple)) else str(v))
+            for k, v in (config["summary"].get("neighbors") or {}).items()
         ),
     shell:
         "python3 {SCRIPTS}/family_neighbors.py --out-file {params.outs} "

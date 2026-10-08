@@ -34,6 +34,16 @@ also needs the partner on the same strand >= --strand-ratio times as often
 as on the opposite one (random neighbours are 50/50), and calls from
 windows wider than --high-max-gap are capped at medium.
 
+Partner-anchored: a large family whose copies are mostly elsewhere can
+still be one piece of an element whose other, smaller piece is almost
+always next to it. When the family's own copies show no pattern, >=
+--anchor-frac of the PARTNER's copies carrying it on the facing side (same
+strand) gives the call, capped at medium.
+
+Only TE orders and rRNA pass their label on (TRANSFER_ORDERS; plus
+--no-transfer, default SINE/Alu). Unknown families that keep joining
+each other are grouped into chains (--chains-out).
+
 Targets are families labelled Unknown or <Order>/Unknown after the curated,
 cross-check and reclassification labels; partners are any non-simple
 family. A call needs >= --min-pairs copies and >= --min-frac of the target's
@@ -62,6 +72,9 @@ from collections import Counter, defaultdict
 from family_groups import curated_classes, read_groups
 
 SIMPLE_CLASSES = ("Simple_repeat", "Low_complexity")
+# Orders whose label a neighbour may pass on (rRNA: spacer pieces of the
+# rDNA unit). Others (RNA, tRNA, snRNA, Other, ...) only give a note.
+TRANSFER_ORDERS = ("DNA", "LINE", "SINE", "LTR", "RC", "Retroposon", "PLE", "rRNA")
 COMP = str.maketrans("ACGTacgt", "TGCAtgca")
 
 
@@ -212,10 +225,16 @@ def main():
     ap.add_argument("--min-pairs", type=int, default=20, help="copies showing the pattern")
     ap.add_argument("--min-frac", type=float, default=0.2, help="medium: share of copies showing the pattern")
     ap.add_argument("--high-frac", type=float, default=0.4, help="high: share of copies showing the pattern")
+    ap.add_argument("--anchor-frac", type=float, default=0.4,
+                    help="partner-anchored call: >= this share of the PARTNER's copies carry the family on "
+                         "the facing side, same strand (capped at medium)")
+    ap.add_argument("--no-transfer", nargs="*", default=["SINE/Alu"],
+                    help="partner labels never passed on (implausible here), besides non-TE orders")
     ap.add_argument("--top", type=int, default=5, help="partners per side in --neighbors-out")
     ap.add_argument("--neighbors-out", required=True)
     ap.add_argument("--calls-out", required=True)
     ap.add_argument("--proposals-out", required=True)
+    ap.add_argument("--chains-out", required=True, help="Unknown families that join into one element")
     args = ap.parse_args()
 
     # labels: curated (first table wins) > reclassification > family_tandem
@@ -270,7 +289,8 @@ def main():
         """partner label usable for the target: classified (an <Order>/Unknown
         partner only lifts a plain Unknown to that order), and compatible with
         the target's order when the target is <Order>/Unknown"""
-        if partner_cls == "Unknown" or partner_cls.split("/", 1)[0] in SIMPLE_CLASSES + ("Satellite",):
+        if partner_cls == "Unknown" or partner_cls.split("/", 1)[0] not in TRANSFER_ORDERS \
+                or partner_cls in args.no_transfer:
             return False
         if is_target(partner_cls):           # <Order>/Unknown: gives a plain Unknown its order
             return target_cls == "Unknown"
@@ -305,7 +325,7 @@ def main():
         st = S[idx]
         cands = []
         for p, n in st.both.items():        # flanked by P on both sides: internal region
-            cands.append((n / st.n, n, "internal_of", p, "I"))
+            cands.append((n / st.n, n, "internal_of", p, "I", False))
         same5 = {p: n for (p, rel), n in st.side["5p"].items() if rel == "same"}
         same3 = {p: n for (p, rel), n in st.side["3p"].items() if rel == "same"}
         for p in set(same5) & set(same3):
@@ -320,18 +340,32 @@ def main():
             frac_p = min(p5, p3) / max(p_st.n, 1)
             n = min(same5[p], same3[p])
             if frac_p >= args.min_frac and n >= args.min_pairs and st.both.get(p, 0) < n:
-                cands.append((min(frac_p, (same5[p] + same3[p]) / st.n), n, "LTR_of", p, "LTR"))
+                cands.append((min(frac_p, (same5[p] + same3[p]) / st.n), n, "LTR_of", p, "LTR", False))
+        mirror = {"3p": "5p", "5p": "3p"}
         for side, part in (("3p", "5prime_of"), ("5p", "3prime_of")):
             for (p, rel), n in st.side[side].items():
-                if rel == "same" and biased(n, st.side[side].get((p, "opp"), 0)):
-                    cands.append((n / st.n, n, part, p, part.split("_")[0]))
+                if rel != "same":
+                    continue
+                if biased(n, st.side[side].get((p, "opp"), 0)):
+                    cands.append((n / st.n, n, part, p, part.split("_")[0], False))
+                # Partner-anchored: most of P's copies carry this family on the
+                # facing side, though this (much larger) family is mostly
+                # elsewhere: still pieces of one element.
+                p_st = S[p]
+                m = p_st.side[mirror[side]].get((idx, "same"), 0)
+                mo = p_st.side[mirror[side]].get((idx, "opp"), 0)
+                if p_st.n and m / p_st.n >= args.anchor_frac and biased(m, mo):
+                    cands.append((m / p_st.n, m, part, p, part.split("_")[0], True))
         cands = [c for c in cands if c[1] >= args.min_pairs and c[0] >= args.min_frac]
+        # The family's own copies first; partner-anchored only when they show nothing.
+        own = [c for c in cands if not c[5]]
+        cands = own or cands
         # LTR/internal patterns outrank one-sided continuation at similar support
         rank = {"LTR_of": 2, "internal_of": 2, "5prime_of": 1, "3prime_of": 1}
         return max(cands, key=lambda c: (c[0] * (1.25 if rank[c[2]] == 2 else 1), c[1]), default=None)
 
     def resolve(idx, c, propagated, t):
-        frac, n, pattern, p, part = c
+        frac, n, pattern, p, part, anchored = c
         pcls = cls_of(p)
         source = "label"
         if not informative(cls_of(idx), pcls) and propagated and p in propagated:
@@ -339,7 +373,7 @@ def main():
         if not informative(cls_of(idx), pcls):
             return None
         conf = "high" if frac >= args.high_frac and n >= 2 * args.min_pairs else "medium"
-        if source == "propagated" or t > args.high_max_gap:
+        if source == "propagated" or anchored or t > args.high_max_gap:
             conf = "medium"
         return pcls, conf, source
 
@@ -384,12 +418,47 @@ def main():
                     resolved[idx] = r2
                 t, c = t2, c2
 
+    # Unknown-Unknown links (neither side has a usable label): families that
+    # keep joining into one element, grouped by union-find.
+    parent = {}
+
+    def find(x):
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    links = defaultdict(list)
+    for idx, tc in calls.items():
+        if not tc or not tc[1] or idx in resolved:
+            continue
+        c = tc[1]
+        if is_target(cls_of(c[3])) and c[3] not in resolved:
+            parent[find(idx)] = find(c[3])
+            links[idx].append(f"{fam_names[idx]} {c[2]}{'(anchored)' if c[5] else ''} {fam_names[c[3]]} "
+                              f"({c[1]} copies, {c[0]:.2f}, gap <= {tc[0]})")
+    members = defaultdict(set)
+    for x in list(parent):
+        members[find(x)].add(x)
+    chain_of, n_chain = {}, 0
+    with open(args.chains_out, "w") as out:
+        out.write("chain\tn_families\ttotal_copies\tmembers\tclasses\tlinks\n")
+        for root, ms in sorted(members.items(), key=lambda kv: -sum(base[m].n for m in kv[1])):
+            if len(ms) < 2:
+                continue
+            n_chain += 1
+            ms = sorted(ms, key=lambda m: -base[m].n)
+            name = f"chain-{n_chain}_{fam_names[ms[0]]}"
+            for m in ms:
+                chain_of[m] = name
+            out.write(f"{name}\t{len(ms)}\t{sum(base[m].n for m in ms)}\t{','.join(fam_names[m] for m in ms)}\t"
+                      f"{','.join(cls_of(m) for m in ms)}\t{'; '.join(l for m in ms for l in links[m])}\n")
+
     n_called = Counter()
     by_tier = Counter()
     with open(args.calls_out, "w") as out, open(args.proposals_out, "w") as prop:
         out.write("family\tclass_family\tn_copies\ttandem_family\tpolyA_3p_frac\ttandem_neighbor_frac\tmax_gap\t"
                   "pattern\tpartner\tpartner_class\tsupport_copies\tsupport_frac\tproposed_class_family\t"
-                  "confidence\tnote\n")
+                  "confidence\tchain\tnote\n")
         prop.write("group\tfamily\tclass_family\tpart\tevidence\tnote\tconfidence\n")
         for idx in targets:
             st = base[idx]
@@ -403,23 +472,27 @@ def main():
                 notes.append("copies next to each other (tandem)")
             r = resolved.get(idx)
             if c and not r:
-                notes.append(f"linked to {fam_names[c[3]]} ({cls_of(c[3])}): classify that first")
+                pc = cls_of(c[3])
+                notes.append(f"linked to {fam_names[c[3]]} ({pc}): "
+                             + ("classify that first" if is_target(pc) else "label not passed on"))
+            if c and c[5]:
+                notes.append(f"partner-anchored: {c[0]:.2f} of {fam_names[c[3]]}'s copies sit next to it")
             pattern = c[2] if c else "none"
             out.write(f"{fam}\t{cls_of(idx)}\t{st.n}\t{fam in tandem_fam}\t{pa:.3f}\t{td:.3f}\t{t}\t{pattern}\t"
                       + (f"{fam_names[c[3]]}\t{cls_of(c[3])}\t{c[1]}\t{c[0]:.3f}\t" if c else "NA\tNA\t0\t0\t")
-                      + (f"{r[0]}\t{r[1]}\t" if r else "NA\tnone\t")
+                      + (f"{r[0]}\t{r[1]}\t" if r else "NA\tnone\t") + f"{chain_of.get(idx, '.')}\t"
                       + ("; ".join(notes) or ".") + "\n")
             if r:
                 n_called[r[1]] += 1
                 by_tier[t] += 1
                 p = fam_names[c[3]]
                 group = group_of.get(p, f"with-{p}")
-                note = (f"{pattern} {p} ({c[1]} copies, {c[0]:.2f}, gap <= {t} bp)"
+                note = (f"{pattern}{' (partner-anchored)' if c[5] else ''} {p} ({c[1]} copies, {c[0]:.2f}, gap <= {t} bp)"
                         + (f"; {r[2]} class" if r[2] != "label" else ""))
                 prop.write(f"{group}\t{fam}\t{r[0]}\t{c[4]}\tfamily_neighbors\t{note}\t{r[1]}\n")
     print(f"[family_neighbors] {len(targets)} target families tested; proposals: "
           f"{n_called['high']} high, {n_called['medium']} medium; by window: "
-          + ", ".join(f"<= {t} bp: {by_tier[t]}" for t in tiers), file=sys.stderr)
+          + ", ".join(f"<= {t} bp: {by_tier[t]}" for t in tiers) + f"; {n_chain} Unknown chains", file=sys.stderr)
 
 
 if __name__ == "__main__":

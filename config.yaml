@@ -161,6 +161,8 @@ summary:
     min_pairs: 20       # copies showing the pattern
     min_frac: 0.2       # medium: share of the target's copies showing it
     high_frac: 0.4      # high
+    anchor_frac: 0.4    # partner-anchored call: >= this share of the PARTNER's copies next to the family (medium)
+    no_transfer: ["SINE/Alu"]  # partner labels never passed on, besides non-TE orders (RNA, tRNA, Other ...)
 
 # Satellite / rDNA / mito cross-check (README "Satellite, rDNA and mito
 # cross-check"). Report-only for now: writes summary/satellite_*.tsv,

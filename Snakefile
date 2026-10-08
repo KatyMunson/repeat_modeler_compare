@@ -1916,6 +1916,7 @@ rule family_neighbors:
         neighbors=f"{OUTDIR}/{{sumdir}}/family_neighbors.tsv",
         calls=f"{OUTDIR}/{{sumdir}}/family_neighbors_calls.tsv",
         proposals=f"{OUTDIR}/{{sumdir}}/family_neighbors_proposals.tsv",
+        chains=f"{OUTDIR}/{{sumdir}}/family_neighbors_chains.tsv",
     wildcard_constraints:
         sumdir="summary|summary_shared_only",
     threads: config["resources"]["family_neighbors"]["threads"]
@@ -1939,7 +1940,7 @@ rule family_neighbors:
         "python3 {SCRIPTS}/family_neighbors.py --out-file {params.outs} "
         "--family-tandem {input.family_tandem} {params.opt} {params.n} "
         "--neighbors-out {output.neighbors} --calls-out {output.calls} "
-        "--proposals-out {output.proposals} > {log} 2>&1"
+        "--proposals-out {output.proposals} --chains-out {output.chains} > {log} 2>&1"
 
 
 rule tetrimmer_select:

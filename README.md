@@ -636,6 +636,7 @@ in windows wider than `high_max_gap` are capped at medium.
 | `LTR_of` P | P (same strand) on the family's 3' side in some copies, 5' side in others; the family also sits at both ends of P's copies | P's class, `part = LTR` |
 | `internal_of` P | P on both sides, same strand | P's class, `part = I` |
 | `5prime_of` / `3prime_of` P | P continues the family on one side, same strand | P's class, `part = 5prime` / `3prime` |
+| partner-anchored | as above, but seen from P: ≥ `anchor_frac` of P's copies carry the family on the facing side, though the (much larger) family is mostly elsewhere | P's class, capped at medium; used only when the family's own copies show no pattern |
 
 - Targets are families labelled `Unknown` or `<Order>/Unknown` after the
   curated, cross-check and reclassification labels, with ≥ `min_copies`
@@ -645,6 +646,13 @@ in windows wider than `high_max_gap` are capped at medium.
   to that order. A target linked only to another Unknown gets no class but a
   note; if that partner is called in the first pass, the target inherits
   the call (medium).
+- Only TE orders (DNA, LINE, SINE, LTR, RC, Retroposon, PLE) and rRNA
+  (rDNA spacer pieces) pass their label on; `RNA`, `tRNA`, `Other` ... and
+  the labels in `no_transfer` (default `SINE/Alu`, implausible in hagfish)
+  give a note instead.
+- Unknown families that keep joining each other (neither side has a usable
+  label) are grouped into chains in `family_neighbors_chains.tsv`: likely
+  one element split across several consensi, to profile or extend as one.
 - Notes only: `3' poly(A)` (an A-rich simple repeat right after the 3' end:
   non-LTR retrotransposon or SINE) and `tandem` (copies next to copies of
   the same family).
@@ -653,6 +661,7 @@ in windows wider than `high_max_gap` are capped at medium.
 
 Outputs in `summary*/`: `family_neighbors.tsv` (top partners per side),
 `family_neighbors_calls.tsv` (one row per tested family) and
+`family_neighbors_chains.tsv`,
 `family_neighbors_proposals.tsv` (`classify.curated_families` format;
 `group` is the partner's curated element name when it has one, else
 `with-<partner>`). Report-only: copy accepted rows into your curated table.

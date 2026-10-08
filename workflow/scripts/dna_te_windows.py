@@ -88,6 +88,26 @@ def find_edta_raw():
              "the dna_te.container image (snakemake --use-singularity)? Looked at: " + ", ".join(cands))
 
 
+SHIM = os.path.join(os.path.dirname(os.path.abspath(__file__)), "compat", "pandas_positional")
+
+
+def edta_env():
+    """EDTA_raw.pl's environment: the pandas >= 3 shim first on PYTHONPATH
+    (see compat/pandas_positional/sitecustomize.py)."""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = SHIM + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    return env
+
+
+def tool_versions():
+    try:
+        out = subprocess.run(["python3", "-c", "import sys, pandas; print(sys.version.split()[0], pandas.__version__)"],
+                             capture_output=True, text=True, env=edta_env()).stdout.split()
+        return f"python {out[0]}, pandas {out[1]}" if len(out) == 2 else "python/pandas: unknown"
+    except OSError:
+        return "python/pandas: unknown"
+
+
 def run_window(i, win, args):
     name = f"w{i}"
     d = os.path.join(args.workdir, name)
@@ -102,7 +122,7 @@ def run_window(i, win, args):
     bp = sum(len(p[3]) for p in win)
     print(f"[dna_te] {name}: {len(win)} pieces, {bp} bp: {' '.join(cmd)}", flush=True)
     with open(os.path.join(d, "edta_raw.log"), "w") as log:
-        rc = subprocess.run(cmd, cwd=d, stdout=log, stderr=subprocess.STDOUT).returncode
+        rc = subprocess.run(cmd, cwd=d, stdout=log, stderr=subprocess.STDOUT, env=edta_env()).returncode
     if rc in (124, 137):
         print(f"[dna_te] {name}: timed out after {args.timeout} s; logged as skipped", flush=True)
         return name, None
@@ -134,7 +154,7 @@ def main():
         sys.exit("--overlap must be smaller than --window-size")
 
     args.edta_raw = find_edta_raw()
-    print(f"[dna_te] EDTA_raw.pl: {args.edta_raw}")
+    print(f"[dna_te] EDTA_raw.pl: {args.edta_raw}; {tool_versions()} (pandas >= 3: positional shim on)")
     pcs = pieces(args.fasta, args.window_size, args.overlap)
     wins = pack(pcs, args.window_size)
     where = {p[0]: (p[1], p[2]) for p in pcs}

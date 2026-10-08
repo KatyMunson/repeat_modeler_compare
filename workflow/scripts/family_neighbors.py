@@ -72,6 +72,7 @@ copy rows into your curated table. Stdlib only.
 
 import argparse
 import bisect
+import math
 import re
 import statistics
 import sys
@@ -89,6 +90,21 @@ COMP = str.maketrans("ACGTacgt", "TGCAtgca")
 
 def bare(name):
     return name.split("#", 1)[0]
+
+
+def binom_tail(k, n):
+    """P(X >= k) for X ~ Binomial(n, 0.5): the chance a random-orientation
+    partner shows k or more copies in one orientation (one-sided)."""
+    if n <= 0 or k <= n / 2:
+        return 1.0
+    if n > 300:                       # normal approximation, continuity-corrected
+        z = (k - 0.5 - n / 2) / math.sqrt(n / 4)
+        return 0.5 * math.erfc(z / math.sqrt(2))
+    log_half_n = -n * math.log(2)
+    terms = [math.lgamma(n + 1) - math.lgamma(i + 1) - math.lgamma(n - i + 1) + log_half_n
+             for i in range(k, n + 1)]
+    m = max(terms)
+    return math.exp(m) * sum(math.exp(t - m) for t in terms)
 
 
 def a_rich(unit, min_a=0.75):
@@ -241,8 +257,12 @@ def main():
                     help="partner-anchored call: the partner needs at least this many copies")
     ap.add_argument("--own-prefix", nargs="*", default=[],
                     help="name prefixes of this library's own families (e.g. Esto_ Mlim_): only they anchor")
-    ap.add_argument("--pool-min-copies", type=int, default=5,
+    ap.add_argument("--pool-min-copies", type=int, default=10,
                     help="LTR pooling: a partner counts only with this many copies in its dominant orientation")
+    ap.add_argument("--pool-min-share", type=float, default=0.01,
+                    help="LTR pooling: ... and with >= this share of the family's copies")
+    ap.add_argument("--pool-max-p", type=float, default=1e-3,
+                    help="LTR pooling: binomial p (dominant orientation vs 50/50) a partner must reach")
     ap.add_argument("--no-transfer", nargs="*", default=["SINE/Alu"],
                     help="partner labels never passed on (implausible here), besides non-TE orders")
     ap.add_argument("--top", type=int, default=5, help="partners per side in --neighbors-out")
@@ -400,25 +420,28 @@ def main():
         # many LTR-pipeline (or LTR-labelled) families, none frequent enough
         # alone. 5' side = 5' LTR, 3' side = 3' LTR.
         # Each LTR partner counts in its own dominant orientation (consensus
-        # orientations are arbitrary), and only if that orientation dominates
-        # (random LTR neighbours, common in these genomes, are 50/50).
+        # orientations are arbitrary), and only if (a) that orientation is
+        # significant against the 50/50 of random neighbours (binomial,
+        # <= --pool-max-p) and (b) the partner is substantial on its own
+        # (>= --pool-min-share of this family's copies): in LTR-rich genomes
+        # many small partners passing a ratio test by chance (5:0 has p = 0.03)
+        # would otherwise add up to a call.
         pool = {}
         for side in ("5p", "3p"):
             tot = 0
             by_p = Counter()
-            for (p, rel), n in st.side[side].items():
-                if rel != "same" or p == idx or not ltr_piece(p):
+            seen = set()
+            for (p, _rel) in list(st.side[side]):
+                if p in seen or p == idx or not ltr_piece(p):
                     continue
-                o = st.side[side].get((p, "opp"), 0)
-                dom, minor = max(n, o), min(n, o)
-                if dom >= args.pool_min_copies and biased(dom, minor):
+                seen.add(p)
+                n_s = st.side[side].get((p, "same"), 0)
+                n_o = st.side[side].get((p, "opp"), 0)
+                dom = max(n_s, n_o)
+                if dom >= max(args.pool_min_copies, args.pool_min_share * st.n) \
+                        and binom_tail(dom, n_s + n_o) <= args.pool_max_p:
                     tot += dom
                     by_p[p] += dom
-            for (p, rel), o in st.side[side].items():   # opposite-strand-only partners
-                if rel == "opp" and p != idx and ltr_piece(p) and (p, "same") not in st.side[side] \
-                        and o >= args.pool_min_copies:
-                    tot += o
-                    by_p[p] += o
             pool[side] = (tot, by_p)
         (s5, b5), (s3, b3) = pool["5p"], pool["3p"]
         ok5 = s5 >= args.min_pairs and s5 / st.n >= args.min_frac

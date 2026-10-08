@@ -652,8 +652,11 @@ in windows wider than `high_max_gap` are capped at medium.
   relative to another. A partner consistently on the opposite strand counts
   like one on the same strand (the note says "reverse strand"); what is
   required is that one orientation dominates (`strand_ratio`). Pooled LTR
-  partners each count in their own dominant orientation, with at least
-  `pool_min_copies` copies.
+  partners each count in their own dominant orientation, and only if that
+  orientation is significant (binomial p ≤ `pool_max_p` against 50/50) and
+  the partner is substantial (≥ `pool_min_copies` copies and ≥
+  `pool_min_share` of the family's copies): in LTR-rich genomes many small
+  partners passing a ratio test by chance would otherwise add up to a call.
 - Only TE orders (DNA, LINE, SINE, LTR, RC, Retroposon, PLE) and rRNA
   (rDNA spacer pieces) pass their label on; `RNA`, `tRNA`, `Other` ... and
   the labels in `no_transfer` (default `SINE/Alu`, implausible in hagfish)

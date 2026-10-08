@@ -68,6 +68,26 @@ def pack(pcs, window):
     return wins
 
 
+def find_edta_raw():
+    """EDTA_raw.pl: on PATH, else next to EDTA.pl, else in the share/EDTA*
+    directory bioconda installs EDTA into (images may link only EDTA.pl
+    into bin/)."""
+    hit = shutil.which("EDTA_raw.pl")
+    if hit:
+        return os.path.realpath(hit)
+    cands = []
+    edta = shutil.which("EDTA.pl")
+    if edta:
+        cands.append(os.path.join(os.path.dirname(os.path.realpath(edta)), "EDTA_raw.pl"))
+    for prefix in filter(None, [os.environ.get("CONDA_PREFIX"), "/usr/local", "/opt/conda"]):
+        cands += sorted(glob.glob(os.path.join(prefix, "share", "EDTA*", "EDTA_raw.pl")))
+    for c in cands:
+        if os.path.isfile(c):
+            return c
+    sys.exit("[dna_te] EDTA_raw.pl not found (PATH, next to EDTA.pl, share/EDTA*): is this running in "
+             "the dna_te.container image (snakemake --use-singularity)? Looked at: " + ", ".join(cands))
+
+
 def run_window(i, win, args):
     name = f"w{i}"
     d = os.path.join(args.workdir, name)
@@ -76,7 +96,7 @@ def run_window(i, win, args):
     with open(os.path.join(d, f"{name}.fa"), "w") as fh:
         for pname, _c, _o, seq in win:
             write_fasta(fh, pname, seq)
-    cmd = ["timeout", "-k", "60", str(args.timeout), "EDTA_raw.pl", "--genome", f"{name}.fa",
+    cmd = ["timeout", "-k", "60", str(args.timeout), "perl", args.edta_raw, "--genome", f"{name}.fa",
            "--type", args.type, "--species", args.species, "--threads", str(args.threads_per_window),
            "--convert_seq_name", "0", "--overwrite", "1"]
     bp = sum(len(p[3]) for p in win)
@@ -113,9 +133,8 @@ def main():
     if args.overlap >= args.window_size:
         sys.exit("--overlap must be smaller than --window-size")
 
-    if not shutil.which("EDTA_raw.pl"):
-        sys.exit("[dna_te] EDTA_raw.pl is not on PATH: is this running in the dna_te.container image "
-                 "(snakemake --use-singularity)?")
+    args.edta_raw = find_edta_raw()
+    print(f"[dna_te] EDTA_raw.pl: {args.edta_raw}")
     pcs = pieces(args.fasta, args.window_size, args.overlap)
     wins = pack(pcs, args.window_size)
     where = {p[0]: (p[1], p[2]) for p in pcs}

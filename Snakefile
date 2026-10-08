@@ -2684,8 +2684,10 @@ rule dna_te_candidates_group:
         mem=lambda wildcards, attempt: config["resources"]["dna_te_candidates_group"]["mem"] * attempt,
         hrs=config["resources"]["dna_te_candidates_group"]["hrs"],
         shell_exec="bash",
-    # a stall is handled by the per-window timeout, not by retrying with more memory
-    retries: 1
+    # A stall is handled by the per-window timeout, and any other failure is
+    # deterministic: no retry (runsnake's --restart-times would rerun it and
+    # wipe the log that says why).
+    retries: 0
     singularity:
         DNA_TE.get("container", "")
     log:
@@ -2701,7 +2703,6 @@ rule dna_te_candidates_group:
         """
         exec > {log} 2>&1
         set -euo pipefail
-        (EDTA_raw.pl -h 2>&1 | head -n 3) || true
         python3 {SCRIPTS}/dna_te_windows.py --fasta {input.fa} --type {wildcards.te_type} \
             --group {wildcards.group} --species {params.species} --window-size {params.size} \
             --overlap {params.overlap} --timeout {params.timeout} --threads {threads} \

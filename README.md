@@ -917,6 +917,91 @@ it `same_satellite`, it is flagged `CONTRADICTS expected_independent` for a
 manual look. Only `same_satellite` pairs share a `group` name in the
 proposals file. Merging is never done automatically.
 
+## Genome-wide NUMT calls (`numt_only`)
+
+The cross-check above labels a library *family* `Other/NUMT`. Most NUMTs are
+single-copy, though, and never become RepeatModeler families, so they are
+not reported there. This step calls NUMTs per locus. It is **report-only**:
+nothing is relabelled or remasked. A later base-level reconciliation will
+give NUMT bp priority over TE labels.
+
+**Inputs.** The `mitohifi_fa` column of `satellite_crosscheck.external_annotations`
+(MitoHiFi `final_mitogenome.fasta`). Samples without one are skipped, with a
+note at startup and a `no_mitogenome` row in the summary. The step also needs
+the prepped genome and its `fingerprint.tsv` / `assembly_stats.tsv`, and the
+shared-arm `.out`.
+
+**Run it on finished results:**
+
+    snakemake numt_only --rerun-triggers mtime -n   # should list only numt_* jobs
+    snakemake numt_only --rerun-triggers mtime ...  # usual runsnake arguments
+
+`all` builds it too when any sample has a `mitohifi_fa`.
+
+**Method** (`numt_blast`, then `numt_calls`, per sample; `workflow/scripts/numt_calls.py`):
+1. The mitogenome is doubled (seq+seq), so an alignment across the circular
+   origin is one HSP. Hit coordinates are folded back modulo the mitogenome
+   length; `mito_wraps = yes` marks a call that crosses the origin.
+2. `blastn -task dc-megablast`, mitogenome as query against the nuclear
+   genome, with `-evalue numt.evalue` and `-dust no`. `-max_target_seqs` is
+   set above the assembly's contig count (BLAST's default of 500 would
+   silently drop contigs), and there is no `-max_hsps`, so every NUMT on a
+   chromosome is kept. blastn rather than minimap2: old NUMTs are short and
+   70–85 % identical, below what minimap2's seeds reliably find, and
+   BLAST/LAST is the usual choice in NUMT studies.
+3. **Mitochondrial contigs** are excluded. A contig is mitochondrial when hits
+   at ≥ `mito_contig_id` % cover ≥ `mito_contig_cov` of it. These contigs are
+   listed in the log and `mito_contigs.tsv` and get no calls.
+4. **Doubled-query duplicates.** The same genome locus is reported once per
+   query copy, whole or as pieces at the copy edges. Taking hits by
+   decreasing bitscore, a hit whose genome interval overlaps an already kept
+   hit (same contig and strand) by ≥ 50 % of its own length is dropped.
+5. Two levels of call:
+   - **hit-level** (`numt_hits.bed`): one per remaining HSP. This is the
+     primary, unambiguous count.
+   - **compound** (`numts.bed`): neighbouring hits on the same contig and
+     strand, joined when the *mitogenome* coordinates continue (the next hit
+     starts within `mito_merge_gap` bp of where the previous one ended, as a
+     gap or an overlap, across the origin too) and the *genome* gap is
+     ≤ `merge_gap`. That is one NUMT split by an indel or a later insertion,
+     not two insertions. Single hits are compound calls with `n_hits = 1`.
+     `max_gap` is the largest genome gap. `gap_fill` is what fills it in the
+     shared-arm `.out`, as `class:bp` with each base given to its best hit and
+     the labels `class_composition.tsv` uses; `unmasked` means no hit.
+6. Both levels keep calls with aligned bp ≥ `min_len`. The filter runs after
+   merging, so a short piece can still join a compound call.
+
+**Choosing `merge_gap`.** The default (500 bp) only bridges indels and short
+insertions. `numt_gap_hist.tsv` bins the genome gap of *every* mito-colinear
+neighbour pair, whatever its size, with how many gaps one class fills
+(≥ 80 %) and the fill's class bp. If the gaps cluster at TE lengths (e.g.
+1–6 kb, filled by one TE), raise `merge_gap` to cover that cluster and say so
+in the methods. Without that evidence, don't start from 2 kb. Only
+`numt_calls` reruns when `merge_gap` changes; the blastn is kept.
+
+**Outputs.** Coordinates are on the prepped genome, with the names used in the
+`.out` and every other output. BED files are 0-based half-open with a `#`
+header.
+
+| file | content |
+|---|---|
+| `numt/{sample}/numt_hits.bed` | hit-level calls: contig, start, end, id, aligned_bp, strand, identity, mito_start, mito_end, mito_wraps |
+| `numt/{sample}/numts.bed` | compound calls: the same columns (identity bp-weighted; mito_start/end along the NUMT) + n_hits, max_gap, gap_fill |
+| `numt/{sample}/numt_gap_hist.tsv` | genome gaps between mito-colinear neighbouring hits, binned (for choosing `merge_gap`) |
+| `numt/{sample}/mito_contigs.tsv` | contigs excluded as mitochondrial, with cov and identity |
+| `numt/{sample}/mito_vs_genome.blastn.tsv` | the raw blastn table (query coordinates on the doubled mitogenome) |
+| `summary/numt_summary.tsv` | per sample: mito contigs, n hit-level / compound NUMTs, `numt_bp` (union of hit-level calls) and its % of non-N bp, `numt_span_bp` (union of compound spans), median identity and aligned-length quantiles of compound calls, `bp_overlap_<class>` (shared-arm `.out` bp inside hit-level calls, by class) |
+
+**Sanity check.** When the satellite cross-check is configured, the families
+it calls `Other/NUMT` should sit inside called NUMTs. For each one, the log
+lists its `.out` bp in the sample (off mitochondrial contigs) and how much of
+that falls inside hit-level calls. A family mostly outside calls is flagged.
+The totals are the summary's `crosscheck_numt_*` columns (`NA` without the
+cross-check).
+
+Unit tests for the origin folding and the merge logic:
+`python3 -m unittest discover tests`.
+
 ## Satellite analysis (removed)
 
 A satellite arm existed briefly. It was a satellite-only RepeatMasker

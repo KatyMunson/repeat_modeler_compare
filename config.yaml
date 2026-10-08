@@ -225,6 +225,19 @@ satellite_crosscheck:
   mito_min_cov: 0.5            # Other/NUMT: same against the MitoHiFi mitogenome
   mito_min_id: 80
 
+# Genome-wide NUMT calls (README "Genome-wide NUMT calls"). Per sample with a
+# mitohifi_fa in satellite_crosscheck.external_annotations: blastn
+# (dc-megablast) of the doubled mitogenome against the genome, hit-level
+# (numt_hits.bed) and compound (numts.bed) calls. Report-only. Run alone with
+# the numt_only target (+ --rerun-triggers mtime).
+numt:
+  evalue: 1.0e-5
+  mito_contig_cov: 0.8         # a contig hits cover >= this fraction of ...
+  mito_contig_id: 98           # ... at >= this % identity is mitochondrial: excluded, listed in mito_contigs.tsv
+  mito_merge_gap: 100          # compound: the next hit's mito start within this many bp of the previous end (gap or overlap) ...
+  merge_gap: 500               # ... and the genome gap <= this. Check numt_gap_hist.tsv before raising it
+  min_len: 50                  # aligned bp a hit-level or compound call needs
+
 # TEtrimmer (README "TEtrimmer"): automated extension / boundary / structure /
 # classification of the largest families still Unknown after curation,
 # cross-check and family_neighbors. Run with the tetrimmer_only target;
@@ -278,6 +291,9 @@ resources:
   trc_crosscheck:   {threads: 1,  mem: 16, hrs: 4}   # parses the shared-arm .out
   satellite_blast:  {threads: 8,  mem: 1,  hrs: 4}
   satellite_evidence: {threads: 1, mem: 8, hrs: 1}
+  # --- NUMT calls ---
+  numt_blast:       {threads: 8,  mem: 2,  hrs: 8}    # makeblastdb + dc-megablast of the mitogenome vs the genome
+  numt_calls:       {threads: 1,  mem: 16, hrs: 2}    # holds the shared-arm .out in memory
   # --- LTR side pipeline ---
   ltr_group_genome: {threads: 1,  mem: 16, hrs: 2}
   # per group; threads must be >= 2 (see Snakefile). mem is per slot.

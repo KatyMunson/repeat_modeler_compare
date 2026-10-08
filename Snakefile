@@ -298,6 +298,20 @@ SATX_REFS = [f"{lab}={SATX_ANNOT[s][col]}" for s in SAMPLE_IDS if s in SATX_ANNO
              for lab, col in (("rdna", "ribotin_fa"), ("mito", "mitohifi_fa")) if SATX_ANNOT[s][col]]
 
 
+# Genome-wide NUMT calls (numt.*): samples with a MitoHiFi mitogenome.
+NUMT = config.get("numt", {}) or {}
+NUMT_SAMPLES = [s for s in SAMPLE_IDS if SATX_ANNOT.get(s, {}).get("mitohifi_fa")]
+NUMT_SKIPPED = [s for s in SAMPLE_IDS if s not in NUMT_SAMPLES]
+NUMT_ON = bool(NUMT_SAMPLES)
+NUMT_CONSTRAINT = "|".join(re.escape(s) for s in NUMT_SAMPLES) or "__no_mitogenome_samples__"
+NUMTDIR = f"{OUTDIR}/numt"
+if NUMT_ON and NUMT_SKIPPED:
+    print(f"[numt] no mitohifi_fa for {', '.join(NUMT_SKIPPED)}: no NUMT calls there")
+if "numt_only" in sys.argv and not NUMT_ON:
+    print("[numt] WARNING: no sample has mitohifi_fa in satellite_crosscheck.external_annotations; "
+          "numt_only has nothing to do.")
+
+
 LTR_CFG = config["ltr_discovery"]
 LTR_GROUPS = [f"g{i}" for i in range(int(LTR_CFG["n_groups"]))]
 if config["resources"]["ltr_harvest_group"]["threads"] < 2 or config["resources"]["ltr_finder_group"]["threads"] < 2:
@@ -355,6 +369,7 @@ rule all:
         f"{OUTDIR}/summary/ltr_discovery.tsv",
         f"{OUTDIR}/summary/ltr_skipped_composition.tsv",
         [f"{OUTDIR}/summary/satellite_family_calls.tsv"] if SATX_ON else [],
+        [f"{OUTDIR}/summary/numt_summary.tsv"] if NUMT_ON else [],
         f"{OUTDIR}/summary/provenance.txt",
         f"{OUTDIR}/library/library_membership.tsv",
         f"{OUTDIR}/summary/discovery_summary.tsv",
@@ -2485,6 +2500,135 @@ rule satellite_crosscheck_only:
     input:
         f"{OUTDIR}/summary/satellite_family_calls.tsv" if SATX_ON else [],
         expand(f"{OUTDIR}/shared/{{sample}}/satellite/trc_crosscheck.trc.tsv", sample=TC_SAMPLES),
+
+
+# -----------------------------------------------------------------------------
+# Genome-wide NUMT calls (numt.*; README "Genome-wide NUMT calls"). The
+# MitoHiFi mitogenome (external_annotations column mitohifi_fa, doubled for
+# the circular origin) blastn'd against the prepped genome; hit-level and
+# compound calls per sample. Report-only. Run alone with numt_only.
+# -----------------------------------------------------------------------------
+rule numt_blast:
+    # blastn -task dc-megablast, doubled mitogenome vs the nuclear genome.
+    # -max_target_seqs above the contig count (BLAST's default of 500 would
+    # silently drop contigs) and no -max_hsps (every NUMT on a chromosome).
+    input:
+        genome=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fa",
+        fingerprint=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fingerprint.tsv",
+        mito=lambda wc: SATX_ANNOT[wc.sample]["mitohifi_fa"],
+    output:
+        query=f"{NUMTDIR}/{{sample}}/mito_doubled.fa",
+        blast=f"{NUMTDIR}/{{sample}}/mito_vs_genome.blastn.tsv",
+    wildcard_constraints:
+        sample=NUMT_CONSTRAINT,
+    threads: config["resources"]["numt_blast"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["numt_blast"]["mem"] * attempt,
+        hrs=config["resources"]["numt_blast"]["hrs"],
+        shell_exec="bash",
+    conda:
+        "workflow/envs/blast.yaml"
+    log:
+        f"{OUTDIR}/logs/numt/{{sample}}/numt_blast.log",
+    params:
+        db=f"{NUMTDIR}/{{sample}}/blastdb/genome",
+        evalue=NUMT.get("evalue", 1e-5),
+        fmt="6 qseqid sseqid pident length qstart qend sstart send qlen slen evalue bitscore",
+    shell:
+        """
+        exec > {log} 2>&1
+        set -euo pipefail
+        {ENV_PATH_GUARD}
+        python3 {SCRIPTS}/numt_calls.py double --mito {input.mito} --out {output.query}
+        n_seqs=$(awk -F'\t' '$1 == "#n_seqs" {{print $2}}' {input.fingerprint})
+        max_targets=$((n_seqs + 10))
+        echo "[numt] $n_seqs contigs; -max_target_seqs $max_targets"
+        blastn -version
+        rm -rf $(dirname {params.db}) && mkdir -p $(dirname {params.db})
+        makeblastdb -in {input.genome} -dbtype nucl -parse_seqids -out {params.db}
+        blastn -task dc-megablast -query {output.query} -db {params.db} -evalue {params.evalue} \
+            -dust no -max_target_seqs $max_targets -num_threads {threads} \
+            -outfmt "{params.fmt}" -out {output.blast}
+        rm -rf $(dirname {params.db})
+        """
+
+
+rule numt_calls:
+    input:
+        blast=f"{NUMTDIR}/{{sample}}/mito_vs_genome.blastn.tsv",
+        fingerprint=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fingerprint.tsv",
+        assembly_stats=f"{OUTDIR}/{{sample}}/genome/{{sample}}.assembly_stats.tsv",
+        out_file=f"{OUTDIR}/shared/{{sample}}/repeatmasker/{{sample}}.fa.out",
+        # the labels summarize gives the shared arm (class_composition.tsv)
+        tandem_table=(
+            f"{OUTDIR}/shared/{{sample}}/summary/family_tandem.tsv"
+            if _as_bool(config["family_tandem"].get("carve_unknown", True))
+            else []
+        ),
+        reclass_table=[f"{OUTDIR}/classify/unknown_reclassification.tsv"] if CLASSIFY_ON else [],
+        curated_table=CURATED_TABLES,
+        # sanity check against the cross-check's Other/NUMT families
+        satellite_calls=[f"{OUTDIR}/summary/satellite_family_calls.tsv"] if SATX_ON else [],
+    output:
+        hits=f"{NUMTDIR}/{{sample}}/numt_hits.bed",
+        numts=f"{NUMTDIR}/{{sample}}/numts.bed",
+        gap_hist=f"{NUMTDIR}/{{sample}}/numt_gap_hist.tsv",
+        mito_contigs=f"{NUMTDIR}/{{sample}}/mito_contigs.tsv",
+        summary=f"{NUMTDIR}/{{sample}}/numt_summary.tsv",
+    wildcard_constraints:
+        sample=NUMT_CONSTRAINT,
+    threads: config["resources"]["numt_calls"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["numt_calls"]["mem"] * attempt,
+        hrs=config["resources"]["numt_calls"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/numt/{{sample}}/numt_calls.log",
+    params:
+        tandem_arg=lambda wc, input: f"--tandem-table {input.tandem_table}" if input.tandem_table else "",
+        reclass_arg=lambda wc, input: f"--reclass-table {input.reclass_table}" if input.reclass_table else "",
+        curated_arg=lambda wc, input: f"--curated-table {input.curated_table}" if input.curated_table else "",
+        calls_arg=lambda wc, input: f"--satellite-calls {input.satellite_calls}" if input.satellite_calls else "",
+        mito_contig_cov=NUMT.get("mito_contig_cov", 0.8),
+        mito_contig_id=NUMT.get("mito_contig_id", 98),
+        mito_merge_gap=NUMT.get("mito_merge_gap", 100),
+        merge_gap=NUMT.get("merge_gap", 500),
+        min_len=NUMT.get("min_len", 50),
+    shell:
+        "python3 {SCRIPTS}/numt_calls.py call --blast {input.blast} --sample {wildcards.sample} "
+        "--fingerprint {input.fingerprint} --assembly-stats {input.assembly_stats} "
+        "--out-file {input.out_file} {params.tandem_arg} {params.reclass_arg} {params.curated_arg} "
+        "{params.calls_arg} --mito-contig-cov {params.mito_contig_cov} "
+        "--mito-contig-id {params.mito_contig_id} --mito-merge-gap {params.mito_merge_gap} "
+        "--merge-gap {params.merge_gap} --min-len {params.min_len} "
+        "--hits-out {output.hits} --numts-out {output.numts} --gap-hist-out {output.gap_hist} "
+        "--mito-contigs-out {output.mito_contigs} --summary-out {output.summary} > {log} 2>&1"
+
+
+rule numt_summary:
+    input:
+        expand(f"{NUMTDIR}/{{sample}}/numt_summary.tsv", sample=NUMT_SAMPLES),
+    output:
+        f"{OUTDIR}/summary/numt_summary.tsv",
+    threads: config["resources"]["combine_summaries"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["combine_summaries"]["mem"] * attempt,
+        hrs=config["resources"]["combine_summaries"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/numt/numt_summary.log",
+    params:
+        skipped=" ".join(NUMT_SKIPPED),
+    shell:
+        "python3 {SCRIPTS}/numt_calls.py combine --chunks {input} --skipped {params.skipped} "
+        "--out {output} > {log} 2>&1"
+
+
+rule numt_only:
+    # Input-only target: NUMT calls on finished results (--rerun-triggers mtime).
+    input:
+        [f"{OUTDIR}/summary/numt_summary.tsv"] if NUMT_ON else [],
+        expand(f"{NUMTDIR}/{{sample}}/numts.bed", sample=NUMT_SAMPLES),
 
 
 # -----------------------------------------------------------------------------

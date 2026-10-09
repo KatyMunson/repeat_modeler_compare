@@ -1046,13 +1046,18 @@ besides it).
   reason), like `ltr/skipped_windows.tsv`.
 - A window that fails (EDTA exits without its result) is rerun one scaffold
   piece at a time, and only the pieces that fail again are logged, with
-  reason `failed exit N`, the piece's zlib compression ratio and the kept
-  log. Example: a 2.08 Mb meadowlark scaffold that is one GGAA-rich satellite
-  array (zlib ~0.03, against ~0.25-0.30 for ordinary DNA) breaks
-  TIR-Learner's TIRvish parsing; it holds no TIRs to find. If failed pieces
-  add up to more than `dna_te.max_failed_frac` (5 %) of a group's bp, the job
-  fails instead, so a systematic problem isn't hidden. `skipped_bp` in the
-  pilot table counts both kinds per sample and type.
+  reason `failed exit N (tandem array | ordinary sequence, zlib R; log PATH)`.
+  The class comes from the piece's zlib compression ratio: below
+  `dna_te.tandem_zlib` (0.1) it is a tandem array (ordinary DNA compresses to
+  ~0.25-0.30). Example: a 2.08 Mb meadowlark scaffold that is one GGAA-rich
+  satellite array (zlib ~0.03) breaks TIR-Learner's TIRvish parsing; it holds
+  no TIRs to find.
+- Tandem-array failures are expected (bird assemblies carry large satellite
+  scaffolds) and never stop the job. Failures on ordinary sequence point to a
+  tool problem: if they add up to more than `dna_te.max_failed_frac` (5 %) of a
+  group's bp, the job fails, so such a problem isn't hidden behind skip rows.
+  `skipped_bp` in the pilot table counts timeouts and failures per sample and
+  type; `skipped_windows.tsv` says which was which.
 - Whether TIR-Learner or HelitronScanner stall on the hagfish assemblies is
   still to be seen on the first run. Check the skipped windows, and tune the
   timeout from the per-window times in the log.

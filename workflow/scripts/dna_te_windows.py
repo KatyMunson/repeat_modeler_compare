@@ -17,9 +17,12 @@ or "failed exit N" with the window's zlib compression ratio (ordinary
 genomic DNA ~0.25-0.30; a satellite array ~0.02-0.07, e.g. a meadowlark
 contig that broke TIR-Learner's TIRvish parsing) and the kept log's path.
 A failed window of several pieces is first rerun one piece at a time, so
-only the piece that fails again is skipped. If more than --max-failed-frac
-of the group's bp failed (timeouts don't count), the job fails instead, so
-a systematic problem is not hidden behind skip rows.
+only the piece that fails again is skipped. A failed piece that compresses
+below --tandem-zlib is a tandem array: expected (bird assemblies carry
+large satellite scaffolds), it never stops the job. If failed pieces of
+ordinary sequence add up to more than --max-failed-frac of the group's bp,
+the job fails instead: that points to a tool problem, which skip rows
+would otherwise hide.
 
 Outputs: --out-fa, the intact candidates with headers
 ">{group}_{type}_{n}#{EDTA label}"; --out-tsv, one row per candidate
@@ -149,7 +152,8 @@ def run_one(name, win, args):
         with open(log_path, errors="replace") as fh:
             tail = "".join(fh.readlines()[-30:])
         ratio = compress_ratio(win)
-        reason = f"failed exit {rc} (zlib {ratio:.2f}{', tandem array?' if ratio < 0.1 else ''}; log {log_path})"
+        kind = "tandem array" if ratio < args.tandem_zlib else "ordinary sequence"
+        reason = f"failed exit {rc} ({kind}, zlib {ratio:.2f}; log {log_path})"
         print(f"[dna_te] {stamp()} {name}: {reason}\n--- last 30 lines ---\n{tail}", flush=True)
         return None, reason
     recs = list(iter_fasta(hits[0]))
@@ -192,7 +196,11 @@ def main():
     ap.add_argument("--out-tsv", required=True)
     ap.add_argument("--timeouts", required=True)
     ap.add_argument("--max-failed-frac", type=float, default=0.05,
-                    help="fail the job if more than this fraction of the group's bp failed (timeouts don't count)")
+                    help="fail the job if more than this fraction of the group's bp failed on ordinary "
+                         "sequence (timeouts and tandem arrays don't count)")
+    ap.add_argument("--tandem-zlib", type=float, default=0.1,
+                    help="a failed piece compressing below this zlib ratio is a tandem array (expected, "
+                         "doesn't count toward --max-failed-frac)")
     ap.add_argument("--keep-workdir", action="store_true")
     args = ap.parse_args()
     if args.overlap >= args.window_size:
@@ -236,13 +244,16 @@ def main():
     total_bp = sum(len(p[3]) for p in pcs)
     timed_out = sum(len(p[3]) for win, _r, why in results if why == "timeout" for p in win)
     failed = [(win, why) for win, _r, why in results if why and why != "timeout"]
-    failed_bp = sum(len(p[3]) for win, _w in failed for p in win)
-    print(f"[dna_te] {args.group} {args.type}: {n} candidates; skipped {timed_out} bp (timeouts) and "
-          f"{failed_bp} bp in {len(failed)} failed runs, of {total_bp} bp")
-    if total_bp and failed_bp / total_bp > args.max_failed_frac:
-        sys.exit(f"[dna_te] {failed_bp / total_bp:.1%} of the group's bp failed (> --max-failed-frac "
-                 f"{args.max_failed_frac}): not a one-off, failing the job. Logs kept under {args.workdir}:\n"
-                 + "\n".join(f"  {','.join(p[1] for p in win)}: {why}" for win, why in failed))
+    tandem_bp = sum(len(p[3]) for win, why in failed if "(tandem array," in why for p in win)
+    ordinary = [(win, why) for win, why in failed if "(tandem array," not in why]
+    ordinary_bp = sum(len(p[3]) for win, _w in ordinary for p in win)
+    print(f"[dna_te] {args.group} {args.type}: {n} candidates; skipped {timed_out} bp (timeouts), "
+          f"{tandem_bp} bp (failed, tandem arrays), {ordinary_bp} bp (failed, ordinary sequence), of {total_bp} bp")
+    if total_bp and ordinary_bp / total_bp > args.max_failed_frac:
+        sys.exit(f"[dna_te] {ordinary_bp / total_bp:.1%} of the group's bp failed on ordinary (not tandem-array) "
+                 f"sequence (> --max-failed-frac {args.max_failed_frac}): likely a tool problem, not the "
+                 f"sequence; failing the job. Logs kept under {args.workdir}:\n"
+                 + "\n".join(f"  {','.join(p[1] for p in win)}: {why}" for win, why in ordinary))
     # successful runs removed their own directories; failed ones keep their logs
     if not args.keep_workdir and not failed:
         shutil.rmtree(args.workdir, ignore_errors=True)

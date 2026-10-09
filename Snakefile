@@ -2704,6 +2704,7 @@ rule dna_te_candidates_group:
         timeout=DNA_TE.get("window_timeout_s", 21600),
         tpw=DNA_TE.get("threads_per_window", 4),
         max_failed=DNA_TE.get("max_failed_frac", 0.05),
+        tandem_zlib=DNA_TE.get("tandem_zlib", 0.1),
     shell:
         """
         exec > {log} 2>&1
@@ -2711,7 +2712,8 @@ rule dna_te_candidates_group:
         python3 {SCRIPTS}/dna_te_windows.py --fasta {input.fa} --type {wildcards.te_type} \
             --group {wildcards.group} --species {params.species} --window-size {params.size} \
             --overlap {params.overlap} --timeout {params.timeout} --threads {threads} \
-            --threads-per-window {params.tpw} --max-failed-frac {params.max_failed} --workdir {params.workdir} \
+            --threads-per-window {params.tpw} --max-failed-frac {params.max_failed} \\
+            --tandem-zlib {params.tandem_zlib} --workdir {params.workdir} \
             --out-fa {output.fa} --out-tsv {output.tsv} --timeouts {output.timeouts}
         """
 

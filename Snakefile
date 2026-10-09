@@ -2703,7 +2703,7 @@ rule dna_te_candidates_group:
         overlap=DNA_TE.get("overlap", 100000),
         timeout=DNA_TE.get("window_timeout_s", 21600),
         tpw=DNA_TE.get("threads_per_window", 4),
-        max_failed=DNA_TE.get("max_failed_frac", 0.05),
+        max_failed=DNA_TE.get("max_failed_frac", 0.0),
         tandem_zlib=DNA_TE.get("tandem_zlib", 0.1),
     shell:
         """

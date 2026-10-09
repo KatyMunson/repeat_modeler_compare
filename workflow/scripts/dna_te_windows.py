@@ -106,12 +106,12 @@ def find_edta_raw():
              "the dna_te.container image (snakemake --use-singularity)? Looked at: " + ", ".join(cands))
 
 
-SHIM = os.path.join(os.path.dirname(os.path.abspath(__file__)), "compat", "pandas_positional")
+SHIM = os.path.join(os.path.dirname(os.path.abspath(__file__)), "compat", "edta_python")
 
 
 def edta_env():
-    """EDTA_raw.pl's environment: the pandas >= 3 shim first on PYTHONPATH
-    (see compat/pandas_positional/sitecustomize.py)."""
+    """EDTA_raw.pl's environment: the TIR-Learner shims first on PYTHONPATH
+    (pandas >= 3, swifter scheduler: compat/edta_python/sitecustomize.py)."""
     env = dict(os.environ)
     env["PYTHONPATH"] = SHIM + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     return env
@@ -195,7 +195,7 @@ def main():
     ap.add_argument("--out-fa", required=True)
     ap.add_argument("--out-tsv", required=True)
     ap.add_argument("--timeouts", required=True)
-    ap.add_argument("--max-failed-frac", type=float, default=0.05,
+    ap.add_argument("--max-failed-frac", type=float, default=0.0,
                     help="fail the job if more than this fraction of the group's bp failed on ordinary "
                          "sequence (timeouts and tandem arrays don't count)")
     ap.add_argument("--tandem-zlib", type=float, default=0.1,
@@ -207,7 +207,7 @@ def main():
         sys.exit("--overlap must be smaller than --window-size")
 
     args.edta_raw = find_edta_raw()
-    print(f"[dna_te] EDTA_raw.pl: {' '.join(args.edta_raw)} ({shutil.which(args.edta_raw[-1]) or args.edta_raw[-1]}); {tool_versions()} (pandas >= 3: positional shim on)")
+    print(f"[dna_te] EDTA_raw.pl: {' '.join(args.edta_raw)} ({shutil.which(args.edta_raw[-1]) or args.edta_raw[-1]}); {tool_versions()} (TIR-Learner shims on: pandas >= 3 positional, swifter threads)")
     pcs = pieces(args.fasta, args.window_size, args.overlap)
     wins = pack(pcs, args.window_size)
     where = {p[0]: (p[1], p[2]) for p in pcs}

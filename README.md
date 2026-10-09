@@ -1054,8 +1054,17 @@ besides it).
   no TIRs to find.
 - Tandem-array failures are expected (bird assemblies carry large satellite
   scaffolds) and never stop the job. Failures on ordinary sequence point to a
-  tool problem: if they add up to more than `dna_te.max_failed_frac` (5 %) of a
-  group's bp, the job fails, so such a problem isn't hidden behind skip rows.
+  tool problem: by default (`dna_te.max_failed_frac: 0`) any of them fails the
+  job, so it isn't hidden behind skip rows. The one seen so far (swifter's
+  process scheduler inside TIR-Learner's worker pool, below) struck only the
+  windows with the most TIRvish hits -- skipping those would bias the pilot.
+- TIR-Learner 3 in the EDTA 2.3.0 image needs two shims, loaded into EDTA's
+  Python processes only (`workflow/scripts/compat/edta_python/sitecustomize.py`):
+  pandas 3 dropped the positional `row[0]` fallback `check_TIR_TSD.py` relies
+  on (`KeyError: 0`), and swifter 1.4.0 parallelises a large apply with
+  dask's process scheduler inside a `multiprocessing.Pool` worker
+  ("daemonic processes are not allowed to have children"); it is switched to
+  threads. The job log's first line says the shims are on.
   `skipped_bp` in the pilot table counts timeouts and failures per sample and
   type; `skipped_windows.tsv` says which was which.
 - Whether TIR-Learner or HelitronScanner stall on the hagfish assemblies is

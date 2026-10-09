@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from fasta_utils import iter_fasta, seq_id, write_fasta
@@ -66,6 +67,10 @@ def pack(pcs, window):
     if cur:
         wins.append(cur)
     return wins
+
+
+def stamp():
+    return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def find_edta_raw():
@@ -122,17 +127,20 @@ def run_window(i, win, args):
            "--type", args.type, "--species", args.species, "--threads", str(args.threads_per_window),
            "--convert_seq_name", "0", "--overwrite", "1"]
     bp = sum(len(p[3]) for p in win)
-    print(f"[dna_te] {name}: {len(win)} pieces, {bp} bp: {' '.join(cmd)}", flush=True)
+    t0 = time.time()
+    print(f"[dna_te] {stamp()} {name} start: {len(win)} pieces, {bp} bp: {' '.join(cmd)}", flush=True)
     with open(os.path.join(d, "edta_raw.log"), "w") as log:
         rc = subprocess.run(cmd, cwd=d, stdout=log, stderr=subprocess.STDOUT, env=edta_env()).returncode
     if rc in (124, 137):
-        print(f"[dna_te] {name}: timed out after {args.timeout} s; logged as skipped", flush=True)
+        print(f"[dna_te] {stamp()} {name}: timed out after {args.timeout} s; logged as skipped", flush=True)
         return name, None
     hits = glob.glob(os.path.join(d, "*.EDTA.raw", f"*.{RESULT[args.type]}"))
     if rc != 0 or not hits:
         tail = open(os.path.join(d, "edta_raw.log")).read()[-3000:]
         raise RuntimeError(f"{name}: EDTA_raw.pl exit {rc}, result {'found' if hits else 'missing'}\n{tail}")
-    return name, list(iter_fasta(hits[0]))
+    recs = list(iter_fasta(hits[0]))
+    print(f"[dna_te] {stamp()} {name} done in {(time.time() - t0) / 60:.1f} min: {len(recs)} candidates", flush=True)
+    return name, recs
 
 
 def main():

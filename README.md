@@ -1029,10 +1029,14 @@ model is `dna_te.tir_species` (`others`; EDTA only has rice and maize models
 besides it).
 
 **Parallelism and stalls**, mirroring the LTR tools:
-- `dna_te_group_genome` writes the same bp-balanced whole-scaffold groups as
-  `ltr_group_genome` (`ltr_discovery.n_groups`). They are written separately:
-  the LTR groups are `temp()`, and re-making them would make every finished
-  `ltr_*` job look out of date.
+- `dna_te_group_genome` writes bp-balanced whole-scaffold groups like
+  `ltr_group_genome`'s, `dna_te.n_groups` of them (one job per group and type).
+  They are written separately: the LTR groups are `temp()`, and re-making them
+  would make every finished `ltr_*` job look out of date. Changing
+  `n_groups` reruns every DNA-TE group but no LTR job.
+- Each window's start and end are logged with a timestamp, its runtime and
+  its candidate count. On *E. stoutii*, TIR-Learner took ~7 min per 5 Mb
+  window (4 at a time, 16 threads; 2 h for a ~355 Mb group, no timeouts).
 - `dna_te_candidates_group` (one job per group and type) cuts the group into
   windows of `window_size` bp. Long scaffolds overlap by `overlap`; small
   scaffolds are packed together. It runs `threads / threads_per_window`

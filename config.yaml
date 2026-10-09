@@ -242,12 +242,13 @@ numt:
 
 # Structural TIR / Helitron pilot (README "Structural TIR / Helitron pilot").
 # EDTA's TIR-Learner and HelitronScanner (EDTA_raw.pl --type tir|helitron),
-# per ltr_discovery.n_groups bp-balanced group, in windows with a timeout.
+# per bp-balanced group (dna_te.n_groups), in windows with a timeout.
 # Report-only (summary/dna_te_pilot.tsv); run with the dna_te_pilot_only target.
 dna_te:
   # biocontainers edta 2.3.0--hdfd78af_0, pinned by digest so the image can't
   # change under the tag
   container: "docker://quay.io/biocontainers/edta@sha256:6dfb5313b05caf4d6cafa724d6c5a95365e0471adee29005c42a338dfdf358c5"
+  n_groups: 8                  # bp-balanced groups per sample (one job per group and type); changing it reruns every group
   tir_species: others          # EDTA_raw --species (TIR-Learner model): rice | maize | others
   window_size: 5000000         # bp per EDTA_raw run (small scaffolds are packed together)
   overlap: 100000              # between windows of one long scaffold

@@ -2644,6 +2644,9 @@ rule numt_only:
 # candidates clustered and matched against the existing libraries. Nothing
 # goes into the library: dna_te_pilot.tsv says whether Stage B2 is worth it.
 # -----------------------------------------------------------------------------
+DNA_TE_GROUPS = [f"g{i}" for i in range(int(DNA_TE.get("n_groups") or LTR_CFG["n_groups"]))]
+
+
 def _dna_te_image(wildcards):
     if not DNA_TE.get("container"):
         raise ValueError("dna_te.container is not set (the EDTA image; see config.yaml)")
@@ -2651,13 +2654,14 @@ def _dna_te_image(wildcards):
 
 
 rule dna_te_group_genome:
-    # The same bp-balanced whole-scaffold groups as ltr_group_genome, written
+    # bp-balanced whole-scaffold groups like ltr_group_genome's, written
     # separately: ltr_group_genome's groups are temp(), and re-making them
-    # would make every finished ltr_* job look out of date.
+    # would make every finished ltr_* job look out of date. dna_te.n_groups
+    # (default ltr_discovery.n_groups) sets their number independently.
     input:
         f"{OUTDIR}/{{sample}}/genome/{{sample}}.fa",
     output:
-        groups=temp(expand(f"{OUTDIR}/{{{{sample}}}}/dna_te/groups/{{group}}.fa", group=LTR_GROUPS)),
+        groups=temp(expand(f"{OUTDIR}/{{{{sample}}}}/dna_te/groups/{{group}}.fa", group=DNA_TE_GROUPS)),
         manifest=f"{OUTDIR}/{{sample}}/dna_te/groups/manifest.tsv",
     threads: config["resources"]["ltr_group_genome"]["threads"]
     resources:
@@ -2714,11 +2718,11 @@ rule dna_te_candidates_group:
 rule dna_te_candidates:
     input:
         tsv=expand(f"{OUTDIR}/{{{{sample}}}}/dna_te/groups/{{group}}.{{te_type}}.tsv",
-                   group=LTR_GROUPS, te_type=DNA_TE_TYPES),
+                   group=DNA_TE_GROUPS, te_type=DNA_TE_TYPES),
         fa=expand(f"{OUTDIR}/{{{{sample}}}}/dna_te/groups/{{group}}.{{te_type}}.fa",
-                  group=LTR_GROUPS, te_type=DNA_TE_TYPES),
+                  group=DNA_TE_GROUPS, te_type=DNA_TE_TYPES),
         timeouts=expand(f"{OUTDIR}/{{{{sample}}}}/dna_te/groups/{{group}}.{{te_type}}.timeouts.tsv",
-                        group=LTR_GROUPS, te_type=DNA_TE_TYPES),
+                        group=DNA_TE_GROUPS, te_type=DNA_TE_TYPES),
     output:
         tir=f"{OUTDIR}/{{sample}}/dna_te/tir.candidates.fa",
         helitron=f"{OUTDIR}/{{sample}}/dna_te/helitron.candidates.fa",

@@ -253,6 +253,7 @@ dna_te:
   window_size: 5000000         # bp per EDTA_raw run (small scaffolds are packed together)
   overlap: 100000              # between windows of one long scaffold
   window_timeout_s: 21600      # a window still running after this is killed and logged in skipped_windows.tsv
+  max_failed_frac: 0.05        # failed runs are logged as skipped (reason, kept log); more than this share of a group's bp fails the job
   threads_per_window: 4        # windows per job = resources.dna_te_candidates_group.threads / this
   blast_evalue: 1.0e-10        # unmatched consensi vs the genome (masked-bp proxy)
   min_new_pct_non_n: 0.5       # decision: integrate if unmatched clusters add >= this % of non-N bp

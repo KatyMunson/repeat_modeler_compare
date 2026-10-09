@@ -4,8 +4,8 @@ pilot"). Report-only: the library is not changed.
 
   gather   per-group candidates from dna_te_windows.py -> one FASTA per type
            (candidates reported twice by overlapping windows dropped),
-           candidates.tsv, and skipped_windows.tsv (timed-out windows,
-           merged per tool, as ltr/skipped_windows.tsv).
+           candidates.tsv, and skipped_windows.tsv (timed-out or failed
+           windows, merged per tool and reason, as ltr/skipped_windows.tsv).
   pilot    per sample and type: cd-hit-est the candidates (library.cdhit
            settings, both strands); cd-hit-est-2d the cluster
            representatives against the sample's own -families.fa and
@@ -81,14 +81,16 @@ def gather(args):
         with open(path) as fh:
             fh.readline()
             for line in fh:
-                tool, contig, s, e = line.rstrip("\n").split("\t")
-                skipped.setdefault((tool, contig), []).append((int(s), int(e)))
+                f = line.rstrip("\n").split("\t")
+                tool, contig, s, e = f[:4]
+                reason = f[4] if len(f) > 4 else "timeout"
+                skipped.setdefault((tool, contig, reason), []).append((int(s), int(e)))
     with open(os.path.join(args.outdir, "skipped_windows.tsv"), "w") as out:
-        out.write("tool\tcontig\tstart\tend\tbp\n")
-        for (tool, contig), ivs in sorted(skipped.items()):
+        out.write("tool\tcontig\tstart\tend\tbp\treason\n")
+        for (tool, contig, reason), ivs in sorted(skipped.items()):
             for s, e in merge_half_open(ivs):
-                out.write(f"{tool}\t{contig}\t{s}\t{e}\t{e - s}\n")
-                print(f"[dna_te] skipped ({tool} timed out): {contig}:{s}-{e}")
+                out.write(f"{tool}\t{contig}\t{s}\t{e}\t{e - s}\t{reason}\n")
+                print(f"[dna_te] skipped ({tool}, {reason}): {contig}:{s}-{e}")
 
 
 # ---------------------------------------------------------------- pilot
@@ -200,6 +202,12 @@ def pilot(args):
     with open(args.fingerprint) as fh:
         args.resolve = blast_subject_resolver(l.split("\t", 1)[0] for l in fh if not l.startswith("#"))
     _total, non_n = read_assembly_stats(args.assembly_stats)
+    skipped_bp = {}
+    with open(args.skipped) as fh:
+        fh.readline()
+        for line in fh:
+            f = line.rstrip("\n").split("\t")
+            skipped_bp[f[0]] = skipped_bp.get(f[0], 0) + int(f[4])
     shared_classes = {label_of(n) for n in lib_names(args.shared_library)}
     masked = out_masked(args.out_file)
     genome_db = False
@@ -210,7 +218,7 @@ def pilot(args):
                      "shared_match\tshared_class_family\n")
         for t, cand in zip(TYPES, (args.tir, args.helitron)):
             n_cand = sum(1 for _ in iter_fasta(cand))
-            row = {"sample": args.sample, "type": t, "candidates": n_cand}
+            row = {"sample": args.sample, "type": t, "candidates": n_cand, "skipped_bp": skipped_bp.get(t, 0)}
             if not n_cand:
                 row.update(clusters=0, matched_own=0, matched_shared=0, matched=0, unmatched=0,
                            unmatched_cover_bp=0, unmatched_new_bp=0, new_pct_non_n="0.0000",
@@ -266,7 +274,7 @@ def pilot(args):
             out.write("\t".join(str(r[c]) for c in PILOT_COLS) + "\n")
 
 
-PILOT_COLS = ["sample", "type", "candidates", "clusters", "matched_own", "matched_shared", "matched",
+PILOT_COLS = ["sample", "type", "candidates", "skipped_bp", "clusters", "matched_own", "matched_shared", "matched",
               "unmatched", "unmatched_cover_bp", "unmatched_new_bp", "new_pct_non_n", "matched_classes",
               "absent_superfamilies"]
 
@@ -316,6 +324,7 @@ def main():
     p.add_argument("--fingerprint", required=True, help="genome fingerprint.tsv (sequence names)")
     p.add_argument("--out-file", required=True, help="shared-arm .out (bp already masked)")
     p.add_argument("--assembly-stats", required=True)
+    p.add_argument("--skipped", required=True, help="skipped_windows.tsv from gather (bp not scanned per type)")
     p.add_argument("--identity", type=float, default=0.8)
     p.add_argument("--coverage-short", type=float, default=0.8)
     p.add_argument("--word-size", type=int, default=5)

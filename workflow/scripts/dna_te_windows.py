@@ -9,10 +9,17 @@ and pieces are packed into windows of about --window-size bp. Each window
 is one EDTA_raw.pl run in its own directory, with short record names
 (p1, p2, ...) so EDTA renames nothing (--convert_seq_name 0). Up to
 threads / --threads-per-window windows run at once. A window still
-running after --timeout seconds is killed and its pieces are written to
---timeouts (contig, start, end in scaffold coordinates), the way the LTR
-tools log skipped windows. A window that exits without its result file
-fails the job: nothing is dropped silently.
+running after --timeout seconds is killed, and a window whose EDTA_raw.pl
+exits without its result file is set aside; both are written to
+--timeouts (tool, contig, start, end in scaffold coordinates, reason), the
+way the LTR tools log skipped windows. The reason says which: "timeout",
+or "failed exit N" with the window's zlib compression ratio (ordinary
+genomic DNA ~0.25-0.30; a satellite array ~0.02-0.07, e.g. a meadowlark
+contig that broke TIR-Learner's TIRvish parsing) and the kept log's path.
+A failed window of several pieces is first rerun one piece at a time, so
+only the piece that fails again is skipped. If more than --max-failed-frac
+of the group's bp failed (timeouts don't count), the job fails instead, so
+a systematic problem is not hidden behind skip rows.
 
 Outputs: --out-fa, the intact candidates with headers
 ">{group}_{type}_{n}#{EDTA label}"; --out-tsv, one row per candidate
@@ -27,6 +34,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 
 from fasta_utils import iter_fasta, seq_id, write_fasta
@@ -115,8 +123,9 @@ def tool_versions():
         return "python/pandas: unknown"
 
 
-def run_window(i, win, args):
-    name = f"w{i}"
+def run_one(name, win, args):
+    """One EDTA_raw.pl run on the pieces in win. Returns (recs, reason):
+    recs is None when it timed out ("timeout") or failed ("failed exit N ...")."""
     d = os.path.join(args.workdir, name)
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d)
@@ -132,18 +141,39 @@ def run_window(i, win, args):
     with open(os.path.join(d, "edta_raw.log"), "w") as log:
         rc = subprocess.run(cmd, cwd=d, stdout=log, stderr=subprocess.STDOUT, env=edta_env()).returncode
     if rc in (124, 137):
-        print(f"[dna_te] {stamp()} {name}: timed out after {args.timeout} s; logged as skipped", flush=True)
-        return name, None
+        print(f"[dna_te] {stamp()} {name}: timed out after {args.timeout} s", flush=True)
+        return None, "timeout"
     hits = glob.glob(os.path.join(d, "*.EDTA.raw", f"*.{RESULT[args.type]}"))
     if rc != 0 or not hits:
         log_path = os.path.join(d, "edta_raw.log")
         with open(log_path, errors="replace") as fh:
-            tail = "".join(fh.readlines()[-60:])
-        raise RuntimeError(f"{name}: EDTA_raw.pl exit {rc}, result {'found' if hits else 'missing'}; "
-                           f"full log (kept): {log_path}\n--- last 60 lines ---\n{tail}")
+            tail = "".join(fh.readlines()[-30:])
+        ratio = compress_ratio(win)
+        reason = f"failed exit {rc} (zlib {ratio:.2f}{', tandem array?' if ratio < 0.1 else ''}; log {log_path})"
+        print(f"[dna_te] {stamp()} {name}: {reason}\n--- last 30 lines ---\n{tail}", flush=True)
+        return None, reason
     recs = list(iter_fasta(hits[0]))
     print(f"[dna_te] {stamp()} {name} done in {(time.time() - t0) / 60:.1f} min: {len(recs)} candidates", flush=True)
-    return name, recs
+    shutil.rmtree(d, ignore_errors=True)
+    return recs, None
+
+
+def run_window(i, win, args):
+    """[(pieces, recs, reason)] for window i. A window of several pieces that
+    fails (not a timeout) is rerun one piece at a time, so one bad scaffold
+    (e.g. a satellite array) costs only itself, not its window-mates."""
+    name = f"w{i}"
+    recs, reason = run_one(name, win, args)
+    if recs is not None or reason == "timeout" or len(win) == 1:
+        return [(win, recs, reason)]
+    print(f"[dna_te] {stamp()} {name}: rerunning its {len(win)} pieces one at a time", flush=True)
+    return [(([p],) + run_one(f"{name}_{p[0]}", [p], args)) for p in win]
+
+
+def compress_ratio(win):
+    """zlib ratio of a window's sequence (sampled: up to 2 Mb from its start)."""
+    seq = "".join(p[3] for p in win)[:2_000_000].upper().encode()
+    return len(zlib.compress(seq, 6)) / len(seq) if seq else 1.0
 
 
 def main():
@@ -161,6 +191,8 @@ def main():
     ap.add_argument("--out-fa", required=True)
     ap.add_argument("--out-tsv", required=True)
     ap.add_argument("--timeouts", required=True)
+    ap.add_argument("--max-failed-frac", type=float, default=0.05,
+                    help="fail the job if more than this fraction of the group's bp failed (timeouts don't count)")
     ap.add_argument("--keep-workdir", action="store_true")
     args = ap.parse_args()
     if args.overlap >= args.window_size:
@@ -176,16 +208,17 @@ def main():
     os.makedirs(args.workdir, exist_ok=True)
 
     with ThreadPoolExecutor(n_par) as pool:
-        results = list(pool.map(lambda iw: run_window(iw[0], iw[1], args), enumerate(wins, 1)))
+        results = [o for outs in pool.map(lambda iw: run_window(iw[0], iw[1], args), enumerate(wins, 1))
+                   for o in outs]
 
     n = 0
     with open(args.out_fa, "w") as fa, open(args.out_tsv, "w") as tsv, open(args.timeouts, "w") as to:
         tsv.write("candidate\ttype\tlabel\tcontig\tstart\tend\tlength\tedta_name\n")
-        to.write("tool\tcontig\tstart\tend\n")
-        for (name, recs), win in zip(results, wins):
+        to.write("tool\tcontig\tstart\tend\treason\n")
+        for win, recs, reason in results:
             if recs is None:
                 for _p, contig, off, seq in win:
-                    to.write(f"{args.type}\t{contig}\t{off}\t{off + len(seq)}\n")
+                    to.write(f"{args.type}\t{contig}\t{off}\t{off + len(seq)}\t{reason}\n")
                 continue
             for header, seq in recs:
                 n += 1
@@ -200,9 +233,18 @@ def main():
                     start, end = off + s - 1, off + e
                 write_fasta(fa, f"{cid}#{label}", seq)
                 tsv.write(f"{cid}\t{args.type}\t{label}\t{contig}\t{start}\t{end}\t{len(seq)}\t{edta}\n")
-    skipped = sum(1 for _n, r in results if r is None)
-    print(f"[dna_te] {args.group} {args.type}: {n} candidates; {skipped} of {len(wins)} windows timed out")
-    if not args.keep_workdir:
+    total_bp = sum(len(p[3]) for p in pcs)
+    timed_out = sum(len(p[3]) for win, _r, why in results if why == "timeout" for p in win)
+    failed = [(win, why) for win, _r, why in results if why and why != "timeout"]
+    failed_bp = sum(len(p[3]) for win, _w in failed for p in win)
+    print(f"[dna_te] {args.group} {args.type}: {n} candidates; skipped {timed_out} bp (timeouts) and "
+          f"{failed_bp} bp in {len(failed)} failed runs, of {total_bp} bp")
+    if total_bp and failed_bp / total_bp > args.max_failed_frac:
+        sys.exit(f"[dna_te] {failed_bp / total_bp:.1%} of the group's bp failed (> --max-failed-frac "
+                 f"{args.max_failed_frac}): not a one-off, failing the job. Logs kept under {args.workdir}:\n"
+                 + "\n".join(f"  {','.join(p[1] for p in win)}: {why}" for win, why in failed))
+    # successful runs removed their own directories; failed ones keep their logs
+    if not args.keep_workdir and not failed:
         shutil.rmtree(args.workdir, ignore_errors=True)
 
 

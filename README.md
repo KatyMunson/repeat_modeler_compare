@@ -1042,8 +1042,17 @@ besides it).
   scaffolds are packed together. It runs `threads / threads_per_window`
   windows at once, each under `window_timeout_s`.
 - A window that times out is killed and logged in
-  `{sample}/dna_te/skipped_windows.tsv` (tool, contig, start, end), like
-  `ltr/skipped_windows.tsv`. A window that fails any other way fails the job.
+  `{sample}/dna_te/skipped_windows.tsv` (tool, contig, start, end, bp,
+  reason), like `ltr/skipped_windows.tsv`.
+- A window that fails (EDTA exits without its result) is rerun one scaffold
+  piece at a time, and only the pieces that fail again are logged, with
+  reason `failed exit N`, the piece's zlib compression ratio and the kept
+  log. Example: a 2.08 Mb meadowlark scaffold that is one GGAA-rich satellite
+  array (zlib ~0.03, against ~0.25-0.30 for ordinary DNA) breaks
+  TIR-Learner's TIRvish parsing; it holds no TIRs to find. If failed pieces
+  add up to more than `dna_te.max_failed_frac` (5 %) of a group's bp, the job
+  fails instead, so a systematic problem isn't hidden. `skipped_bp` in the
+  pilot table counts both kinds per sample and type.
 - Whether TIR-Learner or HelitronScanner stall on the hagfish assemblies is
   still to be seen on the first run. Check the skipped windows, and tune the
   timeout from the per-window times in the log.

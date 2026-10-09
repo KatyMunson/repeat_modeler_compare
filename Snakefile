@@ -2703,6 +2703,7 @@ rule dna_te_candidates_group:
         overlap=DNA_TE.get("overlap", 100000),
         timeout=DNA_TE.get("window_timeout_s", 21600),
         tpw=DNA_TE.get("threads_per_window", 4),
+        max_failed=DNA_TE.get("max_failed_frac", 0.05),
     shell:
         """
         exec > {log} 2>&1
@@ -2710,7 +2711,7 @@ rule dna_te_candidates_group:
         python3 {SCRIPTS}/dna_te_windows.py --fasta {input.fa} --type {wildcards.te_type} \
             --group {wildcards.group} --species {params.species} --window-size {params.size} \
             --overlap {params.overlap} --timeout {params.timeout} --threads {threads} \
-            --threads-per-window {params.tpw} --workdir {params.workdir} \
+            --threads-per-window {params.tpw} --max-failed-frac {params.max_failed} --workdir {params.workdir} \
             --out-fa {output.fa} --out-tsv {output.tsv} --timeouts {output.timeouts}
         """
 
@@ -2746,6 +2747,7 @@ rule dna_te_pilot:
     input:
         tir=f"{OUTDIR}/{{sample}}/dna_te/tir.candidates.fa",
         helitron=f"{OUTDIR}/{{sample}}/dna_te/helitron.candidates.fa",
+        skipped=f"{OUTDIR}/{{sample}}/dna_te/skipped_windows.tsv",
         own=f"{OUTDIR}/{{sample}}/families/{{sample}}-families.fa",
         shared=lambda wc: MASK_SHARED_LIBRARY or f"{OUTDIR}/library/shared_library.fa",
         genome=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fa",
@@ -2779,7 +2781,7 @@ rule dna_te_pilot:
             --tir {input.tir} --helitron {input.helitron} --own-families {input.own} \
             --shared-library {input.shared} --genome {input.genome} --fingerprint {input.fingerprint} \
             --out-file {input.out_file} \
-            --assembly-stats {input.assembly_stats} --identity {params.cdhit[identity]} \
+            --assembly-stats {input.assembly_stats} --skipped {input.skipped} --identity {params.cdhit[identity]} \
             --coverage-short {params.cdhit[coverage_short]} --word-size {params.cdhit[word_size]} \
             --evalue {params.evalue} --max-targets $((n_seqs + 10)) --threads {threads} \
             --workdir {params.workdir} --out {output.pilot} --clusters-out {output.clusters}

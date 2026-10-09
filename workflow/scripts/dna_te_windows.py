@@ -136,8 +136,11 @@ def run_window(i, win, args):
         return name, None
     hits = glob.glob(os.path.join(d, "*.EDTA.raw", f"*.{RESULT[args.type]}"))
     if rc != 0 or not hits:
-        tail = open(os.path.join(d, "edta_raw.log")).read()[-3000:]
-        raise RuntimeError(f"{name}: EDTA_raw.pl exit {rc}, result {'found' if hits else 'missing'}\n{tail}")
+        log_path = os.path.join(d, "edta_raw.log")
+        with open(log_path, errors="replace") as fh:
+            tail = "".join(fh.readlines()[-60:])
+        raise RuntimeError(f"{name}: EDTA_raw.pl exit {rc}, result {'found' if hits else 'missing'}; "
+                           f"full log (kept): {log_path}\n--- last 60 lines ---\n{tail}")
     recs = list(iter_fasta(hits[0]))
     print(f"[dna_te] {stamp()} {name} done in {(time.time() - t0) / 60:.1f} min: {len(recs)} candidates", flush=True)
     return name, recs

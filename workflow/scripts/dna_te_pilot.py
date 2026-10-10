@@ -284,9 +284,14 @@ def blast_chunk(args):
     os.makedirs(args.workdir, exist_ok=True)
     raw = os.path.join(args.workdir, "hsps.tsv")
     if any(True for _ in iter_fasta(args.query)):
+        # -mt_mode 1: threads split the *queries*. The default (0) splits the
+        # database, which only parallelises the seed scan; the gapped
+        # traceback of a repeat fragment's tens of thousands of hits then
+        # runs on one thread while the others idle.
+        mt = ["-mt_mode", "1"] if args.threads > 1 else []
         run(["blastn", "-task", args.task, "-query", args.query, "-db", args.db, "-evalue", str(args.evalue),
-             "-max_target_seqs", str(args.max_targets), "-num_threads", str(args.threads),
-             "-outfmt", "6 qseqid sseqid sstart send", "-out", raw])
+             "-max_target_seqs", str(args.max_targets), "-num_threads", str(args.threads)] + mt +
+            ["-outfmt", "6 qseqid sseqid sstart send", "-out", raw])
     else:
         open(raw, "w").close()
     with open(args.fingerprint) as fh:

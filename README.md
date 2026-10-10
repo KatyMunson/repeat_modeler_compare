@@ -1071,23 +1071,37 @@ besides it).
   still to be seen on the first run. Check the skipped windows, and tune the
   timeout from the per-window times in the log.
 
-**Pilot** (`dna_te_pilot`, per sample and type):
-1. Candidates (window-overlap duplicates dropped, `candidates.tsv` with
-   scaffold coordinates) are clustered with cd-hit-est (`library.cdhit`
-   settings, both strands).
-2. Each cluster representative is matched with cd-hit-est-2d against the
-   sample's own `-families.fa` and against the shared library.
-3. `pilot_clusters.tsv` lists every cluster with the family it matches and
-   that family's Class/Family (the library header label, i.e.
-   RepeatClassifier's).
-4. **Masked-bp proxy:** the unmatched representatives are blastn'd
-   (dc-megablast) against the genome. `unmatched_cover_bp` is the union of
-   their HSPs; `unmatched_new_bp` is the part the shared-arm `.out` does not
-   mask yet. This is a lower bound: blastn misses old copies that
-   RepeatMasker -s would find. It was chosen over a RepeatMasker run for cost.
+**Pilot** (per sample and type; four rules so the genome search spreads
+over the cluster):
+1. `dna_te_cluster`: candidates (window-overlap duplicates dropped,
+   `candidates.tsv` with scaffold coordinates) are clustered with cd-hit-est
+   (`library.cdhit` settings, both strands), and each cluster representative
+   is matched with cd-hit-est-2d against the sample's own `-families.fa` and
+   the shared library. The unmatched representatives are split into
+   `dna_te.blast_chunks` (50) length-balanced FASTA chunks.
+2. `dna_te_blastdb`: the genome as a BLAST database, once per sample
+   (temporary).
+3. `dna_te_blast_chunk`, one cluster job per chunk: blastn
+   (`dna_te.blast_task`, dc-megablast) against the genome, no cap on HSPs per
+   contig. The HSPs are reduced on disk (sort, not memory) to per
+   representative: HSPs, distinct genomic loci, bp covered; and merged
+   intervals per type, for all representatives and for the *repeated* ones
+   (>= `dna_te.min_copies`, 3, loci besides their own). A hagfish genome
+   (3.9 Gb, very repetitive) with ~4,400 unmatched representatives ran past
+   12 h as a single job.
+4. `dna_te_pilot`: merges the chunks. `unmatched_cover_bp` is the union of
+   the HSPs; `unmatched_new_bp` the part the shared-arm `.out` does not mask
+   yet. This is a lower bound: dc-megablast misses old copies RepeatMasker -s
+   would find (chosen over a RepeatMasker run for cost). `new_bp_repeated` /
+   `new_pct_repeated` count repeated representatives only: a single-copy
+   inverted repeat is not a family, but adds its own length to
+   `unmatched_new_bp`. `pilot_clusters.tsv` lists every cluster with the
+   family it matches (Class/Family from the library header), and the genome
+   HSPs, loci, covered bp and `repeated` flag of the unmatched ones.
 
 `summary/dna_te_pilot.tsv` has one row per sample × type: candidates,
-clusters, matched (own / shared / either), unmatched, the bp above, the
+`skipped_bp`, clusters, matched (own / shared / either), unmatched, the bp
+above (all and repeated), the
 Class/Family counts of the matched clusters, `absent_superfamilies`, and a
 `decision`. The decision rule is on the table's first line:
 - integrate if the unmatched clusters add ≥ `dna_te.min_new_pct_non_n` %

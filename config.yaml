@@ -259,6 +259,9 @@ dna_te:
   tandem_zlib: 0.1             # failed pieces compressing below this are tandem arrays: expected, never stop the job
   threads_per_window: 4        # windows per job = resources.dna_te_candidates_group.threads / this
   blast_evalue: 1.0e-10        # unmatched consensi vs the genome (masked-bp proxy)
+  blast_task: dc-megablast     # blastn -task for that search (megablast: much faster, misses older copies)
+  blast_chunks: 50             # unmatched representatives split into this many blastn jobs per sample
+  min_copies: 3                # "repeated": genomic loci besides the candidate's own (pilot *_repeated columns)
   min_new_pct_non_n: 0.5       # decision: integrate if unmatched clusters add >= this % of non-N bp
 
 # TEtrimmer (README "TEtrimmer"): automated extension / boundary / structure /
@@ -319,7 +322,8 @@ resources:
   numt_calls:       {threads: 1,  mem: 16, hrs: 2}    # holds the shared-arm .out in memory
   # --- structural TIR / Helitron pilot ---
   dna_te_candidates_group: {threads: 16, mem: 4, hrs: 72}  # per group and type; mem per slot
-  dna_te_pilot:     {threads: 8,  mem: 4,  hrs: 12}   # cd-hit-est, makeblastdb, dc-megablast
+  dna_te_pilot:     {threads: 8,  mem: 4,  hrs: 12}   # dna_te_cluster: cd-hit-est / cd-hit-est-2d
+  dna_te_blast_chunk: {threads: 8, mem: 2, hrs: 24}   # one chunk of unmatched reps vs the genome (dc-megablast)
   # --- LTR side pipeline ---
   ltr_group_genome: {threads: 1,  mem: 16, hrs: 2}
   # per group; threads must be >= 2 (see Snakefile). mem is per slot.

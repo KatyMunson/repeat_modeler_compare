@@ -2745,20 +2745,24 @@ rule dna_te_candidates:
         "--timeouts {input.timeouts} --outdir {params.outdir} > {log} 2>&1"
 
 
-rule dna_te_pilot:
+DNA_TE_CHUNKS = [f"{i:03d}" for i in range(int(DNA_TE.get("blast_chunks", 50)))]
+DNA_TE_PILOT = f"{OUTDIR}/{{sample}}/dna_te/pilot"
+DNA_TE_PILOT_X = DNA_TE_PILOT.replace("{sample}", "{{sample}}")  # inside expand(): keep {sample} a wildcard
+
+
+rule dna_te_cluster:
+    # cd-hit the candidates, match cluster representatives to the sample's own
+    # families and the shared library, split the unmatched ones into chunks.
     input:
         tir=f"{OUTDIR}/{{sample}}/dna_te/tir.candidates.fa",
         helitron=f"{OUTDIR}/{{sample}}/dna_te/helitron.candidates.fa",
         skipped=f"{OUTDIR}/{{sample}}/dna_te/skipped_windows.tsv",
         own=f"{OUTDIR}/{{sample}}/families/{{sample}}-families.fa",
         shared=lambda wc: MASK_SHARED_LIBRARY or f"{OUTDIR}/library/shared_library.fa",
-        genome=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fa",
-        fingerprint=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fingerprint.tsv",
-        assembly_stats=f"{OUTDIR}/{{sample}}/genome/{{sample}}.assembly_stats.tsv",
-        out_file=f"{OUTDIR}/shared/{{sample}}/repeatmasker/{{sample}}.fa.out",
     output:
-        pilot=f"{OUTDIR}/{{sample}}/dna_te/pilot.tsv",
-        clusters=f"{OUTDIR}/{{sample}}/dna_te/pilot_clusters.tsv",
+        partial=f"{DNA_TE_PILOT}/cluster_rows.tsv",
+        clusters=f"{DNA_TE_PILOT}/clusters_matched.tsv",
+        chunks=expand(f"{DNA_TE_PILOT_X}/chunks/{{chunk}}.fa", chunk=DNA_TE_CHUNKS),
     threads: config["resources"]["dna_te_pilot"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["dna_te_pilot"]["mem"] * attempt,
@@ -2767,11 +2771,79 @@ rule dna_te_pilot:
     conda:
         "workflow/envs/dna_te_pilot.yaml"
     log:
-        f"{OUTDIR}/logs/{{sample}}/dna_te_pilot.log",
+        f"{OUTDIR}/logs/{{sample}}/dna_te_cluster.log",
     params:
-        workdir=f"{OUTDIR}/{{sample}}/dna_te/pilot_work",
+        workdir=f"{DNA_TE_PILOT}/cluster_work",
         cdhit=config["library"]["cdhit"],
+    shell:
+        """
+        exec > {log} 2>&1
+        set -euo pipefail
+        {ENV_PATH_GUARD}
+        rm -rf {params.workdir}
+        python3 {SCRIPTS}/dna_te_pilot.py cluster --sample {wildcards.sample} \
+            --tir {input.tir} --helitron {input.helitron} --own-families {input.own} \
+            --shared-library {input.shared} --skipped {input.skipped} --identity {params.cdhit[identity]} \
+            --coverage-short {params.cdhit[coverage_short]} --word-size {params.cdhit[word_size]} \
+            --threads {threads} --workdir {params.workdir} --partial-out {output.partial} \
+            --clusters-out {output.clusters} --chunk-out {output.chunks}
+        rm -rf {params.workdir}
+        """
+
+
+rule dna_te_blastdb:
+    # The genome as a BLAST database, once per sample; removed when every
+    # chunk is done.
+    input:
+        genome=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fa",
+    output:
+        temp(directory(f"{DNA_TE_PILOT}/blastdb")),
+    threads: 1
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["dna_te_blast_chunk"]["mem"] * 4 * attempt,
+        hrs=config["resources"]["dna_te_pilot"]["hrs"],
+        shell_exec="bash",
+    conda:
+        "workflow/envs/dna_te_pilot.yaml"
+    log:
+        f"{OUTDIR}/logs/{{sample}}/dna_te_blastdb.log",
+    shell:
+        """
+        exec > {log} 2>&1
+        set -euo pipefail
+        {ENV_PATH_GUARD}
+        mkdir -p {output}
+        makeblastdb -in {input.genome} -dbtype nucl -parse_seqids -out {output}/genome
+        """
+
+
+rule dna_te_blast_chunk:
+    # One chunk of unmatched representatives vs the genome (one cluster job
+    # per chunk); HSPs reduced to per-query copies and merged intervals.
+    input:
+        query=f"{DNA_TE_PILOT}/chunks/{{chunk}}.fa",
+        db=f"{DNA_TE_PILOT}/blastdb",
+        fingerprint=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fingerprint.tsv",
+    output:
+        queries=f"{DNA_TE_PILOT}/blast/{{chunk}}.queries.tsv",
+        bed=f"{DNA_TE_PILOT}/blast/{{chunk}}.bed",
+    wildcard_constraints:
+        chunk=r"\d+",
+    threads: config["resources"]["dna_te_blast_chunk"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["dna_te_blast_chunk"]["mem"] * attempt,
+        hrs=config["resources"]["dna_te_blast_chunk"]["hrs"],
+        shell_exec="bash",
+    conda:
+        "workflow/envs/dna_te_pilot.yaml"
+    log:
+        f"{OUTDIR}/logs/{{sample}}/dna_te_blast_chunk/{{chunk}}.log",
+    params:
+        workdir=f"{DNA_TE_PILOT}/blast/{{chunk}}.work",
+        task=DNA_TE.get("blast_task", "dc-megablast"),
         evalue=DNA_TE.get("blast_evalue", 1e-10),
+        min_copies=DNA_TE.get("min_copies", 3),
+        sort_mem=lambda wc, threads: max(1, config["resources"]["dna_te_blast_chunk"]["mem"] * threads // 2),
     shell:
         """
         exec > {log} 2>&1
@@ -2779,16 +2851,38 @@ rule dna_te_pilot:
         {ENV_PATH_GUARD}
         n_seqs=$(awk -F'\t' '$1 == "#n_seqs" {{print $2}}' {input.fingerprint})
         rm -rf {params.workdir}
-        python3 {SCRIPTS}/dna_te_pilot.py pilot --sample {wildcards.sample} \
-            --tir {input.tir} --helitron {input.helitron} --own-families {input.own} \
-            --shared-library {input.shared} --genome {input.genome} --fingerprint {input.fingerprint} \
-            --out-file {input.out_file} \
-            --assembly-stats {input.assembly_stats} --skipped {input.skipped} --identity {params.cdhit[identity]} \
-            --coverage-short {params.cdhit[coverage_short]} --word-size {params.cdhit[word_size]} \
-            --evalue {params.evalue} --max-targets $((n_seqs + 10)) --threads {threads} \
-            --workdir {params.workdir} --out {output.pilot} --clusters-out {output.clusters}
+        python3 {SCRIPTS}/dna_te_pilot.py blast_chunk --query {input.query} --db {input.db}/genome \
+            --fingerprint {input.fingerprint} --task {params.task} --evalue {params.evalue} \
+            --max-targets $((n_seqs + 10)) --min-copies {params.min_copies} --threads {threads} \
+            --sort-mem {params.sort_mem} --workdir {params.workdir} \
+            --queries-out {output.queries} --bed-out {output.bed}
         rm -rf {params.workdir}
         """
+
+
+rule dna_te_pilot:
+    input:
+        partial=f"{DNA_TE_PILOT}/cluster_rows.tsv",
+        clusters=f"{DNA_TE_PILOT}/clusters_matched.tsv",
+        queries=expand(f"{DNA_TE_PILOT_X}/blast/{{chunk}}.queries.tsv", chunk=DNA_TE_CHUNKS),
+        beds=expand(f"{DNA_TE_PILOT_X}/blast/{{chunk}}.bed", chunk=DNA_TE_CHUNKS),
+        assembly_stats=f"{OUTDIR}/{{sample}}/genome/{{sample}}.assembly_stats.tsv",
+        out_file=f"{OUTDIR}/shared/{{sample}}/repeatmasker/{{sample}}.fa.out",
+    output:
+        pilot=f"{OUTDIR}/{{sample}}/dna_te/pilot.tsv",
+        clusters=f"{OUTDIR}/{{sample}}/dna_te/pilot_clusters.tsv",
+    threads: 1
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["summarize"]["mem"] * attempt,
+        hrs=config["resources"]["summarize"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/{{sample}}/dna_te_pilot.log",
+    shell:
+        "python3 {SCRIPTS}/dna_te_pilot.py finalize --partial {input.partial} --clusters-in {input.clusters} "
+        "--queries {input.queries} --beds {input.beds} --out-file {input.out_file} "
+        "--assembly-stats {input.assembly_stats} --out {output.pilot} --clusters-out {output.clusters} "
+        "> {log} 2>&1"
 
 
 rule dna_te_pilot_summary:

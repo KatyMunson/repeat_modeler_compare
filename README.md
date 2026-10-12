@@ -1077,13 +1077,21 @@ besides it).
     pandas 2.2.2. String frames get plain pandas again; anything else that
     still uses dask gets threads, not processes ("daemonic processes are not
     allowed to have children" inside TIR-Learner's worker pool).
+  - The image runs TIR-Learner 3.0.2 (`/usr/local/share/TIR-Learner3.0`),
+    which crashes whenever a step finds nothing: TIRvish with no hits
+    ("All objects passed were None"), GRF with no candidates, sequences all
+    under its 5.5 kb minimum ("No objects to concatenate"), a step that
+    stores None (checkpoint writer), and candidates of which none passes
+    the TIR/TSD check (`KeyError: 'source'`). These functions are wrapped
+    so the empty case passes through, and "no candidates at all" exits 0,
+    which EDTA_raw.pl reports as an empty TIR file.
   - `apply(axis=1)` on an empty frame returns a frame copy, so a window
     where TIRvish finds candidates and the N / TA filters drop all of them
     failed with "Cannot set a DataFrame with multiple columns to the single
     column check_N_TIR1_check" (a TIR-Learner bug, pandas 2 too). It now
     returns an empty Series and TIR-Learner reports no TIRs.
-  On EDTA's 1 Mb rice test genome TIR-Learner's output is identical with
-  and without the last two. The job log's first line says the shims are on.
+  On EDTA's 1 Mb rice test genome TIR-Learner 3.0.2's output (34 TIRs) is
+  identical with and without the shims added for these empty cases. The job log's first line says the shims are on.
   `skipped_bp` in the pilot table counts timeouts and failures per sample and
   type; `skipped_windows.tsv` says which was which.
 - Whether TIR-Learner or HelitronScanner stall on the hagfish assemblies is

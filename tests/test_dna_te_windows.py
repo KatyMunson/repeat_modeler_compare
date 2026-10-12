@@ -62,5 +62,42 @@ class Shim(unittest.TestCase):
         self.assertEqual(out.stdout.split("\n")[:2], ["0 ['id', 'TIR1', 'check']", "DataFrame"])
 
 
+TIRL_CHECK = r"""
+import os, sys, tempfile
+d = os.path.join(tempfile.mkdtemp(), "TIR-Learner3.0", "bin")
+os.makedirs(d)
+open(os.path.join(d, "post_processing.py"), "w").write(
+    "import pandas as pd\n"
+    "def combine_all(df_list):\n"
+    "    df = pd.concat(df_list) if len(df_list) > 1 else df_list[0].copy()\n"
+    "    return df.sort_values(['seqid', 'source'])\n")
+open(os.path.join(d, "get_fasta_sequence.py"), "w").write(
+    "import pandas as pd\n"
+    "def get_fasta_pieces_SeqIO(genome_file, df_in, cpu_cores, flag_verbose):\n"
+    "    return pd.concat([None])\n")
+sys.path.insert(0, d)
+import pandas as pd
+import post_processing, get_fasta_sequence
+empty_no_source = pd.DataFrame({"seqid": pd.Series([], dtype=object)})   # check_TIR_TSD's early return
+print(len(post_processing.combine_all([empty_no_source])))
+hit = pd.DataFrame({"seqid": ["c1"], "source": ["Module4"]})
+print(len(post_processing.combine_all([empty_no_source, hit])))
+out = get_fasta_sequence.get_fasta_pieces_SeqIO("g.fa", pd.DataFrame({"seqid": pd.Series([], dtype=object)}), 1, False)
+print(list(out.columns), len(out))
+"""
+
+
+@unittest.skipIf(subprocess.run([sys.executable, "-c", "import pandas"], capture_output=True).returncode,
+                 "pandas not installed")
+class TirLearnerEmptySteps(unittest.TestCase):
+    """TIR-Learner 3.0.x modules (loaded from a TIR-Learner path) get empty-step guards."""
+
+    def test_combine_all_and_fasta_pieces(self):
+        env = dict(os.environ, PYTHONPATH=os.path.join(SCRIPTS, "compat", "edta_python"))
+        out = subprocess.run([sys.executable, "-c", TIRL_CHECK], capture_output=True, text=True, env=env)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.split("\n")[:3], ["0", "1", "['seqid', 'seq'] 0"])
+
+
 if __name__ == "__main__":
     unittest.main()

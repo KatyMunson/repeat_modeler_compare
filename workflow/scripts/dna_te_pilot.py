@@ -284,7 +284,9 @@ def cluster(args):
         for line in fh:
             f = line.rstrip("\n").split("\t")
             skipped_bp[f[0]] = skipped_bp.get(f[0], 0) + int(f[4])
-    labels = library_labels(args.shared_library, args.curated_table)
+    # header labels only: the current labels (curated / cross-check tables) are
+    # applied later, in targets / report, so relabelling never reruns this step
+    labels = library_labels(args.shared_library, [])
     shared_classes = set(labels.values())
 
     rows, table, unmatched_seqs = {}, [], {}
@@ -320,6 +322,8 @@ def cluster(args):
     masks = mask_against_library(args, unmatched_seqs, wd) if unmatched_seqs else {}
     status, novel_seqs, frag_classes = {}, [], {t: {} for t in TYPES}
     with open(args.overlaps_out, "w") as ov:
+        # every family a candidate covers >= unknown_min_cov of (header label);
+        # targets / report keep the ones whose *current* label is Unknown
         ov.write("sample\ttype\tcandidate\tcandidate_label\tfamily\tfamily_label\tfamily_cov\tquery_bp\tpident\n")
         for name, sq in unmatched_seqs.items():
             t = type_of(name)
@@ -337,7 +341,7 @@ def cluster(args):
                 novel_seqs.append((name, hard_mask(sq, ivs)))
                 rows[t]["novel"] += 1
             for fam, (qbp, fcov, pid) in per_fam.items():
-                if labels.get(fam, "").split("/")[0] == "Unknown" and fcov >= args.unknown_min_cov:
+                if fcov >= args.unknown_min_cov:
                     ov.write(f"{args.sample}\t{t}\t{name}\t{label_of(name)}\t{fam}\t{labels[fam]}\t"
                              f"{fcov:.3f}\t{qbp}\t{pid:.1f}\n")
 
@@ -566,12 +570,14 @@ def targets(args):
             name = seq_id(h).split("#", 1)[0]
             seqs[name] = sq
             add(name, "novel_repeated", name.split("_", 1)[0], type_of(seq_id(h)))
+    labels = library_labels(args.library, args.curated_table)
     for path in args.overlaps:
         with open(path) as fh:
             fh.readline()
             for line in fh:
                 f = line.rstrip("\n").split("\t")
-                add(f[4], "unknown_overlap", f[0])
+                if labels.get(f[4], "").split("/")[0] == "Unknown":
+                    add(f[4], "unknown_overlap", f[0])
     with open(args.curation) as fh:
         header = fh.readline().rstrip("\n").split("\t")
         for line in fh:
@@ -714,7 +720,6 @@ def main():
     p.add_argument("--helitron", required=True)
     p.add_argument("--own-families", required=True)
     p.add_argument("--shared-library", required=True)
-    p.add_argument("--curated-table", nargs="*", default=[], help="curated / applied cross-check tables (labels)")
     p.add_argument("--skipped", required=True, help="skipped_windows.tsv from gather (bp not scanned per type)")
     p.add_argument("--identity", type=float, default=0.8)
     p.add_argument("--coverage-short", type=float, default=0.8)
@@ -763,6 +768,8 @@ def main():
     tg.add_argument("--overlaps", nargs="+", required=True)
     tg.add_argument("--curation", required=True, help="curation_candidates.tsv")
     tg.add_argument("--library", required=True)
+    tg.add_argument("--curated-table", nargs="*", default=[],
+                    help="curated / applied cross-check tables: current labels (first listing wins)")
     tg.add_argument("--fa-out", required=True)
     tg.add_argument("--tsv-out", required=True)
 

@@ -2759,7 +2759,6 @@ rule dna_te_cluster:
         skipped=f"{OUTDIR}/{{sample}}/dna_te/skipped_windows.tsv",
         own=f"{OUTDIR}/{{sample}}/families/{{sample}}-families.fa",
         shared=lambda wc: MASK_SHARED_LIBRARY or f"{OUTDIR}/library/shared_library.fa",
-        curated=CURATED_TABLES,
     output:
         partial=f"{DNA_TE_PILOT}/cluster_rows.tsv",
         clusters=f"{DNA_TE_PILOT}/clusters_matched.tsv",
@@ -2782,7 +2781,6 @@ rule dna_te_cluster:
         novel_min_bp=DNA_TE.get("novel_min_bp", 200),
         novel_min_frac=DNA_TE.get("novel_min_frac", 0.5),
         unknown_min_cov=DNA_TE.get("unknown_min_cov", 0.5),
-        curated=lambda wc, input: f"--curated-table {input.curated}" if input.curated else "",
     shell:
         """
         exec > {log} 2>&1
@@ -2793,7 +2791,7 @@ rule dna_te_cluster:
             --tir {input.tir} --helitron {input.helitron} --own-families {input.own} \
             --shared-library {input.shared} --skipped {input.skipped} --identity {params.cdhit[identity]} \
             --coverage-short {params.cdhit[coverage_short]} --word-size {params.cdhit[word_size]} \
-            {params.curated} --evalue {params.evalue} --mask-min-id {params.mask_min_id} \
+            --evalue {params.evalue} --mask-min-id {params.mask_min_id} \
             --novel-min-bp {params.novel_min_bp} --novel-min-frac {params.novel_min_frac} \
             --unknown-min-cov {params.unknown_min_cov} \
             --threads {threads} --workdir {params.workdir} --partial-out {output.partial} \
@@ -2908,6 +2906,7 @@ rule dna_te_tesorter_targets:
         overlaps=expand(f"{OUTDIR}/{{sample}}/dna_te/unknown_overlaps.tsv", sample=SAMPLE_IDS),
         curation=f"{OUTDIR}/{TETRIMMER_SUMDIR}/curation_candidates.tsv",
         library=lambda wc: MASK_SHARED_LIBRARY or f"{OUTDIR}/library/shared_library.fa",
+        curated=CURATED_TABLES,
     output:
         fa=f"{OUTDIR}/dna_te_tesorter/targets.fa",
         tsv=f"{OUTDIR}/dna_te_tesorter/targets.tsv",
@@ -2918,8 +2917,10 @@ rule dna_te_tesorter_targets:
         shell_exec="bash",
     log:
         f"{OUTDIR}/logs/summary/dna_te_tesorter_targets.log",
+    params:
+        curated=lambda wc, input: f"--curated-table {input.curated}" if input.curated else "",
     shell:
-        "python3 {SCRIPTS}/dna_te_pilot.py targets --novel {input.novel} --overlaps {input.overlaps} "
+        "python3 {SCRIPTS}/dna_te_pilot.py targets {params.curated} --novel {input.novel} --overlaps {input.overlaps} "
         "--curation {input.curation} --library {input.library} --fa-out {output.fa} --tsv-out {output.tsv} "
         "> {log} 2>&1"
 

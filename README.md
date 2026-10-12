@@ -1089,9 +1089,10 @@ cluster):
      pieces, CR1 / ERV fragments in birds that TIR-Learner calls CACTA) and
      only failed the 80/80 match as wholes. EDTA's own pipeline removes them
      with a cross-library filter we don't run otherwise.
-   - A representative covering >= `unknown_min_cov` (0.5) of an **Unknown**
-     library family's consensus is listed in `unknown_overlaps.tsv`:
-     structural evidence about what that family is.
+   - A representative covering >= `unknown_min_cov` (0.5) of a library
+     family's consensus is listed in `unknown_overlaps.tsv` (with the
+     family's header label); for families still Unknown, that is structural
+     evidence about what they are.
    - Novel representatives (masked) are split into `dna_te.blast_chunks`
      (50) length-balanced chunks.
 2. `dna_te_blastdb`: the genome as a BLAST database, once per sample
@@ -1112,12 +1113,16 @@ cluster):
    Writes `novel_repeated.fa`.
 5. `dna_te_tesorter_targets` / `dna_te_tesorter` (whole project, one job):
    TEsorter (REXdb metazoa + GyDB, the classify step's settings) on the
-   repeated novel representatives of every sample, the Unknown families in
-   `unknown_overlaps.tsv`, and the top Unknown families of
+   repeated novel representatives of every sample, the families in
+   `unknown_overlaps.tsv` whose *current* label is Unknown, and the top
+   Unknown families of
    `curation_candidates.tsv` (flag `unknown`, not yet curated; the
    `summary.curation_min_pct_masked` cut). Far cheaper than the whole
-   library. Library labels come from the headers plus the curated /
-   applied cross-check tables; the classify step's whole-library
+   library. Current labels = library headers plus the curated / applied
+   cross-check tables, applied here and not in `dna_te_cluster` (which uses
+   header labels only): a relabelling (e.g. a new harmonized satellite
+   library) reruns only the targets, TEsorter and summary steps, never the
+   clustering or the genome search. The classify step's whole-library
    reclassification is not required.
 6. `dna_te_pilot_summary`:
    - `summary/dna_te_pilot.tsv`, one row per sample × type: candidates,

@@ -1044,6 +1044,12 @@ besides it).
 - A window that times out is killed and logged in
   `{sample}/dna_te/skipped_windows.tsv` (tool, contig, start, end, bp,
   reason), like `ltr/skipped_windows.tsv`.
+- Before anything runs, each piece's zlib compression ratio (assembly gaps
+  removed) is measured; pieces below `dna_te.tandem_zlib` (0.1) are tandem
+  arrays, logged straight away as `tandem array pre-screen (zlib R)` and
+  never sent to EDTA. They hold no TIRs, and TIR-Learner's TIRvish parsing
+  breaks on them (`All objects passed were None`); bird assemblies have many
+  such satellite scaffolds.
 - A window that fails (EDTA exits without its result) is rerun one scaffold
   piece at a time, and only the pieces that fail again are logged, with
   reason `failed exit N (tandem array | ordinary sequence, zlib R; log PATH)`.

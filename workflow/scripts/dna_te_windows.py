@@ -16,8 +16,11 @@ way the LTR tools log skipped windows. The reason says which: "timeout",
 or "failed exit N" with the window's zlib compression ratio (ordinary
 genomic DNA ~0.25-0.30; a satellite array ~0.02-0.07, e.g. a meadowlark
 contig that broke TIR-Learner's TIRvish parsing) and the kept log's path.
-A failed window of several pieces is first rerun one piece at a time, so
-only the piece that fails again is skipped. A failed piece that compresses
+Pieces that compress below --tandem-zlib (zlib ratio, N removed) are
+tandem arrays: logged as skipped up front and never run (TIR-Learner's
+TIRvish parsing breaks on them, and they hold no TEs). A failed window of
+several pieces is first rerun one piece at a time, so only the piece that
+fails again is skipped. A failed piece that compresses
 below --tandem-zlib is a tandem array: expected (bird assemblies carry
 large satellite scaffolds), it never stops the job. If failed pieces of
 ordinary sequence add up to more than --max-failed-frac of the group's bp,
@@ -174,10 +177,17 @@ def run_window(i, win, args):
     return [(([p],) + run_one(f"{name}_{p[0]}", [p], args)) for p in win]
 
 
+def seq_ratio(seq):
+    """zlib compression ratio of a sequence, assembly gaps (N) removed so a
+    gap-rich scaffold is not mistaken for a tandem array. Ordinary genomic DNA
+    ~0.25-0.30; a satellite array ~0.02-0.07."""
+    s = seq.upper().replace("N", "").encode()
+    return len(zlib.compress(s, 6)) / len(s) if s else 1.0
+
+
 def compress_ratio(win):
-    """zlib ratio of a window's sequence (sampled: up to 2 Mb from its start)."""
-    seq = "".join(p[3] for p in win)[:2_000_000].upper().encode()
-    return len(zlib.compress(seq, 6)) / len(seq) if seq else 1.0
+    """zlib ratio of a window's sequence (all its pieces)."""
+    return seq_ratio("".join(p[3] for p in win))
 
 
 def main():
@@ -209,15 +219,22 @@ def main():
     args.edta_raw = find_edta_raw()
     print(f"[dna_te] EDTA_raw.pl: {' '.join(args.edta_raw)} ({shutil.which(args.edta_raw[-1]) or args.edta_raw[-1]}); {tool_versions()} (TIR-Learner shims on: pandas >= 3 positional, swifter threads)")
     pcs = pieces(args.fasta, args.window_size, args.overlap)
-    wins = pack(pcs, args.window_size)
+    # Pre-screen: tandem-array pieces (whole piece compresses below
+    # --tandem-zlib) hold no TEs to find and break TIR-Learner's TIRvish
+    # parsing, so they are logged as skipped and never sent to EDTA.
+    ratio = {p[0]: seq_ratio(p[3]) for p in pcs}
+    pre = [p for p in pcs if ratio[p[0]] < args.tandem_zlib]
+    wins = pack([p for p in pcs if ratio[p[0]] >= args.tandem_zlib], args.window_size)
     where = {p[0]: (p[1], p[2]) for p in pcs}
     n_par = max(1, args.threads // args.threads_per_window)
-    print(f"[dna_te] {args.group} {args.type}: {len(pcs)} pieces in {len(wins)} windows, {n_par} at a time")
+    print(f"[dna_te] {args.group} {args.type}: {len(pcs)} pieces; {len(pre)} tandem arrays pre-screened out "
+          f"({sum(len(p[3]) for p in pre)} bp); {len(pcs) - len(pre)} in {len(wins)} windows, {n_par} at a time")
     os.makedirs(args.workdir, exist_ok=True)
 
     with ThreadPoolExecutor(n_par) as pool:
         results = [o for outs in pool.map(lambda iw: run_window(iw[0], iw[1], args), enumerate(wins, 1))
                    for o in outs]
+    results += [([p], None, f"tandem array pre-screen (zlib {ratio[p[0]]:.2f})") for p in pre]
 
     n = 0
     with open(args.out_fa, "w") as fa, open(args.out_tsv, "w") as tsv, open(args.timeouts, "w") as to:
@@ -243,12 +260,14 @@ def main():
                 tsv.write(f"{cid}\t{args.type}\t{label}\t{contig}\t{start}\t{end}\t{len(seq)}\t{edta}\n")
     total_bp = sum(len(p[3]) for p in pcs)
     timed_out = sum(len(p[3]) for win, _r, why in results if why == "timeout" for p in win)
-    failed = [(win, why) for win, _r, why in results if why and why != "timeout"]
+    prescreened = sum(len(p[3]) for p in pre)
+    failed = [(win, why) for win, _r, why in results if why and why.startswith("failed")]
     tandem_bp = sum(len(p[3]) for win, why in failed if "(tandem array," in why for p in win)
     ordinary = [(win, why) for win, why in failed if "(tandem array," not in why]
     ordinary_bp = sum(len(p[3]) for win, _w in ordinary for p in win)
-    print(f"[dna_te] {args.group} {args.type}: {n} candidates; skipped {timed_out} bp (timeouts), "
-          f"{tandem_bp} bp (failed, tandem arrays), {ordinary_bp} bp (failed, ordinary sequence), of {total_bp} bp")
+    print(f"[dna_te] {args.group} {args.type}: {n} candidates; skipped {prescreened} bp (tandem arrays, "
+          f"pre-screen), {timed_out} bp (timeouts), {tandem_bp} bp (failed, tandem arrays), {ordinary_bp} bp "
+          f"(failed, ordinary sequence), of {total_bp} bp")
     if total_bp and ordinary_bp / total_bp > args.max_failed_frac:
         sys.exit(f"[dna_te] {ordinary_bp / total_bp:.1%} of the group's bp failed on ordinary (not tandem-array) "
                  f"sequence (> --max-failed-frac {args.max_failed_frac}): likely a tool problem, not the "

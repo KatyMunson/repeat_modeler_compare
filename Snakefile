@@ -2759,9 +2759,11 @@ rule dna_te_cluster:
         skipped=f"{OUTDIR}/{{sample}}/dna_te/skipped_windows.tsv",
         own=f"{OUTDIR}/{{sample}}/families/{{sample}}-families.fa",
         shared=lambda wc: MASK_SHARED_LIBRARY or f"{OUTDIR}/library/shared_library.fa",
+        curated=CURATED_TABLES,
     output:
         partial=f"{DNA_TE_PILOT}/cluster_rows.tsv",
         clusters=f"{DNA_TE_PILOT}/clusters_matched.tsv",
+        overlaps=f"{OUTDIR}/{{sample}}/dna_te/unknown_overlaps.tsv",
         chunks=expand(f"{DNA_TE_PILOT_X}/chunks/{{chunk}}.fa", chunk=DNA_TE_CHUNKS),
     threads: config["resources"]["dna_te_pilot"]["threads"]
     resources:
@@ -2775,6 +2777,12 @@ rule dna_te_cluster:
     params:
         workdir=f"{DNA_TE_PILOT}/cluster_work",
         cdhit=config["library"]["cdhit"],
+        evalue=DNA_TE.get("blast_evalue", 1e-10),
+        mask_min_id=DNA_TE.get("mask_min_id", 70),
+        novel_min_bp=DNA_TE.get("novel_min_bp", 200),
+        novel_min_frac=DNA_TE.get("novel_min_frac", 0.5),
+        unknown_min_cov=DNA_TE.get("unknown_min_cov", 0.5),
+        curated=lambda wc, input: f"--curated-table {input.curated}" if input.curated else "",
     shell:
         """
         exec > {log} 2>&1
@@ -2785,8 +2793,11 @@ rule dna_te_cluster:
             --tir {input.tir} --helitron {input.helitron} --own-families {input.own} \
             --shared-library {input.shared} --skipped {input.skipped} --identity {params.cdhit[identity]} \
             --coverage-short {params.cdhit[coverage_short]} --word-size {params.cdhit[word_size]} \
+            {params.curated} --evalue {params.evalue} --mask-min-id {params.mask_min_id} \
+            --novel-min-bp {params.novel_min_bp} --novel-min-frac {params.novel_min_frac} \
+            --unknown-min-cov {params.unknown_min_cov} \
             --threads {threads} --workdir {params.workdir} --partial-out {output.partial} \
-            --clusters-out {output.clusters} --chunk-out {output.chunks}
+            --clusters-out {output.clusters} --overlaps-out {output.overlaps} --chunk-out {output.chunks}
         rm -rf {params.workdir}
         """
 
@@ -2866,11 +2877,13 @@ rule dna_te_pilot:
         clusters=f"{DNA_TE_PILOT}/clusters_matched.tsv",
         queries=expand(f"{DNA_TE_PILOT_X}/blast/{{chunk}}.queries.tsv", chunk=DNA_TE_CHUNKS),
         beds=expand(f"{DNA_TE_PILOT_X}/blast/{{chunk}}.bed", chunk=DNA_TE_CHUNKS),
+        chunks=expand(f"{DNA_TE_PILOT_X}/chunks/{{chunk}}.fa", chunk=DNA_TE_CHUNKS),
         assembly_stats=f"{OUTDIR}/{{sample}}/genome/{{sample}}.assembly_stats.tsv",
         out_file=f"{OUTDIR}/shared/{{sample}}/repeatmasker/{{sample}}.fa.out",
     output:
         pilot=f"{OUTDIR}/{{sample}}/dna_te/pilot.tsv",
         clusters=f"{OUTDIR}/{{sample}}/dna_te/pilot_clusters.tsv",
+        novel=f"{OUTDIR}/{{sample}}/dna_te/novel_repeated.fa",
     threads: 1
     resources:
         mem=lambda wildcards, attempt: config["resources"]["summarize"]["mem"] * attempt,
@@ -2880,16 +2893,91 @@ rule dna_te_pilot:
         f"{OUTDIR}/logs/{{sample}}/dna_te_pilot.log",
     shell:
         "python3 {SCRIPTS}/dna_te_pilot.py finalize --partial {input.partial} --clusters-in {input.clusters} "
-        "--queries {input.queries} --beds {input.beds} --out-file {input.out_file} "
+        "--queries {input.queries} --beds {input.beds} --chunks {input.chunks} --out-file {input.out_file} "
         "--assembly-stats {input.assembly_stats} --out {output.pilot} --clusters-out {output.clusters} "
+        "--novel-out {output.novel} "
         "> {log} 2>&1"
 
 
-rule dna_te_pilot_summary:
+rule dna_te_tesorter_targets:
+    # One TEsorter input for the project: repeated novel candidates of every
+    # sample, the Unknown families TIR/Helitron candidates overlap, and the
+    # top Unknown families of curation_candidates.tsv (same cut).
     input:
-        expand(f"{OUTDIR}/{{sample}}/dna_te/pilot.tsv", sample=SAMPLE_IDS),
+        novel=expand(f"{OUTDIR}/{{sample}}/dna_te/novel_repeated.fa", sample=SAMPLE_IDS),
+        overlaps=expand(f"{OUTDIR}/{{sample}}/dna_te/unknown_overlaps.tsv", sample=SAMPLE_IDS),
+        curation=f"{OUTDIR}/{TETRIMMER_SUMDIR}/curation_candidates.tsv",
+        library=lambda wc: MASK_SHARED_LIBRARY or f"{OUTDIR}/library/shared_library.fa",
     output:
-        f"{OUTDIR}/summary/dna_te_pilot.tsv",
+        fa=f"{OUTDIR}/dna_te_tesorter/targets.fa",
+        tsv=f"{OUTDIR}/dna_te_tesorter/targets.tsv",
+    threads: 1
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["classify_light"]["mem"] * attempt,
+        hrs=config["resources"]["classify_light"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/summary/dna_te_tesorter_targets.log",
+    shell:
+        "python3 {SCRIPTS}/dna_te_pilot.py targets --novel {input.novel} --overlaps {input.overlaps} "
+        "--curation {input.curation} --library {input.library} --fa-out {output.fa} --tsv-out {output.tsv} "
+        "> {log} 2>&1"
+
+
+rule dna_te_tesorter:
+    # TEsorter (REXdb metazoa + GyDB) on the targets only, with the classify
+    # step's settings (-dp2: domain evidence only).
+    input:
+        fa=f"{OUTDIR}/dna_te_tesorter/targets.fa",
+    output:
+        rexdb=f"{OUTDIR}/dna_te_tesorter/targets.rexdb-metazoa.cls.tsv",
+        gydb=f"{OUTDIR}/dna_te_tesorter/targets.gydb.cls.tsv",
+    threads: config["resources"]["tesorter"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["tesorter"]["mem"] * attempt,
+        hrs=config["resources"]["tesorter"]["hrs"],
+        shell_exec="bash",
+    conda:
+        "workflow/envs/tesorter.yaml"
+    log:
+        f"{OUTDIR}/logs/summary/dna_te_tesorter.log",
+    params:
+        workdir=f"{OUTDIR}/dna_te_tesorter",
+        fa_abs=lambda wc, input: os.path.abspath(input.fa),
+        cov=CLASSIFY.get("tesorter_min_cov", 20),
+        evalue=CLASSIFY.get("tesorter_max_evalue", 1e-3),
+    shell:
+        """
+        exec > {log} 2>&1
+        set -euo pipefail
+        {ENV_PATH_GUARD}
+        cd {params.workdir}
+        for db in rexdb-metazoa gydb; do
+            # TEsorter reuses a stale <pre>.domtbl from an earlier run: start clean
+            rm -rf targets.$db.* tmp_$db
+            if [ -s {params.fa_abs} ]; then
+                TEsorter {params.fa_abs} -db $db -st nucl -p {threads} -cov {params.cov} -eval {params.evalue} \
+                    -dp2 -nolib -pre targets.$db -tmp tmp_$db
+            fi
+            [ -f targets.$db.cls.tsv ] || printf '#TE\tOrder\tSuperfamily\tClade\tComplete\tStrand\tDomains\n' > targets.$db.cls.tsv
+            rm -rf tmp_$db
+        done
+        """
+
+
+rule dna_te_pilot_summary:
+    # Pilot rows + TEsorter -> summary table (decision rule on its first line)
+    # and Unknown-family label proposals (curated_families format; review).
+    input:
+        pilots=expand(f"{OUTDIR}/{{sample}}/dna_te/pilot.tsv", sample=SAMPLE_IDS),
+        overlaps=expand(f"{OUTDIR}/{{sample}}/dna_te/unknown_overlaps.tsv", sample=SAMPLE_IDS),
+        targets=f"{OUTDIR}/dna_te_tesorter/targets.tsv",
+        rexdb=f"{OUTDIR}/dna_te_tesorter/targets.rexdb-metazoa.cls.tsv",
+        gydb=f"{OUTDIR}/dna_te_tesorter/targets.gydb.cls.tsv",
+        library=lambda wc: MASK_SHARED_LIBRARY or f"{OUTDIR}/library/shared_library.fa",
+    output:
+        summary=f"{OUTDIR}/summary/dna_te_pilot.tsv",
+        proposals=f"{OUTDIR}/summary/dna_te_unknown_proposals.tsv",
     threads: config["resources"]["combine_summaries"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["combine_summaries"]["mem"] * attempt,
@@ -2899,15 +2987,21 @@ rule dna_te_pilot_summary:
         f"{OUTDIR}/logs/summary/dna_te_pilot_summary.log",
     params:
         min_pct=DNA_TE.get("min_new_pct_non_n", 0.5),
+        min_domains=CLASSIFY.get("tesorter_min_domains", 1),
+        unknown_min_cov=DNA_TE.get("unknown_min_cov", 0.5),
     shell:
-        "python3 {SCRIPTS}/dna_te_pilot.py combine --chunks {input} "
-        "--min-new-pct-non-n {params.min_pct} --out {output} > {log} 2>&1"
+        "python3 {SCRIPTS}/dna_te_pilot.py report --chunks {input.pilots} --targets {input.targets} "
+        "--rexdb {input.rexdb} --gydb {input.gydb} --overlaps {input.overlaps} --library {input.library} "
+        "--min-domains {params.min_domains} --unknown-min-cov {params.unknown_min_cov} "
+        "--min-new-pct-non-n {params.min_pct} --out {output.summary} --proposals-out {output.proposals} "
+        "> {log} 2>&1"
 
 
 rule dna_te_pilot_only:
     # Input-only target (--rerun-triggers mtime); not part of `all`.
     input:
         f"{OUTDIR}/summary/dna_te_pilot.tsv",
+        f"{OUTDIR}/summary/dna_te_unknown_proposals.tsv",
 
 
 # -----------------------------------------------------------------------------

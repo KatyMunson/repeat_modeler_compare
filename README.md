@@ -1071,43 +1071,77 @@ besides it).
   still to be seen on the first run. Check the skipped windows, and tune the
   timeout from the per-window times in the log.
 
-**Pilot** (per sample and type; four rules so the genome search spreads
-over the cluster):
+**Pilot** (per sample and type; the genome search is spread over the
+cluster):
 1. `dna_te_cluster`: candidates (window-overlap duplicates dropped,
    `candidates.tsv` with scaffold coordinates) are clustered with cd-hit-est
-   (`library.cdhit` settings, both strands), and each cluster representative
-   is matched with cd-hit-est-2d against the sample's own `-families.fa` and
-   the shared library. The unmatched representatives are split into
-   `dna_te.blast_chunks` (50) length-balanced FASTA chunks.
+   (`library.cdhit` settings, both strands), and each representative is
+   matched with cd-hit-est-2d against the sample's own `-families.fa` and the
+   shared library (*matched*).
+   - The unmatched ones are compared with the shared library (dc-megablast)
+     and every segment matching a library family at >= `dna_te.mask_min_id`
+     (70 %) is hard-masked. A representative left with < `novel_min_bp`
+     (200) or < `novel_min_frac` (0.5) of its length is a *fragment* of its
+     largest library match; the rest are *novel*.
+   - Why: in hagfish, ~65 % of the "unmatched" TIR candidates had > 10,000
+     genomic copies. Families that abundant are in the RepeatModeler library;
+     these candidates contain known repeats (nested insertions, satellite
+     pieces, CR1 / ERV fragments in birds that TIR-Learner calls CACTA) and
+     only failed the 80/80 match as wholes. EDTA's own pipeline removes them
+     with a cross-library filter we don't run otherwise.
+   - A representative covering >= `unknown_min_cov` (0.5) of an **Unknown**
+     library family's consensus is listed in `unknown_overlaps.tsv`:
+     structural evidence about what that family is.
+   - Novel representatives (masked) are split into `dna_te.blast_chunks`
+     (50) length-balanced chunks.
 2. `dna_te_blastdb`: the genome as a BLAST database, once per sample
    (temporary).
 3. `dna_te_blast_chunk`, one cluster job per chunk: blastn
-   (`dna_te.blast_task`, dc-megablast) against the genome, no cap on HSPs per
-   contig. The HSPs are reduced on disk (sort, not memory) to per
-   representative: HSPs, distinct genomic loci, bp covered; and merged
-   intervals per type, for all representatives and for the *repeated* ones
-   (>= `dna_te.min_copies`, 3, loci besides their own). A hagfish genome
-   (3.9 Gb, very repetitive) with ~4,400 unmatched representatives ran past
-   12 h as a single job.
-4. `dna_te_pilot`: merges the chunks. `unmatched_cover_bp` is the union of
-   the HSPs; `unmatched_new_bp` the part the shared-arm `.out` does not mask
-   yet. This is a lower bound: dc-megablast misses old copies RepeatMasker -s
-   would find (chosen over a RepeatMasker run for cost). `new_bp_repeated` /
-   `new_pct_repeated` count repeated representatives only: a single-copy
-   inverted repeat is not a family, but adds its own length to
-   `unmatched_new_bp`. `pilot_clusters.tsv` lists every cluster with the
-   family it matches (Class/Family from the library header), and the genome
-   HSPs, loci, covered bp and `repeated` flag of the unmatched ones.
-
-`summary/dna_te_pilot.tsv` has one row per sample × type: candidates,
-`skipped_bp`, clusters, matched (own / shared / either), unmatched, the bp
-above (all and repeated), the
-Class/Family counts of the matched clusters, `absent_superfamilies`, and a
-`decision`. The decision rule is on the table's first line:
-- integrate if the unmatched clusters add ≥ `dna_te.min_new_pct_non_n` %
-  (0.5, the same scale as the round-novelty stopping rule) of non-N bp, or
-- if they carry a superfamily with no family in the shared library (EDTA's
-  DTA/DTC/DTH/DTM/DTT/Helitron, mapped to hAT/CMC/PIF-Harbinger/MULE/TcMar/Helitron).
+   (`dna_te.blast_task`, dc-megablast, `-mt_mode 1` so threads split the
+   queries) against the genome, no cap on HSPs per contig. The HSPs are
+   reduced on disk (sort, not memory) to per representative: HSPs, distinct
+   genomic loci, bp covered; and merged intervals per type, for all novel
+   representatives and for the *repeated* ones (>= `dna_te.min_copies`, 3,
+   loci besides their own). Only the unmasked sequence can hit, so copies
+   and bp belong to sequence no library family explains.
+4. `dna_te_pilot`: merges the chunks. `novel_new_bp` is the part of the
+   novel HSP union the shared-arm `.out` does not mask yet; `new_bp_repeated`
+   the same for repeated representatives (a single-copy inverted repeat is
+   not a family). It is a lower bound: dc-megablast misses old copies
+   RepeatMasker -s would find (chosen over a RepeatMasker run for cost).
+   Writes `novel_repeated.fa`.
+5. `dna_te_tesorter_targets` / `dna_te_tesorter` (whole project, one job):
+   TEsorter (REXdb metazoa + GyDB, the classify step's settings) on the
+   repeated novel representatives of every sample, the Unknown families in
+   `unknown_overlaps.tsv`, and the top Unknown families of
+   `curation_candidates.tsv` (flag `unknown`, not yet curated; the
+   `summary.curation_min_pct_masked` cut). Far cheaper than the whole
+   library. Library labels come from the headers plus the curated /
+   applied cross-check tables; the classify step's whole-library
+   reclassification is not required.
+6. `dna_te_pilot_summary`:
+   - `summary/dna_te_pilot.tsv`, one row per sample × type: candidates,
+     `skipped_bp`, clusters, matched (own / shared / either), unmatched,
+     fragments (and of which classes), novel, the bp above (novel and
+     repeated), `repeated_with_domain` / `domain_classes` (TEsorter on the
+     repeated novel ones), and a `decision`. The rule is on the table's
+     first line: integrate if the repeated novel clusters add >=
+     `dna_te.min_new_pct_non_n` (0.5 %) of non-N bp, or carry a TE domain of
+     a superfamily absent from the library; `review` when the bp are there
+     but no repeated novel cluster has a TE domain.
+     `absent_superfamilies` is EDTA's own label of the novel clusters
+     (DTA/DTC/DTH/DTM/DTT/Helitron -> hAT/CMC/PIF-Harbinger/MULE/TcMar/
+     Helitron), for information.
+   - `summary/dna_te_unknown_proposals.tsv` (classify.curated_families
+     format, review before use): labels for Unknown families. `high` =
+     TEsorter domain and TIR/Helitron structure agree on the order;
+     `medium` = TEsorter alone (top Unknowns included); `low` = structure
+     alone (order-level label, DNA or RC/Helitron: TIR-Learner's
+     superfamilies come from a plant model); `conflict` = the two disagree
+     (no label).
+   - `pilot_clusters.tsv` per sample lists every cluster: the family it
+     matches, status (matched / fragment / novel), the masked fraction and
+     largest library overlap, and genome HSPs / loci / bp / repeated.
 
 ## Satellite analysis (removed)
 

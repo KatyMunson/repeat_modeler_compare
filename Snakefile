@@ -2966,6 +2966,80 @@ rule dna_te_tesorter:
         """
 
 
+rule dna_te_validated:
+    # The validated set: repeated novel candidates with a DNA / RC TE domain
+    # in TEsorter, one FASTA per sample (masked sequence).
+    input:
+        targets=f"{OUTDIR}/dna_te_tesorter/targets.tsv",
+        rexdb=f"{OUTDIR}/dna_te_tesorter/targets.rexdb-metazoa.cls.tsv",
+        gydb=f"{OUTDIR}/dna_te_tesorter/targets.gydb.cls.tsv",
+        novel=expand(f"{OUTDIR}/{{sample}}/dna_te/novel_repeated.fa", sample=SAMPLE_IDS),
+    output:
+        fa=expand(f"{OUTDIR}/{{sample}}/dna_te/validated.fa", sample=SAMPLE_IDS),
+        table=f"{OUTDIR}/dna_te_tesorter/validated.tsv",
+    threads: 1
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["classify_light"]["mem"] * attempt,
+        hrs=config["resources"]["classify_light"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/summary/dna_te_validated.log",
+    params:
+        samples=" ".join(SAMPLE_IDS),
+        min_domains=CLASSIFY.get("tesorter_min_domains", 1),
+    shell:
+        "python3 {SCRIPTS}/dna_te_pilot.py validated --targets {input.targets} --rexdb {input.rexdb} "
+        "--gydb {input.gydb} --min-domains {params.min_domains} --samples {params.samples} "
+        "--novel {input.novel} --fa-out {output.fa} --table-out {output.table} > {log} 2>&1"
+
+
+rule dna_te_validated_bp:
+    # What the validated set alone adds: its sequences vs the sample's own
+    # genome (a small blastn; the genome db is rebuilt in a work dir and
+    # removed), new bp outside the shared-arm .out.
+    input:
+        query=f"{OUTDIR}/{{sample}}/dna_te/validated.fa",
+        genome=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fa",
+        fingerprint=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fingerprint.tsv",
+        assembly_stats=f"{OUTDIR}/{{sample}}/genome/{{sample}}.assembly_stats.tsv",
+        out_file=f"{OUTDIR}/shared/{{sample}}/repeatmasker/{{sample}}.fa.out",
+    output:
+        f"{OUTDIR}/{{sample}}/dna_te/validated_bp.tsv",
+    threads: config["resources"]["dna_te_blast_chunk"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["dna_te_blast_chunk"]["mem"] * 2 * attempt,
+        hrs=config["resources"]["dna_te_blast_chunk"]["hrs"],
+        shell_exec="bash",
+    conda:
+        "workflow/envs/dna_te_pilot.yaml"
+    log:
+        f"{OUTDIR}/logs/{{sample}}/dna_te_validated_bp.log",
+    params:
+        workdir=f"{OUTDIR}/{{sample}}/dna_te/validated_work",
+        task=DNA_TE.get("blast_task", "dc-megablast"),
+        evalue=DNA_TE.get("blast_evalue", 1e-10),
+        min_copies=DNA_TE.get("min_copies", 3),
+    shell:
+        """
+        exec > {log} 2>&1
+        set -euo pipefail
+        {ENV_PATH_GUARD}
+        n_seqs=$(awk -F'\\t' '$1 == "#n_seqs" {{print $2}}' {input.fingerprint})
+        rm -rf {params.workdir} && mkdir -p {params.workdir}/db
+        if [ -s {input.query} ]; then
+            makeblastdb -in {input.genome} -dbtype nucl -parse_seqids -out {params.workdir}/db/genome
+        fi
+        python3 {SCRIPTS}/dna_te_pilot.py blast_chunk --query {input.query} --db {params.workdir}/db/genome \\
+            --fingerprint {input.fingerprint} --task {params.task} --evalue {params.evalue} \\
+            --max-targets $((n_seqs + 10)) --min-copies {params.min_copies} --threads {threads} \\
+            --workdir {params.workdir}/blast --queries-out {params.workdir}/queries.tsv --bed-out {params.workdir}/hits.bed
+        python3 {SCRIPTS}/dna_te_pilot.py newbp --sample {wildcards.sample} --bed {params.workdir}/hits.bed \\
+            --queries {params.workdir}/queries.tsv --out-file {input.out_file} \\
+            --assembly-stats {input.assembly_stats} --out {output}
+        rm -rf {params.workdir}
+        """
+
+
 rule dna_te_pilot_summary:
     # Pilot rows + TEsorter -> summary table (decision rule on its first line)
     # and Unknown-family label proposals (curated_families format; review).
@@ -2976,9 +3050,12 @@ rule dna_te_pilot_summary:
         rexdb=f"{OUTDIR}/dna_te_tesorter/targets.rexdb-metazoa.cls.tsv",
         gydb=f"{OUTDIR}/dna_te_tesorter/targets.gydb.cls.tsv",
         library=lambda wc: MASK_SHARED_LIBRARY or f"{OUTDIR}/library/shared_library.fa",
+        validated_bp=expand(f"{OUTDIR}/{{sample}}/dna_te/validated_bp.tsv", sample=SAMPLE_IDS),
+        satellite_calls=[f"{OUTDIR}/summary/satellite_family_calls.tsv"] if SATX_ON else [],
     output:
         summary=f"{OUTDIR}/summary/dna_te_pilot.tsv",
         proposals=f"{OUTDIR}/summary/dna_te_unknown_proposals.tsv",
+        mixed=f"{OUTDIR}/summary/dna_te_unknown_structure_mixed.tsv",
     threads: config["resources"]["combine_summaries"]["threads"]
     resources:
         mem=lambda wildcards, attempt: config["resources"]["combine_summaries"]["mem"] * attempt,
@@ -2990,11 +3067,15 @@ rule dna_te_pilot_summary:
         min_pct=DNA_TE.get("min_new_pct_non_n", 0.5),
         min_domains=CLASSIFY.get("tesorter_min_domains", 1),
         unknown_min_cov=DNA_TE.get("unknown_min_cov", 0.5),
+        struct_min=DNA_TE.get("struct_min_candidates", 3),
+        sat=lambda wc, input: f"--satellite-calls {input.satellite_calls}" if input.satellite_calls else "",
     shell:
         "python3 {SCRIPTS}/dna_te_pilot.py report --chunks {input.pilots} --targets {input.targets} "
         "--rexdb {input.rexdb} --gydb {input.gydb} --overlaps {input.overlaps} --library {input.library} "
         "--min-domains {params.min_domains} --unknown-min-cov {params.unknown_min_cov} "
+        "--validated-bp {input.validated_bp} {params.sat} --struct-min-candidates {params.struct_min} "
         "--min-new-pct-non-n {params.min_pct} --out {output.summary} --proposals-out {output.proposals} "
+        "--mixed-out {output.mixed} "
         "> {log} 2>&1"
 
 
@@ -3003,6 +3084,7 @@ rule dna_te_pilot_only:
     input:
         f"{OUTDIR}/summary/dna_te_pilot.tsv",
         f"{OUTDIR}/summary/dna_te_unknown_proposals.tsv",
+        f"{OUTDIR}/summary/dna_te_unknown_structure_mixed.tsv",
 
 
 # -----------------------------------------------------------------------------

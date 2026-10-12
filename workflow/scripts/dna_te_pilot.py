@@ -624,32 +624,110 @@ def same_superfamily(call, lib_label):
     return c in (_norm(s2), _norm(s2.split("-", 1)[0]))
 
 
-def report(args):
-    """Per-sample pilot rows + TEsorter calls -> summary/dna_te_pilot.tsv and
-    the Unknown-family label proposals (classify.curated_families format)."""
-    from reclassify_unknown import domain_evidence, read_tesorter_cls
-    rex, gydb = read_tesorter_cls(args.rexdb), read_tesorter_cls(args.gydb)
+def read_targets(path):
     tg = {}
-    with open(args.targets) as fh:
+    with open(path) as fh:
         fh.readline()
         for line in fh:
             name, t, sources, samples, _l = line.rstrip("\n").split("\t")
             tg[name] = (t, set(sources.split(",")), set(samples.split(",")))
+    return tg
+
+
+def is_dna_te(call):
+    return bool(call) and call.split("/")[0] in ("DNA", "RC")
+
+
+# ---------------------------------------------------------------- validated
+
+
+def validated(args):
+    """The validated set: repeated novel representatives with a DNA / RC
+    (Helitron) TE domain in TEsorter. One FASTA per sample (masked sequence)
+    and one table for the project."""
+    from reclassify_unknown import domain_evidence, read_tesorter_cls
+    rex, gydb = read_tesorter_cls(args.rexdb), read_tesorter_cls(args.gydb)
+    tg = read_targets(args.targets)
+    calls = {n: domain_evidence(n, rex, gydb, args.min_domains)[0] for n, v in tg.items() if "novel_repeated" in v[1]}
+    keep = {n: c for n, c in calls.items() if is_dna_te(c)}
+    if len(args.samples) != len(args.novel) or len(args.samples) != len(args.fa_out):
+        sys.exit("--samples, --novel and --fa-out must line up")
+    with open(args.table_out, "w") as tab:
+        tab.write("name\tsample\ttype\tdomain_class\tlength\n")
+        for sample, nov, out in zip(args.samples, args.novel, args.fa_out):
+            n = 0
+            with open(out, "w") as fh:
+                for h, sq in iter_fasta(nov):
+                    bare = seq_id(h).split("#", 1)[0]
+                    if bare in keep:
+                        write_fasta(fh, seq_id(h), sq)
+                        tab.write(f"{bare}\t{sample}\t{type_of(seq_id(h))}\t{keep[bare]}\t{len(sq)}\n")
+                        n += 1
+            print(f"[dna_te] {sample}: {n} validated (repeated novel, DNA/RC TE domain)")
+
+
+def newbp(args):
+    """bp a blast_chunk run of the validated set covers / adds (not masked by
+    the shared-arm .out), per type."""
+    _total, non_n = read_assembly_stats(args.assembly_stats)
+    masked = read_masked(args.out_file)
+    ivs = {}
+    with open(args.bed) as fh:
+        for line in fh:
+            t, st, c, s, e = line.rstrip("\n").split("\t")
+            if st == "all":
+                ivs.setdefault(t, {}).setdefault(c, []).append((int(s), int(e)))
+    n = {}
+    with open(args.queries) as fh:
+        fh.readline()
+        for line in fh:
+            q, t = line.split("\t")[:2]
+            n[t] = n.get(t, 0) + 1
+    with open(args.out, "w") as out:
+        out.write("sample\ttype\tvalidated\tvalidated_cover_bp\tvalidated_new_bp\tvalidated_new_pct\n")
+        for t in TYPES:
+            d = {c: merge_half_open(v) for c, v in ivs.get(t, {}).items()}
+            cov = sum(e - s for v in d.values() for s, e in v)
+            new = uncovered_bp(d, masked)
+            out.write(f"{args.sample}\t{t}\t{n.get(t, 0)}\t{cov}\t{new}\t"
+                      f"{100.0 * new / non_n if non_n else 0:.4f}\n")
+
+
+# ---------------------------------------------------------------- report
+
+
+def report(args):
+    """Per-sample pilot rows + TEsorter calls + validated-set bp ->
+    summary/dna_te_pilot.tsv; Unknown-family label proposals
+    (classify.curated_families format) and the structure-only rows too weak
+    to propose (reference)."""
+    from reclassify_unknown import domain_evidence, read_tesorter_cls
+    rex, gydb = read_tesorter_cls(args.rexdb), read_tesorter_cls(args.gydb)
+    tg = read_targets(args.targets)
     dom = {n: domain_evidence(n, rex, gydb, args.min_domains) for n in tg}
     lib_classes = {label_of(seq_id(h)) for h, _s in iter_fasta(args.library)}
+    vbp = {}
+    for path in args.validated_bp:
+        with open(path) as fh:
+            cols = fh.readline().rstrip("\n").split("\t")
+            for line in fh:
+                r = dict(zip(cols, line.rstrip("\n").split("\t")))
+                vbp[(r["sample"], r["type"])] = r
 
     with open(args.out, "w") as out:
-        out.write(f"# decision rule: integrate (Stage B2) if the repeated novel clusters (>= min_copies genomic "
-                  f"copies; segments matching a library family masked out first) add >= {args.min_new_pct_non_n} % "
-                  f"of non-N bp the shared library does not mask yet (new_pct_repeated), or carry a TE domain of a "
-                  f"superfamily absent from the shared library. `review` = enough bp but no repeated novel "
-                  f"cluster carries a TE domain. new bp is a blastn lower bound.\n")
+        out.write(f"# decision rule: integrate (Stage B2) the *validated* set -- repeated novel clusters (>= "
+                  f"min_copies genomic copies; segments matching a library family masked out first) with a DNA / "
+                  f"RC TE domain in TEsorter -- when it adds >= {args.min_new_pct_non_n} % of non-N bp the shared "
+                  f"library does not mask yet (validated_new_pct) or carries a superfamily absent from the library "
+                  f"(`integrate`); a smaller validated set is `integrate (minor)`; repeated novel bp >= the "
+                  f"threshold without any domain is `review`. new bp is a blastn lower bound.\n")
         cols_out = None
         for path in args.chunks:
             with open(path) as fh:
                 cols = fh.readline().rstrip("\n").split("\t")
                 if cols_out is None:
-                    cols_out = cols + ["repeated_with_domain", "domain_classes", "decision"]
+                    cols_out = cols + ["repeated_with_domain", "domain_classes", "validated", "validated_new_bp",
+                                       "validated_new_pct", "decision"]
                     out.write("\t".join(cols_out) + "\n")
                 for line in fh:
                     r = dict(zip(cols, line.rstrip("\n").split("\t")))
@@ -659,28 +737,40 @@ def report(args):
                     classes = {}
                     for c in calls:
                         classes[c] = classes.get(c, 0) + 1
-                    te_new = sorted({c for c in calls if c.split("/")[0] in ("DNA", "RC") and "/" in c
+                    te_new = sorted({c for c in calls if is_dna_te(c) and "/" in c
                                      and not any(same_superfamily(c, x) for x in lib_classes)})
+                    v = vbp.get((r["sample"], r["type"]), {})
+                    n_val = int(v.get("validated", 0))
+                    v_pct = float(v.get("validated_new_pct", 0) or 0)
                     pct = float(r["new_pct_repeated"]) if r["new_pct_repeated"] != "NA" else 0.0
-                    why = []
-                    if pct >= args.min_new_pct_non_n:
-                        why.append(f"adds {pct:.2f}% ({len(calls)} of {len(mine)} repeated novel clusters "
-                                   f"with a TE domain)")
-                    if te_new:
-                        why.append(f"domain-supported superfamily absent from the library: {','.join(te_new)}")
-                    if not why:
-                        dec = "skip"
-                    elif calls:
+                    if n_val and (v_pct >= args.min_new_pct_non_n or te_new):
+                        why = [f"{n_val} validated families add {v_pct:.2f}%"]
+                        if te_new:
+                            why.append(f"superfamily absent from the library: {','.join(te_new)}")
                         dec = "integrate: " + "; ".join(why)
+                    elif n_val:
+                        dec = (f"integrate (minor): {n_val} validated families add {v_pct:.2f}% "
+                               f"(all repeated novel: {pct:.2f}%)")
+                    elif pct >= args.min_new_pct_non_n:
+                        dec = f"review: repeated novel clusters add {pct:.2f}% but none carries a DNA/RC TE domain"
                     else:
-                        dec = "review: " + "; ".join(why)
+                        dec = "skip"
                     r.update(repeated_with_domain=len(calls),
-                             domain_classes=",".join(f"{c}:{n}" for c, n in
+                             domain_classes=",".join(f"{c}:{k}" for c, k in
                                                      sorted(classes.items(), key=lambda x: -x[1])) or ".",
-                             decision=dec)
+                             validated=n_val, validated_new_bp=v.get("validated_new_bp", 0),
+                             validated_new_pct=f"{v_pct:.4f}", decision=dec)
                     out.write("\t".join(str(r[c]) for c in cols_out) + "\n")
 
     # Unknown-family proposals: TEsorter domains and/or TIR/Helitron structure
+    sat = {}
+    if args.satellite_calls:
+        with open(args.satellite_calls) as fh:
+            cols = fh.readline().rstrip("\n").split("\t")
+            for line in fh:
+                r = dict(zip(cols, line.rstrip("\n").split("\t")))
+                if r.get("proposed_class_family", "NA") != "NA":
+                    sat[r["family"]] = f"{r['proposed_class_family']} ({r.get('confidence', '')})"
     struct = {}
     for path in args.overlaps:
         with open(path) as fh:
@@ -689,36 +779,48 @@ def report(args):
                 f = line.rstrip("\n").split("\t")
                 sf = superfamily(f[3])
                 struct.setdefault(f[4], []).append((f[0], f[2], EDTA_TO_RM.get(sf, "NA"), float(f[6])))
-    n_rows = {}
-    with open(args.proposals_out, "w") as out:
+    n_rows, n_mixed = {}, 0
+    with open(args.proposals_out, "w") as out, open(args.mixed_out, "w") as mix:
         out.write("group\tfamily\tclass_family\tpart\tevidence\tnote\tconfidence\n")
+        mix.write("family\tn_candidates\tcandidate_classes\tbest_cov\ttesorter\tsatellite_crosscheck\tsources\treason\n")
         for fam, (t, srcs, smp) in sorted(tg.items()):
             if "novel_repeated" in srcs and len(srcs) == 1:
                 continue
             d, conflict = dom.get(fam, (None, ""))
             st = struct.get(fam, [])
             s_classes = sorted({x[2] for x in st if x[2] != "NA"})
+            best = max((x[3] for x in st), default=0.0)
             s_note = (f"{len(st)} TIR/Helitron candidates cover >= {args.unknown_min_cov} of it "
-                      f"({','.join(s_classes) or 'NA'}; best cov {max(x[3] for x in st):.2f})") if st else ""
+                      f"({','.join(s_classes) or 'NA'}; best cov {best:.2f})") if st else ""
             dom_note = f"TEsorter {d}" if d else (f"TEsorter conflict: {conflict}" if conflict else "")
+            reason = None
             if d and st:
-                agree = any(d.split("/")[0] == c.split("/")[0] for c in s_classes)
-                if agree:
+                if any(d.split("/")[0] == c.split("/")[0] for c in s_classes):
                     cf, conf, ev = d, "high", "tesorter+structure"
                 else:
-                    cf, conf, ev = ".", "conflict", "tesorter_vs_structure"
+                    reason = "TEsorter and structure disagree on the order"
             elif d:
                 cf, conf, ev = d, "medium", "tesorter"
             elif st:
-                root = sorted({c.split("/")[0] for c in s_classes}) or ["DNA"]
-                cf = "RC/Helitron" if root == ["RC"] else ("DNA" if root == ["DNA"] else ".")
-                conf, ev = ("low", "structure") if cf != "." else ("conflict", "structure_mixed")
+                if len(s_classes) == 1 and len(st) >= args.struct_min_candidates:
+                    cf = "RC/Helitron" if s_classes[0].startswith("RC/") else "DNA"
+                    conf, ev = "low", "structure"
+                elif len(s_classes) > 1:
+                    reason = f"candidates disagree ({len(s_classes)} superfamilies)"
+                else:
+                    reason = f"{len(st)} candidate(s) < {args.struct_min_candidates}"
             else:
                 continue
-            note = "; ".join(x for x in (dom_note, s_note, f"sources {','.join(sorted(srcs))}") if x)
+            if reason:
+                mix.write(f"{fam}\t{len(st)}\t{','.join(s_classes) or '.'}\t{best:.2f}\t{d or conflict or '.'}\t"
+                          f"{sat.get(fam, '.')}\t{','.join(sorted(srcs))}\t{reason}\n")
+                n_mixed += 1
+                continue
+            extra = f"satellite cross-check: {sat[fam]}" if fam in sat else ""
+            note = "; ".join(x for x in (dom_note, s_note, extra, f"sources {','.join(sorted(srcs))}") if x)
             out.write(f"{fam}\t{fam}\t{cf}\t.\tdna_te_pilot:{ev}\t{note}\t{conf}\n")
             n_rows[conf] = n_rows.get(conf, 0) + 1
-    print(f"[dna_te] Unknown-family proposals: {n_rows}")
+    print(f"[dna_te] Unknown-family proposals: {n_rows}; {n_mixed} too weak or conflicting -> {args.mixed_out}")
 
 
 def main():
@@ -790,6 +892,24 @@ def main():
     tg.add_argument("--fa-out", required=True)
     tg.add_argument("--tsv-out", required=True)
 
+    v = sub.add_parser("validated", help="repeated novel reps with a DNA/RC TE domain, per sample")
+    v.add_argument("--targets", required=True)
+    v.add_argument("--rexdb", required=True)
+    v.add_argument("--gydb", required=True)
+    v.add_argument("--min-domains", type=int, default=1)
+    v.add_argument("--samples", nargs="+", required=True)
+    v.add_argument("--novel", nargs="+", required=True, help="per-sample novel_repeated.fa, same order")
+    v.add_argument("--fa-out", nargs="+", required=True, help="per-sample validated.fa, same order")
+    v.add_argument("--table-out", required=True)
+
+    nb = sub.add_parser("newbp", help="bp a blast_chunk run of the validated set adds, per type")
+    nb.add_argument("--sample", required=True)
+    nb.add_argument("--bed", required=True)
+    nb.add_argument("--queries", required=True)
+    nb.add_argument("--out-file", required=True)
+    nb.add_argument("--assembly-stats", required=True)
+    nb.add_argument("--out", required=True)
+
     c = sub.add_parser("report", help="pilot rows + TEsorter -> summary table and Unknown proposals")
     c.add_argument("--chunks", nargs="+", required=True, help="per-sample pilot.tsv")
     c.add_argument("--targets", required=True)
@@ -800,12 +920,16 @@ def main():
     c.add_argument("--min-domains", type=int, default=1)
     c.add_argument("--unknown-min-cov", type=float, default=0.5)
     c.add_argument("--min-new-pct-non-n", type=float, default=0.5)
+    c.add_argument("--validated-bp", nargs="*", default=[], help="per-sample newbp outputs")
+    c.add_argument("--satellite-calls", default="", help="satellite_family_calls.tsv (optional)")
+    c.add_argument("--struct-min-candidates", type=int, default=3)
     c.add_argument("--out", required=True)
     c.add_argument("--proposals-out", required=True)
+    c.add_argument("--mixed-out", required=True)
 
     args = ap.parse_args()
     {"gather": gather, "cluster": cluster, "blast_chunk": blast_chunk, "finalize": finalize,
-     "targets": targets, "report": report}[args.cmd](args)
+     "targets": targets, "validated": validated, "newbp": newbp, "report": report}[args.cmd](args)
 
 
 if __name__ == "__main__":

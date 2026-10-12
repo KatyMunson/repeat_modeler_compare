@@ -1124,26 +1124,43 @@ cluster):
    library) reruns only the targets, TEsorter and summary steps, never the
    clustering or the genome search. The classify step's whole-library
    reclassification is not required.
-6. `dna_te_pilot_summary`:
+6. `dna_te_validated` / `dna_te_validated_bp`: the *validated* set is the
+   repeated novel clusters with a DNA or RC (Helitron) TE domain in TEsorter
+   (`{sample}/dna_te/validated.fa`, `dna_te_tesorter/validated.tsv`). Its
+   sequences alone are blastn'd against their own genome (a small search;
+   the genome db is rebuilt and removed) for `validated_new_bp`.
+7. `dna_te_pilot_summary`:
    - `summary/dna_te_pilot.tsv`, one row per sample × type: candidates,
      `skipped_bp`, clusters, matched (own / shared / either), unmatched,
      fragments (and of which classes), novel, the bp above (novel and
      repeated), `repeated_with_domain` / `domain_classes` (TEsorter on the
-     repeated novel ones), and a `decision`. The rule is on the table's
-     first line: integrate if the repeated novel clusters add >=
-     `dna_te.min_new_pct_non_n` (0.5 %) of non-N bp, or carry a TE domain of
-     a superfamily absent from the library; `review` when the bp are there
-     but no repeated novel cluster has a TE domain.
-     `absent_superfamilies` is EDTA's own label of the novel clusters
-     (DTA/DTC/DTH/DTM/DTT/Helitron -> hAT/CMC/PIF-Harbinger/MULE/TcMar/
-     Helitron), for information.
+     repeated novel ones), `validated` / `validated_new_bp` /
+     `validated_new_pct`, and a `decision` (rule on the table's first line):
+     - `integrate`: the validated set adds >= `dna_te.min_new_pct_non_n`
+       (0.5 %) of non-N bp, or carries a superfamily absent from the library;
+     - `integrate (minor)`: a smaller validated set (worth adding as curated
+       families, not a headline);
+     - `review`: repeated novel clusters add >= the threshold but none has a
+       DNA / RC domain (on birds and hagfish this was mostly TIR-Learner
+       misreading other repeats);
+     - `skip`.
+     Superfamily names are compared across TEsorter / Dfam spellings
+     (Sola2 = Sola-2, Academ = Academ-1, hAT = hAT-Charlie; not P =
+     PIF-Harbinger). `absent_superfamilies` is EDTA's own label of the novel
+     clusters, for information.
    - `summary/dna_te_unknown_proposals.tsv` (classify.curated_families
      format, review before use): labels for Unknown families. `high` =
      TEsorter domain and TIR/Helitron structure agree on the order;
      `medium` = TEsorter alone (top Unknowns included); `low` = structure
-     alone (order-level label, DNA or RC/Helitron: TIR-Learner's
-     superfamilies come from a plant model); `conflict` = the two disagree
-     (no label).
+     alone, only when >= `dna_te.struct_min_candidates` (3) candidates cover
+     the family and agree on one superfamily (order-level label, DNA or
+     RC/Helitron: TIR-Learner's superfamilies come from a plant model). The
+     satellite cross-check's call is added to the note when there is one.
+   - `summary/dna_te_unknown_structure_mixed.tsv`: the Unknown families with
+     structural hits too weak or conflicting to propose (fewer candidates,
+     several superfamilies, or domain vs structure disagreeing), with the
+     satellite cross-check's call: in hagfish most look like generic
+     high-copy repeats that every caller trips over.
    - `pilot_clusters.tsv` per sample lists every cluster: the family it
      matches, status (matched / fragment / novel), the masked fraction and
      largest library overlap, and genome HSPs / loci / bp / repeated.

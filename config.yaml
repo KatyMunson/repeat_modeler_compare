@@ -266,6 +266,7 @@ dna_te:
   novel_min_bp: 200            # ... a candidate with less than this unmasked, or
   novel_min_frac: 0.5          # ... less than this fraction, is a fragment of its largest library match
   unknown_min_cov: 0.5         # a candidate covering >= this of an Unknown family's consensus -> unknown_overlaps.tsv
+  struct_min_candidates: 3     # structure-only Unknown proposal ("low"): >= this many candidates, one superfamily
   min_new_pct_non_n: 0.5       # decision: integrate if unmatched clusters add >= this % of non-N bp
 
 # TEtrimmer (README "TEtrimmer"): automated extension / boundary / structure /

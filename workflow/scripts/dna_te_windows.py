@@ -129,6 +129,37 @@ def tool_versions():
         return "python/pandas: unknown"
 
 
+def traceback_block(lines):
+    """The last Python traceback in an EDTA_raw.pl log (from "Traceback" to
+    its error line), or []."""
+    starts = [i for i, l in enumerate(lines) if l.startswith("Traceback (most recent call last)")]
+    if not starts:
+        return []
+    block = []
+    for l in lines[starts[-1]:]:
+        block.append(l)
+        if len(block) > 1 and not l.startswith((" ", "\t", "Traceback")):
+            break
+    return block
+
+
+def crash_site(lines):
+    """Where TIR-Learner died, for the failure reason: its last "Module N,
+    Step M" line, the deepest TIR-Learner frame (file:line) and the error,
+    e.g. "Module 4, Step 9: Check TIR and TSD; check_TIR_TSD.py:213:
+    KeyError: 'source'". "" if the log has no traceback."""
+    tb = traceback_block(lines)
+    if not tb:
+        return ""
+    step = next((l.strip() for l in reversed(lines) if re.match(r"\s*Module \d+, Step \d+", l)), "")
+    frame = ""
+    for l in tb:
+        m = re.match(r'\s*File "([^"]*TIR-Learner[^"]*)", line (\d+)', l)
+        if m:
+            frame = f"{os.path.basename(m.group(1))}:{m.group(2)}"
+    return "; ".join(x for x in (step, frame, tb[-1].strip()) if x)
+
+
 def run_one(name, win, args):
     """One EDTA_raw.pl run on the pieces in win. Returns (recs, reason):
     recs is None when it timed out ("timeout") or failed ("failed exit N ...")."""
@@ -153,11 +184,14 @@ def run_one(name, win, args):
     if rc != 0 or not hits:
         log_path = os.path.join(d, "edta_raw.log")
         with open(log_path, errors="replace") as fh:
-            tail = "".join(fh.readlines()[-30:])
+            lines = fh.readlines()
         ratio = compress_ratio(win)
         kind = "tandem array" if ratio < args.tandem_zlib else "ordinary sequence"
-        reason = f"failed exit {rc} ({kind}, zlib {ratio:.2f}; log {log_path})"
-        print(f"[dna_te] {stamp()} {name}: {reason}\n--- last 30 lines ---\n{tail}", flush=True)
+        where = crash_site(lines)
+        reason = (f"failed exit {rc} ({kind}, zlib {ratio:.2f}"
+                  + (f"; {where}" if where else "") + f"; log {log_path})")
+        print(f"[dna_te] {stamp()} {name}: {reason}\n--- traceback / last 30 lines ---\n"
+              f"{''.join(traceback_block(lines) or lines[-30:])}", flush=True)
         return None, reason
     recs = list(iter_fasta(hits[0]))
     print(f"[dna_te] {stamp()} {name} done in {(time.time() - t0) / 60:.1f} min: {len(recs)} candidates", flush=True)

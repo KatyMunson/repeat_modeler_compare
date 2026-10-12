@@ -1052,7 +1052,9 @@ besides it).
   such satellite scaffolds.
 - A window that fails (EDTA exits without its result) is rerun one scaffold
   piece at a time, and only the pieces that fail again are logged, with
-  reason `failed exit N (tandem array | ordinary sequence, zlib R; log PATH)`.
+  reason `failed exit N (tandem array | ordinary sequence, zlib R; <TIR-Learner
+  step>; <file:line>; <error>; log PATH)` -- the step, frame and error come
+  from the log's Python traceback, and the group log prints the traceback.
   The class comes from the piece's zlib compression ratio: below
   `dna_te.tandem_zlib` (0.1) it is a tandem array (ordinary DNA compresses to
   ~0.25-0.30). Example: a 2.08 Mb meadowlark scaffold that is one GGAA-rich
@@ -1064,13 +1066,24 @@ besides it).
   job, so it isn't hidden behind skip rows. The one seen so far (swifter's
   process scheduler inside TIR-Learner's worker pool, below) struck only the
   windows with the most TIRvish hits -- skipping those would bias the pilot.
-- TIR-Learner 3 in the EDTA 2.3.0 image needs two shims, loaded into EDTA's
+- TIR-Learner 3 in the EDTA 2.3.0 image needs shims, loaded into EDTA's
   Python processes only (`workflow/scripts/compat/edta_python/sitecustomize.py`):
-  pandas 3 dropped the positional `row[0]` fallback `check_TIR_TSD.py` relies
-  on (`KeyError: 0`), and swifter 1.4.0 parallelises a large apply with
-  dask's process scheduler inside a `multiprocessing.Pool` worker
-  ("daemonic processes are not allowed to have children"); it is switched to
-  threads. The job log's first line says the shims are on.
+  - pandas 3 dropped the positional `row[0]` fallback `check_TIR_TSD.py`
+    relies on (`KeyError: 0`).
+  - swifter 1.4.0 keeps applies on string frames in plain pandas by testing
+    for dtype `object`; pandas 3 strings are `str`, so TIR-Learner's
+    sequence tables went to dask whenever an apply looked slow (large
+    tables, busy node) -- a path TIR-Learner never ran on under its pinned
+    pandas 2.2.2. String frames get plain pandas again; anything else that
+    still uses dask gets threads, not processes ("daemonic processes are not
+    allowed to have children" inside TIR-Learner's worker pool).
+  - `apply(axis=1)` on an empty frame returns a frame copy, so a window
+    where TIRvish finds candidates and the N / TA filters drop all of them
+    failed with "Cannot set a DataFrame with multiple columns to the single
+    column check_N_TIR1_check" (a TIR-Learner bug, pandas 2 too). It now
+    returns an empty Series and TIR-Learner reports no TIRs.
+  On EDTA's 1 Mb rice test genome TIR-Learner's output is identical with
+  and without the last two. The job log's first line says the shims are on.
   `skipped_bp` in the pilot table counts timeouts and failures per sample and
   type; `skipped_windows.tsv` says which was which.
 - Whether TIR-Learner or HelitronScanner stall on the hagfish assemblies is

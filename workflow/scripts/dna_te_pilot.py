@@ -606,6 +606,24 @@ def targets(args):
 # ---------------------------------------------------------------- report
 
 
+def _norm(x):
+    return re.sub(r"[^a-z0-9]", "", x.lower())
+
+
+def same_superfamily(call, lib_label):
+    """TEsorter and RepeatMasker/Dfam spell superfamilies differently: a call
+    matches a library label of the same order when the call's superfamily
+    (punctuation dropped) equals the library superfamily as a whole
+    (Sola2 = Sola-2) or its first hyphen-separated part (Academ in
+    Academ-1, hAT in hAT-Charlie). Not a bare prefix: P is not PIF-Harbinger."""
+    o1, _, s1 = call.partition("/")
+    o2, _, s2 = lib_label.partition("/")
+    if o1.lower() != o2.lower() or not s1 or not s2:
+        return False
+    c = _norm(s1)
+    return c in (_norm(s2), _norm(s2.split("-", 1)[0]))
+
+
 def report(args):
     """Per-sample pilot rows + TEsorter calls -> summary/dna_te_pilot.tsv and
     the Unknown-family label proposals (classify.curated_families format)."""
@@ -642,8 +660,7 @@ def report(args):
                     for c in calls:
                         classes[c] = classes.get(c, 0) + 1
                     te_new = sorted({c for c in calls if c.split("/")[0] in ("DNA", "RC") and "/" in c
-                                     and not any(c == x or x.startswith(c + "-") or c.startswith(x + "-")
-                                                 for x in lib_classes)})
+                                     and not any(same_superfamily(c, x) for x in lib_classes)})
                     pct = float(r["new_pct_repeated"]) if r["new_pct_repeated"] != "NA" else 0.0
                     why = []
                     if pct >= args.min_new_pct_non_n:

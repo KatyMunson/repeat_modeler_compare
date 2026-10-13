@@ -7,7 +7,12 @@ dependencies:
   # pfam_scan, RepeatMasker/RepeatModeler for RepeatClassifier, TRF, R ...).
   # Upstream recommends python 3.10 + samtools 1.22.1 next to bioconda::tetrimmer.
   # "ClobberWarning" for blast vs rmblast binaries during the build is expected.
-  # After the first build, pin the resolved version here (conda list tetrimmer).
+  # Unpinned, the solver fell back to RepeatMasker 4.0.7 (perl 5.22, 2017)
+  # and the matching old RepeatModeler; TEtrimmer classifies with
+  # RepeatClassifier, so keep both current.
   - python=3.10
   - samtools=1.22.1
-  - tetrimmer
+  - tetrimmer=1.7.2
+  - repeatmasker>=4.1.5
+  - repeatmodeler>=2.0.5
+  - blast>=2.14

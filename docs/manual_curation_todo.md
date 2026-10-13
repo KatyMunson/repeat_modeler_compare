@@ -274,6 +274,29 @@ TEtrimmer output for group A families is an array, not a TE: don't accept
 labels proposed from it (`tetrimmer_tesorter_proposals.tsv` rows with a
 "needs extension" evaluation).
 
+**Reading TEtrimmer results (birds, first run):** of ~160 output rows only
+~10 are Perfect / Good; bAgePho1 has none (12 Need_ext, 2 Need_check).
+TEtrimmer's `output_terminal_repeat` is not evidence on its own. "LTR"
+means: the widest direct self-BLAST repeat >= 150 bp spans at least
+(length - 3,000 bp) of the pre-crop consensus, so for elements under ~3-5 kb
+any internal direct repeat qualifies. Judge from the self-dotplot in the
+PDF instead:
+- two short segments in opposite corners = LTRs
+  (`ind8_rnd_1_family_70`: 1,746 -> 3,438 bp, ~380 bp LTRs, TG...CA, 71
+  full-length copies at 3-5 % div, no domain = non-autonomous LTR element;
+  its LTR is also at ~8,000x coverage, so look for a solo-LTR family in the
+  library: blastn its first 380 bp against `library_consensi.fa`);
+- a second full-length diagonal = tandem array
+  (`bAgePho1_rnd_5_family_52645`, rated Good with "LTR": an array);
+- short segments in the middle only = internal repeats, not LTRs
+  (`bTaeGut7_rnd_6_family_6597`: Good + "LTR" from internal repeats; young,
+  ~17 copies, no domain, variable A-rich end = poly(A) of a reversed
+  retroposon or processed pseudogene? Check its host-protein hit in
+  `classify/unknown_reclassification.tsv`).
+`bTaeGut7_rnd_1_family_148` (Perfect, two ~350 bp subfamilies, no terminal
+repeat / TSD) is the Unknown the DNA-TE pilot hit with 78 candidates across
+6 superfamilies: SINE-like? Check.
+
 ## 10. Other open threads
 
 - `family_profile.py` multi-family mode (several families profiled as one

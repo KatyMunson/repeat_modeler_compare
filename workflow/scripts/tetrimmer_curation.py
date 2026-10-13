@@ -68,9 +68,17 @@ def cmd_select(args):
             if r.get("confidence") in args.neighbor_confidence:
                 label[bare(r["family"])] = r["class_family"]
 
-    picked = []
+    # Only families with a sequence in --library (de novo consensi; Dfam
+    # entries are left out of it unless classify.screen_dfam), so a curated
+    # Dfam Unknown such as UCON1 cannot take a top_n slot.
+    with open(args.library) as fh:
+        in_lib = {bare(l[1:].split()[0]) for l in fh if l.startswith(">")}
+    picked, n_other = [], 0
     for fam, by_s in owned.items():
         if fam in tandem or not unresolved(label.get(fam, "Unknown")):
+            continue
+        if fam not in in_lib:
+            n_other += 1
             continue
         lead = max(by_s, key=by_s.get)
         if lead == args.sample and by_s[lead] >= args.min_bp:
@@ -97,7 +105,8 @@ def cmd_select(args):
               f"{','.join(sorted(want)[:5])}...", file=sys.stderr)
     tot = sum(bp for bp, _f in picked)
     print(f"[tetrimmer select] {args.sample}: {n} families, {tot / 1e6:.1f} Mb owned "
-          f"(top {args.top_n}, >= {args.min_bp:,} bp)", file=sys.stderr)
+          f"(top {args.top_n}, >= {args.min_bp:,} bp; {n_other} unresolved families not in "
+          f"{os.path.basename(args.library)}, e.g. Dfam entries, not considered)", file=sys.stderr)
 
 
 def cmd_report(args):

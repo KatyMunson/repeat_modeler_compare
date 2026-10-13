@@ -1998,6 +1998,59 @@ rule tetrimmer_select:
         "--top-n {params.top_n} --min-bp {params.min_bp} --out {output.fa} > {log} 2>&1"
 
 
+TETRIMMER_PFAM = (os.path.abspath(TETRIMMER["pfam_dir"]) if TETRIMMER.get("pfam_dir")
+                  else os.path.abspath(f"{OUTDIR}/tetrimmer/pfam"))
+
+
+rule tetrimmer_pfam:
+    # Pfam once for every TEtrimmer job. Without --pfam_dir TEtrimmer
+    # downloads Pfam into its own package directory, shared by every job using
+    # the env, and concurrent jobs clobber each other's download ("failed to
+    # properly unpack the downloaded PFAM file"). Skipped when tetrimmer.pfam_dir
+    # points at a local copy.
+    output:
+        done=f"{OUTDIR}/tetrimmer/pfam/pfam.done",
+    threads: 1
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["classify_light"]["mem"] * attempt,
+        hrs=config["resources"]["classify_light"]["hrs"],
+        shell_exec="bash",
+    conda:
+        "workflow/envs/tetrimmer.yaml"
+    log:
+        f"{OUTDIR}/logs/tetrimmer/pfam.log",
+    params:
+        dir=TETRIMMER_PFAM,
+        local=bool(TETRIMMER.get("pfam_dir")),
+        url="https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release",
+    shell:
+        """
+        exec > {log} 2>&1
+        set -euo pipefail
+        {ENV_PATH_GUARD}
+        d={params.dir}
+        if [ "{params.local}" = "True" ]; then
+            for f in Pfam-A.hmm Pfam-A.hmm.dat Pfam-A.hmm.h3f Pfam-A.hmm.h3i Pfam-A.hmm.h3m Pfam-A.hmm.h3p; do
+                [ -s $d/$f ] || {{ echo "[tetrimmer_pfam] tetrimmer.pfam_dir $d lacks $f"; exit 1; }}
+            done
+            echo "[tetrimmer_pfam] using local Pfam in $d"
+        else
+            mkdir -p $d && cd $d
+            for f in Pfam-A.hmm Pfam-A.hmm.dat; do
+                if [ ! -s $f ]; then
+                    rm -f $f.gz.part
+                    curl -fsSL -o $f.gz.part {params.url}/$f.gz
+                    gunzip -c $f.gz.part > $f.part && mv $f.part $f && rm -f $f.gz.part
+                fi
+            done
+            [ -s Pfam-A.hmm.h3p ] || hmmpress -f Pfam-A.hmm
+            echo "[tetrimmer_pfam] Pfam ready in $d"; ls -l $d
+            cd - > /dev/null
+        fi
+        touch {output.done}
+        """
+
+
 rule tetrimmer:
     # TEtrimmer on the selected families against this sample's genome. The
     # run directory is not a declared output, so a killed job resumes
@@ -2006,6 +2059,7 @@ rule tetrimmer:
     input:
         fa=f"{OUTDIR}/tetrimmer/{{sample}}/input_families.fa",
         genome=f"{OUTDIR}/{{sample}}/genome/{{sample}}.fa",
+        pfam=f"{OUTDIR}/tetrimmer/pfam/pfam.done",
     output:
         done=f"{OUTDIR}/tetrimmer/{{sample}}/tetrimmer.done",
     threads: config["resources"]["tetrimmer"]["threads"]
@@ -2023,7 +2077,7 @@ rule tetrimmer:
             ([f"--preset {TETRIMMER['preset']}"] if TETRIMMER.get("preset") else [])
             + {"unknown": ["--classify_unknown"], "all": ["--classify_all"], "none": []}[
                 str(TETRIMMER.get("classify", "none")).lower()]
-            + ([f"--pfam_dir {os.path.abspath(TETRIMMER['pfam_dir'])}"] if TETRIMMER.get("pfam_dir") else [])
+            + [f"--pfam_dir {TETRIMMER_PFAM}"]
             + ([str(TETRIMMER["extra_args"])] if TETRIMMER.get("extra_args") else [])
         ),
     shell:

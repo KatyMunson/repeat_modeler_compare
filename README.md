@@ -736,8 +736,12 @@ on the same extended consensus.
         --rerun-triggers mtime -- tetrimmer_only
 
 Notes:
-- Pfam: TEtrimmer downloads it on first use. Compute nodes without
-  internet need `tetrimmer.pfam_dir` pointing at a local copy.
+- Pfam: `tetrimmer_pfam` downloads it once (EBI current release, then
+  `hmmpress`) into `<outdir>/tetrimmer/pfam` and every TEtrimmer job gets
+  `--pfam_dir`. Left to itself, TEtrimmer downloads into its package
+  directory, shared by all jobs on the env, and concurrent jobs break each
+  other's download. Compute nodes without internet: set `tetrimmer.pfam_dir`
+  to a local copy (Pfam-A.hmm, Pfam-A.hmm.dat and the hmmpress index).
 - TEtrimmer's own classification is off by default. Its conda env can only
   carry RepeatModeler 1.0.11 / RepeatMasker 4.0.7 (perl 5.22): TEtrimmer needs
   pfam_scan → perl-bioperl → perl-bio-samtools, which exists only for perl

@@ -282,7 +282,7 @@ tetrimmer:
   classify: "none"            # none | unknown (--classify_unknown) | all (--classify_all). TEtrimmer's
                               # conda env can only have RepeatModeler 1.0.11; tetrimmer_classify runs
                               # RepeatClassifier 2.0.9 (TEtools container) on its consensi instead
-  pfam_dir: ""                # local Pfam dir (compute nodes without internet); "" = TEtrimmer downloads it
+  pfam_dir: ""                # local Pfam dir (Pfam-A.hmm + .dat + hmmpress index); "" = tetrimmer_pfam downloads it once into <outdir>/tetrimmer/pfam
   extra_args: ""              # appended verbatim
 
 resources:

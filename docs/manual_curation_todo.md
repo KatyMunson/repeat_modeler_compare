@@ -253,6 +253,23 @@ flagged, split by their `family_tandem.tsv` row in their home sample:
   homology / domains (RepeatClassifier, TEsorter: already tried).
 - **D, intermediate (div 5-15 %): 6 families.**
 
+Gap estimate (all Unknowns, shared arm): families with tandem_frac >= 0.4
+that `family_tandem` does not flag hold 1.5 / 5.3 / 2.0 / 0.5 Mb (ind6 /
+ind8 / bTaeGut7 / bAgePho1), of which 1.1 / 3.2 / 1.1 / 0.35 Mb in arrays,
+against 173.5 / 170.5 / 24.2 / 13.9 Mb already flagged. Small (1-8 %); the
+fix, when made: families passing the tandem test should not fail on
+`max_cons_len` or `min_copies` (a multi-kb unit cannot reach 100-200
+"copies"). Not urgent. The ~170 Mb of flagged Unknown_tandem per meadowlark
+still needs names: TideCluster / satellite cross-check.
+
+**rDNA candidates** (very long, near-identical tandem units):
+`ind8_rnd-5_family-105` (32 kb unit, 3.2 Mb in ind8, 0.8 % div),
+`bTaeGut7_rnd-5_family-12144` (22.7 kb, 0.4 % div), and less clearly
+`bTaeGut7_rnd-4_family-550` (11.7 kb) and `ind8_rnd-5_family-3001` (9.3 kb).
+The satellite cross-check tests ind6 / ind8 families against ribotin, but
+bTaeGut7 / bAgePho1 have no ribotin assembly: blastn their consensi against
+a bird 18S / 28S sequence.
+
 TEtrimmer output for group A families is an array, not a TE: don't accept
 labels proposed from it (`tetrimmer_tesorter_proposals.tsv` rows with a
 "needs extension" evaluation).

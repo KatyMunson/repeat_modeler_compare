@@ -21,6 +21,16 @@ Subcommands:
                               Good -> medium, else low
            Report-only: review the PDFs under TEtrimmer_for_proof_curation/
            and copy accepted rows into your curated table.
+  consensi TEtrimmer's final consensi (TEtrimmer_consensus.fasta) for every
+           processed output, one FASTA for the project + an id map.
+  tesorter TEsorter calls on those extended consensi against the calls on
+           the original library consensus (classify step) and TEtrimmer's
+           own label: --out one row per output consensus (domain gained /
+           kept / changed / lost / none; agrees with TEtrimmer or not);
+           --proposals-out one row per still-unresolved family whose best
+           extended consensus carries a domain call: high = TEtrimmer
+           Perfect/Good and the same superfamily, low = TEtrimmer's label
+           disagrees on order, else medium.
 Stdlib only."""
 
 import argparse
@@ -172,6 +182,166 @@ def cmd_report(args):
           f"{n_conf['high']} high, {n_conf['medium']} medium, {n_conf['low']} low", file=sys.stderr)
 
 
+# ---------------------------------------------------------------- TEsorter check
+
+def read_fasta(path):
+    name, seq = None, []
+    with open(path) as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if line.startswith(">"):
+                if name is not None:
+                    yield name, "".join(seq)
+                name, seq = line[1:].split()[0], []
+            elif line:
+                seq.append(line)
+    if name is not None:
+        yield name, "".join(seq)
+
+
+def cmd_consensi(args):
+    """TEtrimmer's final consensi (TEtrimmer_consensus.fasta, headers
+    output_name#TE_type) for every processed row of tetrimmer_summary.tsv, as
+    one FASTA with ids <sample>__<output_name>, plus a map id -> sample,
+    family, output_name, TEtrimmer's final type."""
+    rows = {}
+    for r in read_tsv(args.summary):
+        if r.get("status") == "processed" and r.get("output_name") not in ("", "NA", "NaN", None):
+            rows[(r["sample"], r["output_name"])] = r
+    runs = dict(spec.partition("=")[::2] for spec in args.run)
+    n = missing = 0
+    with open(args.out, "w") as out, open(args.map_out, "w") as mp:
+        mp.write("id\tsample\tfamily\toutput_name\ttetrimmer_type\tlength\n")
+        for sample, d in runs.items():
+            path = os.path.join(d, "TEtrimmer_consensus.fasta")
+            seqs = {}
+            if os.path.exists(path):
+                for h, sq in read_fasta(path):
+                    name, _, te = h.partition("#")
+                    seqs[name] = (te or "Unknown", sq)
+            for (s, oname), r in rows.items():
+                if s != sample:
+                    continue
+                if oname not in seqs:
+                    missing += 1
+                    continue
+                te, sq = seqs[oname]
+                cid = f"{sample}__{oname}"
+                out.write(f">{cid}\n")
+                for i in range(0, len(sq), 80):
+                    out.write(sq[i:i + 80] + "\n")
+                mp.write(f"{cid}\t{sample}\t{r['family']}\t{oname}\t{te}\t{len(sq)}\n")
+                n += 1
+    print(f"[tetrimmer consensi] {n} output consensi; {missing} processed outputs not found in "
+          f"TEtrimmer_consensus.fasta", file=sys.stderr)
+
+
+def _order(label):
+    return (label or "").split("/", 1)[0]
+
+
+def cmd_tesorter(args):
+    """TEsorter on the extended consensi vs TEsorter on the original library
+    consensus (classify step) vs TEtrimmer's own label. Table per output
+    consensus; proposals (curated-table format) per family that is still
+    unresolved and whose extended consensus carries a domain call."""
+    from reclassify_unknown import domain_evidence, read_tesorter_cls
+    from dna_te_pilot import same_superfamily
+
+    rex, gydb = read_tesorter_cls(args.rexdb), read_tesorter_cls(args.gydb)
+    lrex, lgydb = read_tesorter_cls(args.lib_rexdb), read_tesorter_cls(args.lib_gydb)
+    summ = {(r["sample"], r["output_name"]): r for r in read_tsv(args.summary)}
+
+    rows = []
+    for m in read_tsv(args.map):
+        s = summ.get((m["sample"], m["output_name"]), {})
+        after, a_conf = domain_evidence(m["id"], rex, gydb, args.min_domains)
+        before, b_conf = domain_evidence(m["family"], lrex, lgydb, args.min_domains)
+        tet = m["tetrimmer_type"]
+        if after and before:
+            change = "kept" if _order(after) == _order(before) else "changed"
+        elif after:
+            change = "gained"
+        elif before:
+            change = "lost"
+        else:
+            change = "none"
+        if not after:
+            vs_tet = "."
+        elif _order(tet) in ("Unknown", ""):
+            vs_tet = "tetrimmer_unknown"
+        elif same_superfamily(after, tet) or after == tet:
+            vs_tet = "agree"
+        elif _order(after) == _order(tet):
+            vs_tet = "agree_order"
+        else:
+            vs_tet = "disagree"
+        rows.append({
+            "sample": m["sample"], "family": m["family"], "input_label": s.get("input_label", "Unknown"),
+            "output_name": m["output_name"], "evaluation": s.get("evaluation", "NA"),
+            "input_length": s.get("input_length", "NA"), "output_length": m["length"],
+            "genome_cov": s.get("output_genome_cov_len", "NA"), "tetrimmer_type": tet,
+            "tesorter_original": before or ".", "tesorter_extended": after or ".",
+            "domain_change": change, "vs_tetrimmer": vs_tet,
+            "conflict": "; ".join(x for x in (b_conf and f"original: {b_conf}", a_conf and f"extended: {a_conf}") if x) or ".",
+        })
+
+    cols = ["sample", "family", "input_label", "output_name", "evaluation", "input_length", "output_length",
+            "genome_cov", "tetrimmer_type", "tesorter_original", "tesorter_extended", "domain_change",
+            "vs_tetrimmer", "conflict"]
+    with open(args.out, "w") as out:
+        out.write("\t".join(cols) + "\n")
+        for r in rows:
+            out.write("\t".join(str(r[c]).replace("\t", " ") for c in cols) + "\n")
+
+    def num(x):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return 0.0
+
+    # per family: its best output with a domain call (evaluation, then coverage)
+    best = {}
+    for r in rows:
+        call, lab = r["tesorter_extended"], r["input_label"]
+        if call == "." or not unresolved(lab):
+            continue
+        if call == lab or ("/" not in call and _order(call) == _order(lab)):
+            continue  # nothing beyond the label it already has (DNA for DNA/Unknown)
+        key = (EVAL_RANK.get(r["evaluation"], 0), num(r["genome_cov"]))
+        if r["family"] not in best or key > best[r["family"]][0]:
+            best[r["family"]] = (key, r)
+    n_conf = {"high": 0, "medium": 0, "low": 0}
+    with open(args.proposals_out, "w") as out:
+        out.write("group\tfamily\tclass_family\tpart\tevidence\tnote\tconfidence\n")
+        for fam in sorted(best):
+            r = best[fam][1]
+            call = r["tesorter_extended"]
+            good = r["evaluation"] in ("Perfect", "Good")
+            if r["vs_tetrimmer"] == "disagree":
+                conf = "low"
+            elif r["vs_tetrimmer"] == "agree" and good:
+                conf = "high"
+            else:
+                conf = "medium"
+            n_conf[conf] += 1
+            note = [f"TEsorter on TEtrimmer {r['evaluation']} {r['output_name']} "
+                    f"({r['input_length']} -> {r['output_length']} bp): {call}",
+                    f"TEtrimmer label {r['tetrimmer_type']} ({r['vs_tetrimmer']})",
+                    {"gained": "no domain call on the original consensus",
+                     "kept": f"original consensus also {r['tesorter_original']}",
+                     "changed": f"original consensus called {r['tesorter_original']}"}.get(r["domain_change"], "")]
+            if r["conflict"] != ".":
+                note.append(r["conflict"])
+            out.write(f"{fam}\t{fam}\t{call}\t.\ttetrimmer+tesorter\t"
+                      f"{'; '.join(x for x in note if x).replace(chr(9), ' ')}\t{conf}\n")
+    by = {}
+    for r in rows:
+        by[r["domain_change"]] = by.get(r["domain_change"], 0) + 1
+    print(f"[tetrimmer tesorter] {len(rows)} extended consensi; domain calls {by}; proposals: "
+          f"{n_conf['high']} high, {n_conf['medium']} medium, {n_conf['low']} low", file=sys.stderr)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -191,8 +361,24 @@ def main():
     r.add_argument("--run", nargs="+", required=True, help="sample=TEtrimmer output directory")
     r.add_argument("--summary-out", required=True)
     r.add_argument("--proposals-out", required=True)
+    c = sub.add_parser("consensi")
+    c.add_argument("--run", nargs="+", required=True, help="sample=TEtrimmer output directory")
+    c.add_argument("--summary", required=True, help="tetrimmer_summary.tsv (report)")
+    c.add_argument("--out", required=True)
+    c.add_argument("--map-out", required=True)
+    t = sub.add_parser("tesorter")
+    t.add_argument("--summary", required=True, help="tetrimmer_summary.tsv (report)")
+    t.add_argument("--map", required=True, help="consensi --map-out")
+    t.add_argument("--rexdb", required=True, help="TEsorter on the extended consensi")
+    t.add_argument("--gydb", required=True)
+    t.add_argument("--lib-rexdb", default="", help="TEsorter on the library consensi (classify step)")
+    t.add_argument("--lib-gydb", default="")
+    t.add_argument("--min-domains", type=int, default=1)
+    t.add_argument("--out", required=True)
+    t.add_argument("--proposals-out", required=True)
     args = ap.parse_args()
-    {"select": cmd_select, "report": cmd_report}[args.cmd](args)
+    {"select": cmd_select, "report": cmd_report, "consensi": cmd_consensi,
+     "tesorter": cmd_tesorter}[args.cmd](args)
 
 
 if __name__ == "__main__":

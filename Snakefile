@@ -2072,11 +2072,107 @@ rule tetrimmer_report:
         "--summary-out {output.summary} --proposals-out {output.proposals} > {log} 2>&1"
 
 
+rule tetrimmer_consensi:
+    # TEtrimmer's final (extended, cleaned) consensi of every processed
+    # family, one FASTA for the project.
+    input:
+        done=expand(f"{OUTDIR}/tetrimmer/{{sample}}/tetrimmer.done", sample=SAMPLE_IDS),
+        summary=f"{OUTDIR}/tetrimmer/tetrimmer_summary.tsv",
+    output:
+        fa=f"{OUTDIR}/tetrimmer/tesorter/extended.fa",
+        map=f"{OUTDIR}/tetrimmer/tesorter/extended_map.tsv",
+    threads: 1
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["classify_light"]["mem"] * attempt,
+        hrs=config["resources"]["classify_light"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/tetrimmer/consensi.log",
+    params:
+        runs=" ".join(f"{s}={OUTDIR}/tetrimmer/{s}/run" for s in SAMPLE_IDS),
+    shell:
+        "python3 {SCRIPTS}/tetrimmer_curation.py consensi --run {params.runs} --summary {input.summary} "
+        "--out {output.fa} --map-out {output.map} > {log} 2>&1"
+
+
+rule tetrimmer_tesorter:
+    # TEsorter (REXdb metazoa + GyDB) on the extended consensi, with the
+    # classify step's settings (-dp2: domain evidence only).
+    input:
+        fa=f"{OUTDIR}/tetrimmer/tesorter/extended.fa",
+    output:
+        rexdb=f"{OUTDIR}/tetrimmer/tesorter/extended.rexdb-metazoa.cls.tsv",
+        gydb=f"{OUTDIR}/tetrimmer/tesorter/extended.gydb.cls.tsv",
+    threads: config["resources"]["tesorter"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["tesorter"]["mem"] * attempt,
+        hrs=config["resources"]["tesorter"]["hrs"],
+        shell_exec="bash",
+    conda:
+        "workflow/envs/tesorter.yaml"
+    log:
+        f"{OUTDIR}/logs/tetrimmer/tesorter.log",
+    params:
+        workdir=f"{OUTDIR}/tetrimmer/tesorter",
+        fa_abs=lambda wc, input: os.path.abspath(input.fa),
+        cov=CLASSIFY.get("tesorter_min_cov", 20),
+        evalue=CLASSIFY.get("tesorter_max_evalue", 1e-3),
+    shell:
+        """
+        exec > {log} 2>&1
+        set -euo pipefail
+        {ENV_PATH_GUARD}
+        cd {params.workdir}
+        for db in rexdb-metazoa gydb; do
+            # TEsorter reuses a stale <pre>.domtbl from an earlier run: start clean
+            rm -rf extended.$db.* tmp_$db
+            if [ -s {params.fa_abs} ]; then
+                TEsorter {params.fa_abs} -db $db -st nucl -p {threads} -cov {params.cov} -eval {params.evalue} \
+                    -dp2 -nolib -pre extended.$db -tmp tmp_$db
+            fi
+            [ -f extended.$db.cls.tsv ] || printf '#TE\tOrder\tSuperfamily\tClade\tComplete\tStrand\tDomains\n' > extended.$db.cls.tsv
+            rm -rf tmp_$db
+        done
+        """
+
+
+rule tetrimmer_tesorter_report:
+    # Extended-consensus TEsorter calls vs the original consensus's
+    # (classify step) and TEtrimmer's own label; proposals for families
+    # still unresolved (curated-table format, review first).
+    input:
+        summary=f"{OUTDIR}/tetrimmer/tetrimmer_summary.tsv",
+        map=f"{OUTDIR}/tetrimmer/tesorter/extended_map.tsv",
+        rexdb=f"{OUTDIR}/tetrimmer/tesorter/extended.rexdb-metazoa.cls.tsv",
+        gydb=f"{OUTDIR}/tetrimmer/tesorter/extended.gydb.cls.tsv",
+        lib=[f"{OUTDIR}/classify/tesorter/library.rexdb-metazoa.cls.tsv",
+             f"{OUTDIR}/classify/tesorter/library.gydb.cls.tsv"] if CLASSIFY_ON else [],
+    output:
+        table=f"{OUTDIR}/tetrimmer/tetrimmer_tesorter.tsv",
+        proposals=f"{OUTDIR}/tetrimmer/tetrimmer_tesorter_proposals.tsv",
+    threads: 1
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["classify_light"]["mem"] * attempt,
+        hrs=config["resources"]["classify_light"]["hrs"],
+        shell_exec="bash",
+    log:
+        f"{OUTDIR}/logs/tetrimmer/tesorter_report.log",
+    params:
+        lib=lambda wc, input: f"--lib-rexdb {input.lib[0]} --lib-gydb {input.lib[1]}" if input.lib else "",
+        min_domains=CLASSIFY.get("tesorter_min_domains", 1),
+    shell:
+        "python3 {SCRIPTS}/tetrimmer_curation.py tesorter --summary {input.summary} --map {input.map} "
+        "--rexdb {input.rexdb} --gydb {input.gydb} {params.lib} --min-domains {params.min_domains} "
+        "--out {output.table} --proposals-out {output.proposals} > {log} 2>&1"
+
+
 rule tetrimmer_only:
-    # TEtrimmer on the families still Unknown (README "TEtrimmer"). Pair
-    # with mask_shared_library like report_shared_only.
+    # TEtrimmer on the families still Unknown (README "TEtrimmer"), then
+    # TEsorter on its extended consensi. Pair with mask_shared_library like
+    # report_shared_only.
     input:
         f"{OUTDIR}/tetrimmer/tetrimmer_proposals.tsv",
+        f"{OUTDIR}/tetrimmer/tetrimmer_tesorter_proposals.tsv",
 
 
 rule verify_classes:

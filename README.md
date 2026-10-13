@@ -707,9 +707,27 @@ unresolved, to classify them, not to replace the library:
    family whose label TEtrimmer changed, from its best output: Perfect →
    high, Good → medium, else low; split families noted).
 
+4. `tetrimmer_consensi` → `tetrimmer_tesorter` → `tetrimmer_tesorter_report`:
+   TEsorter (REXdb metazoa + GyDB, the classify step's settings) on
+   TEtrimmer's final consensi (`TEtrimmer_consensus.fasta`). Extension can
+   recover the ORF a truncated RepeatModeler consensus lacked, so this asks
+   whether the extended consensus now carries a domain, and compares that
+   with TEsorter on the original consensus (`classify/tesorter/`) and with
+   TEtrimmer's own label:
+   - `tetrimmer/tetrimmer_tesorter.tsv`, one row per output consensus:
+     `domain_change` gained / kept / changed / lost / none, and
+     `vs_tetrimmer` agree / agree_order / disagree / tetrimmer_unknown.
+   - `tetrimmer/tetrimmer_tesorter_proposals.tsv`, curated-table format, one
+     row per still-unresolved family whose best extended consensus has a
+     domain call: high = TEtrimmer Perfect/Good and the same superfamily,
+     low = TEtrimmer's label is a different order, else medium.
+
 Review before accepting: the PDFs in
 `tetrimmer/{sample}/run/TEtrimmer_for_proof_curation/` (or TEtrimmerGUI, which
-needs only Python), then copy rows into your curated table.
+needs only Python), then copy rows into your curated table. Where
+`tetrimmer_proposals.tsv` and `tetrimmer_tesorter_proposals.tsv` agree on a
+family, that is TEtrimmer's classification and an independent domain call
+on the same extended consensus.
 
     ./runsnake 4 --configfile config.yaml --config mask_shared_library=results_v3/library/shared_library.fa \
         --rerun-triggers mtime -- tetrimmer_only

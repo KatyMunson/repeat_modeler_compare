@@ -279,7 +279,9 @@ tetrimmer:
   min_bp: 500000              # owned_bp floor
   neighbor_confidence: [high] # family_neighbors calls at these confidences count as resolved
   preset: ""                  # "" (TEtrimmer defaults) | conserved | divergent
-  classify: "unknown"         # unknown (--classify_unknown) | all (--classify_all) | none
+  classify: "none"            # none | unknown (--classify_unknown) | all (--classify_all). TEtrimmer's
+                              # conda env can only have RepeatModeler 1.0.11; tetrimmer_classify runs
+                              # RepeatClassifier 2.0.9 (TEtools container) on its consensi instead
   pfam_dir: ""                # local Pfam dir (compute nodes without internet); "" = TEtrimmer downloads it
   extra_args: ""              # appended verbatim
 

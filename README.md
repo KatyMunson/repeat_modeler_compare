@@ -694,7 +694,7 @@ unresolved, to classify them, not to replace the library:
    top `tetrimmer.top_n` by owned bp with ≥ `tetrimmer.min_bp`. Each family
    runs once, on the genome where it is largest.
 2. `tetrimmer`, per sample, conda env `workflow/envs/tetrimmer.yaml`
-   (`--classify_unknown` by default; `tetrimmer.preset`, `classify`,
+   (`tetrimmer.classify: none` by default, see the note below; `tetrimmer.preset`, `classify`,
    `pfam_dir`, `extra_args`). Resources: `resources.tetrimmer` (32 threads,
    120 h by default; TEtrimmer's own benchmark was ~2-5 h for 3,500-8,600
    families on a 1.7 Gb genome with 48 cores, and hagfish families have far
@@ -707,20 +707,23 @@ unresolved, to classify them, not to replace the library:
    family whose label TEtrimmer changed, from its best output: Perfect →
    high, Good → medium, else low; split families noted).
 
-4. `tetrimmer_consensi` → `tetrimmer_tesorter` → `tetrimmer_tesorter_report`:
-   TEsorter (REXdb metazoa + GyDB, the classify step's settings) on
-   TEtrimmer's final consensi (`TEtrimmer_consensus.fasta`). Extension can
-   recover the ORF a truncated RepeatModeler consensus lacked, so this asks
-   whether the extended consensus now carries a domain, and compares that
-   with TEsorter on the original consensus (`classify/tesorter/`) and with
-   TEtrimmer's own label:
+4. `tetrimmer_consensi` → `tetrimmer_tesorter` + `tetrimmer_classify` →
+   `tetrimmer_tesorter_report`: TEtrimmer's final consensi
+   (`TEtrimmer_consensus.fasta`) get TEsorter (REXdb metazoa + GyDB, the
+   classify step's settings) and RepeatClassifier in the TEtools container
+   (`repeatmodeler.container`: the RepeatModeler and Dfam setup the library
+   was classified with). Extension can recover the ORF a truncated
+   RepeatModeler consensus lacked, so this asks whether the extended
+   consensus now carries a domain, compared with TEsorter on the original
+   consensus (`classify/tesorter/`) and with RepeatClassifier's label:
    - `tetrimmer/tetrimmer_tesorter.tsv`, one row per output consensus:
      `domain_change` gained / kept / changed / lost / none, and
-     `vs_tetrimmer` agree / agree_order / disagree / tetrimmer_unknown.
+     `vs_classifier` agree / agree_order / disagree / classifier_unknown.
    - `tetrimmer/tetrimmer_tesorter_proposals.tsv`, curated-table format, one
-     row per still-unresolved family whose best extended consensus has a
-     domain call: high = TEtrimmer Perfect/Good and the same superfamily,
-     low = TEtrimmer's label is a different order, else medium.
+     row per still-unresolved family. A domain call first: high = TEtrimmer
+     Perfect/Good and RepeatClassifier gives the same superfamily, low =
+     RepeatClassifier says another order, else medium. Without a domain, a
+     resolved RepeatClassifier label: medium for Perfect/Good, else low.
 
 Review before accepting: the PDFs in
 `tetrimmer/{sample}/run/TEtrimmer_for_proof_curation/` (or TEtrimmerGUI, which
@@ -735,12 +738,16 @@ on the same extended consensus.
 Notes:
 - Pfam: TEtrimmer downloads it on first use. Compute nodes without
   internet need `tetrimmer.pfam_dir` pointing at a local copy.
-- RepeatClassifier inside the TEtrimmer env uses that env's RepeatMasker
-  libraries (the Dfam root partition bioconda ships), not the pipeline's
-  FamDB setup.
-- The env is unpinned (`tetrimmer` from bioconda); after the first build,
-  pin the resolved version in `workflow/envs/tetrimmer.yaml`. Upstream notes
-  the bioconda package can lag GitHub.
+- TEtrimmer's own classification is off by default. Its conda env can only
+  carry RepeatModeler 1.0.11 / RepeatMasker 4.0.7 (perl 5.22): TEtrimmer needs
+  pfam_scan → perl-bioperl → perl-bio-samtools, which exists only for perl
+  5.22/5.26, and RepeatModeler 2 needs perl ≥ 5.32, so no env holds both.
+  `tetrimmer_classify` classifies the extended consensi with the TEtools
+  container instead. With `tetrimmer.classify: unknown` TEtrimmer would
+  classify with the 2017 RepeatClassifier and its bundled libraries, and
+  `tetrimmer_proposals.tsv` would carry those labels.
+- The env pins TEtrimmer 1.7.2 (bioconda). Upstream notes the bioconda
+  package can lag GitHub.
 
 ## Satellite, rDNA and mito cross-check (`satellite_crosscheck`)
 

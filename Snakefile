@@ -2022,7 +2022,7 @@ rule tetrimmer:
         opt=" ".join(
             ([f"--preset {TETRIMMER['preset']}"] if TETRIMMER.get("preset") else [])
             + {"unknown": ["--classify_unknown"], "all": ["--classify_all"], "none": []}[
-                str(TETRIMMER.get("classify", "unknown")).lower()]
+                str(TETRIMMER.get("classify", "none")).lower()]
             + ([f"--pfam_dir {os.path.abspath(TETRIMMER['pfam_dir'])}"] if TETRIMMER.get("pfam_dir") else [])
             + ([str(TETRIMMER["extra_args"])] if TETRIMMER.get("extra_args") else [])
         ),
@@ -2136,15 +2136,55 @@ rule tetrimmer_tesorter:
         """
 
 
+rule tetrimmer_classify:
+    # RepeatClassifier on TEtrimmer's extended consensi, in the TEtools
+    # container: the RepeatModeler (2.0.9) and Dfam setup the library itself
+    # was classified with. TEtrimmer's conda env can only carry RepeatModeler
+    # 1.0.11 (see workflow/envs/tetrimmer.yaml).
+    input:
+        fa=f"{OUTDIR}/tetrimmer/tesorter/extended.fa",
+    output:
+        fa=f"{OUTDIR}/tetrimmer/tesorter/extended.classified.fa",
+    threads: config["resources"]["classify_families"]["threads"]
+    resources:
+        mem=lambda wildcards, attempt: config["resources"]["classify_families"]["mem"] * attempt,
+        hrs=config["resources"]["classify_families"]["hrs"],
+        shell_exec="bash",
+    singularity:
+        TETOOLS
+    log:
+        f"{OUTDIR}/logs/tetrimmer/classify.log",
+    params:
+        workdir=f"{OUTDIR}/tetrimmer/tesorter/classify_work",
+        out_abs=lambda wc, output: os.path.abspath(output.fa),
+    shell:
+        """
+        exec > {log} 2>&1
+        set -euo pipefail
+        rm -rf {params.workdir} && mkdir -p {params.workdir}
+        if [ ! -s {input.fa} ]; then
+            : > {output.fa}
+            rm -rf {params.workdir}
+            exit 0
+        fi
+        cp {input.fa} {params.workdir}/consensi.fa
+        cd {params.workdir}
+        RepeatClassifier -consensi consensi.fa -threads {threads}
+        cp consensi.fa.classified {params.out_abs}
+        cd - > /dev/null && rm -rf {params.workdir}
+        """
+
+
 rule tetrimmer_tesorter_report:
-    # Extended-consensus TEsorter calls vs the original consensus's
-    # (classify step) and TEtrimmer's own label; proposals for families
-    # still unresolved (curated-table format, review first).
+    # Extended consensi: TEsorter and RepeatClassifier (TEtools) calls vs
+    # TEsorter on the original consensus (classify step); proposals for
+    # families still unresolved (curated-table format, review first).
     input:
         summary=f"{OUTDIR}/tetrimmer/tetrimmer_summary.tsv",
         map=f"{OUTDIR}/tetrimmer/tesorter/extended_map.tsv",
         rexdb=f"{OUTDIR}/tetrimmer/tesorter/extended.rexdb-metazoa.cls.tsv",
         gydb=f"{OUTDIR}/tetrimmer/tesorter/extended.gydb.cls.tsv",
+        classified=f"{OUTDIR}/tetrimmer/tesorter/extended.classified.fa",
         lib=[f"{OUTDIR}/classify/tesorter/library.rexdb-metazoa.cls.tsv",
              f"{OUTDIR}/classify/tesorter/library.gydb.cls.tsv"] if CLASSIFY_ON else [],
     output:
@@ -2162,13 +2202,13 @@ rule tetrimmer_tesorter_report:
         min_domains=CLASSIFY.get("tesorter_min_domains", 1),
     shell:
         "python3 {SCRIPTS}/tetrimmer_curation.py tesorter --summary {input.summary} --map {input.map} "
-        "--rexdb {input.rexdb} --gydb {input.gydb} {params.lib} --min-domains {params.min_domains} "
-        "--out {output.table} --proposals-out {output.proposals} > {log} 2>&1"
+        "--rexdb {input.rexdb} --gydb {input.gydb} {params.lib} --classified {input.classified} "
+        "--min-domains {params.min_domains} --out {output.table} --proposals-out {output.proposals} > {log} 2>&1"
 
 
 rule tetrimmer_only:
     # TEtrimmer on the families still Unknown (README "TEtrimmer"), then
-    # TEsorter on its extended consensi. Pair with mask_shared_library like
+    # TEsorter and RepeatClassifier (TEtools) on its extended consensi. Pair with mask_shared_library like
     # report_shared_only.
     input:
         f"{OUTDIR}/tetrimmer/tetrimmer_proposals.tsv",

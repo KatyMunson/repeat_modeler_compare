@@ -2099,8 +2099,15 @@ rule tetrimmer:
         else
             rm -rf {params.run}
         fi
+        # TEtrimmer writes summary.txt at the start and can log an error (e.g. no
+        # Pfam) and stop early, so done = exit 0 AND its closing log line
+        rc=0
         TEtrimmer --input_file {input.fa} --genome_file {input.genome} --output_dir {params.run} \
-            --num_threads {threads} {params.opt} $resume
+            --num_threads {threads} {params.opt} $resume || rc=$?
+        if [ $rc -ne 0 ] || ! grep -q "TEtrimmer analysis finished" {log}; then
+            echo "[tetrimmer] TEtrimmer did not finish (exit $rc); {params.run} kept, the next run resumes it"
+            exit 1
+        fi
         test -s {params.run}/summary.txt
         touch {output.done}
         """

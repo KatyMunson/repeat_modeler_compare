@@ -290,9 +290,11 @@ PDF instead:
   (`bAgePho1_rnd_5_family_52645`, rated Good with "LTR": an array);
 - short segments in the middle only = internal repeats, not LTRs
   (`bTaeGut7_rnd_6_family_6597`: Good + "LTR" from internal repeats; young,
-  ~17 copies, no domain, variable A-rich end = poly(A) of a reversed
-  retroposon or processed pseudogene? Check its host-protein hit in
-  `classify/unknown_reclassification.tsv`).
+  ~17 copies, ~2.8 kb, no domain. Its ragged left end is A / GA-rich in the
+  shown orientation, so not a reversed poly(A) tail (that would read as
+  T's), and the right end is not A-rich: a variable-length simple-sequence
+  boundary, or an A-rich flank it inserts next to. Gene-derived? Check its
+  host-protein hit in `classify/unknown_reclassification.tsv`).
 `bTaeGut7_rnd_1_family_148` (Perfect, two ~350 bp subfamilies, no terminal
 repeat / TSD) is the Unknown the DNA-TE pilot hit with 78 candidates across
 6 superfamilies: SINE-like? Check.

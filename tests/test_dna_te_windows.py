@@ -99,5 +99,35 @@ class TirLearnerEmptySteps(unittest.TestCase):
         self.assertEqual(out.stdout.split("\n")[:3], ["0", "1", "['seqid', 'seq'] 0"])
 
 
+RACE_CHECK = r"""
+import os, shutil, sys, tempfile
+real = shutil.rmtree
+calls = []
+def flaky(path, *a, **k):          # first call: a background unlink got there first
+    calls.append(path)
+    if len(calls) == 1:
+        raise FileNotFoundError(2, "No such file or directory", path)
+    return real(path, *a, **k)
+shutil.rmtree = flaky
+d = os.path.join(tempfile.mkdtemp(), "TIR-Learner3.0", "bin"); os.makedirs(d)
+open(os.path.join(d, "main.py"), "w").write("import shutil\n")
+sys.path.insert(0, d)
+import main
+ck = tempfile.mkdtemp(); open(os.path.join(ck, "x.csv"), "w").close()
+main.shutil.rmtree(ck)
+print(os.path.exists(ck), len(calls))
+"""
+
+
+class TirLearnerCleanupRace(unittest.TestCase):
+    """TIR-Learner's checkpoint rmtree retries when its own background unlinks race it."""
+
+    def test_rmtree_retries(self):
+        env = dict(os.environ, PYTHONPATH=os.path.join(SCRIPTS, "compat", "edta_python"))
+        out = subprocess.run([sys.executable, "-c", RACE_CHECK], capture_output=True, text=True, env=env)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.split(), ["False", "2"])
+
+
 if __name__ == "__main__":
     unittest.main()

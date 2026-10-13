@@ -62,14 +62,18 @@ window with nothing to find failed instead of reporting nothing:
 - neither TIRvish nor GRF leaves a candidate: concat of two Nones;
 - any step that stores None (TIRvish or GRF with nothing left after its
   filters): the checkpoint writer calls None.to_csv;
+- the final checkpoint-folder rmtree races the background `unlink`s the
+  checkpoint writer starts and never waits for; it loses when
+  post-processing ends at once (no TIR found): FileNotFoundError;
 - candidates found but none passes the TIR/TSD check: check_TIR_TSD returns
   an empty frame without its "source" column and combine_all's sort fails,
   "KeyError: 'source'".
 Each is wrapped so the empty case does what the code meant: an empty frame
 passes through, "no candidates at all" exits 0 with a NOTICE (EDTA_raw.pl
 then writes an empty TIR file, as for a TIR-Learner run that finds
-nothing), and combine_all ignores empty module results, and the checkpoint writer skips
-None entries. Inputs with data
+nothing), and combine_all ignores empty module results, the checkpoint writer skips
+None entries, and TIR-Learner's own rmtree retries when a file vanishes
+under it. Inputs with data
 go to the original functions unchanged. Only modules loaded from a
 TIR-Learner directory are touched.
 
@@ -133,7 +137,11 @@ def _patch_swifter(module):
 def _patch_tirlearner(module):
     """Wrap TIR-Learner 3.0.x functions that crash on an empty step (4.)."""
     import functools
-    pd = __import__("pandas")
+    import os
+    try:
+        import pandas as pd
+    except ImportError:  # TIR-Learner always has pandas; tests may not
+        pd = None
     short = module.__name__.rsplit(".", 1)[-1]
 
     def wrap(name, make):
@@ -150,6 +158,8 @@ def _patch_tirlearner(module):
         # pd.concat of only Nones, or of an empty list
         return any(m in str(e) for m in ("All objects passed were None", "No objects to concatenate"))
 
+    if pd is None and short != "main":
+        return
     if short == "get_fasta_sequence":
         def make(f):
             def get_fasta_pieces_SeqIO(genome_file, df_in, *args, **kwargs):
@@ -197,6 +207,29 @@ def _patch_tirlearner(module):
             return combine_de_novo_result
         wrap("combine_de_novo_result", make)
     elif short == "main":
+        # its checkpoint writer deletes old files with background `unlink`
+        # processes it never waits for; when post-processing ends at once (no
+        # TIR found) the final rmtree races them and hits FileNotFoundError
+        sh = getattr(module, "shutil", None)
+        if sh is not None and not getattr(sh, "_race_shim", False):
+            import time
+            import types
+            proxy = types.ModuleType("shutil")
+            proxy.__dict__.update(sh.__dict__)
+
+            def rmtree(path, *args, **kwargs):
+                for _ in range(10):
+                    try:
+                        return sh.rmtree(path, *args, **kwargs)
+                    except FileNotFoundError:
+                        if not os.path.exists(path):
+                            return None
+                        time.sleep(0.5)
+                return sh.rmtree(path, ignore_errors=True)
+
+            proxy.rmtree = rmtree
+            proxy._race_shim = True
+            module.shutil = proxy
         cls = getattr(module, "TIRLearner", None)
         f = getattr(cls, "save_checkpoint_file", None)
         if f is not None and not getattr(f, "_empty_shim", False):

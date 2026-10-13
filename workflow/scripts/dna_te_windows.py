@@ -251,7 +251,7 @@ def main():
         sys.exit("--overlap must be smaller than --window-size")
 
     args.edta_raw = find_edta_raw()
-    print(f"[dna_te] EDTA_raw.pl: {' '.join(args.edta_raw)} ({shutil.which(args.edta_raw[-1]) or args.edta_raw[-1]}); {tool_versions()} (TIR-Learner shims on: pandas >= 3 positional, swifter threads)")
+    print(f"[dna_te] EDTA_raw.pl: {' '.join(args.edta_raw)} ({shutil.which(args.edta_raw[-1]) or args.edta_raw[-1]}); {tool_versions()} (TIR-Learner shims on: compat/edta_python/sitecustomize.py -- pandas 3, swifter, empty steps, cleanup race)")
     pcs = pieces(args.fasta, args.window_size, args.overlap)
     # Pre-screen: tandem-array pieces (whole piece compresses below
     # --tandem-zlib) hold no TEs to find and break TIR-Learner's TIRvish

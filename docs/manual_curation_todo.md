@@ -1,4 +1,4 @@
-# Manual curation: state and to-do list (hagfish, Esto / Mlim)
+# Manual curation: state and to-do list (hagfish, Esto / Mlim; birds in §9)
 
 Working notes for the next curation pass. Family IDs are library IDs
 (`<sample>_rnd-N_family-M` from RepeatModeler, `<sample>_ltr-1_family-M`
@@ -216,7 +216,48 @@ To check:
   with real gap fills (Mlim has ~13 mito-colinear pairs with 4-8 kb genome
   gaps; Esto has a single pair, > 50 kb apart).
 
-## 9. Other open threads
+## 9. Bird follow-ups (meadowlark checkout; `tetrimmer_only`)
+
+From the first TEtrimmer run on the birds (ind6 / ind8 / bAgePho1 /
+bTaeGut7). TEtrimmer skipped 48 families, all in ind6 / ind8, or extended
+them into tandem multimers ("needs more extension"). The 73 families it
+flagged, split by their `family_tandem.tsv` row in their home sample:
+
+- **A, tandem (tandem_frac >= 0.4): 5 families.** Long-unit arrays
+  (1.9-32 kb units, 37-107 copies, 1-10 % divergence). Example:
+  `bAgePho1_rnd-5_family-52645`, a 2,611 bp unit with tandem_frac 0.94 and
+  arrays of up to 27 units in ind6. TEtrimmer extended it to a ~30 kb
+  multimer (dotplot). All 5 fail `family_tandem` on length (`max_cons_len`
+  2000) or copies (`min_copies`, doubled for the dual_hap ind6 / ind8),
+  never on the tandem test. Size of this gap: see the gap estimate (all
+  Unknowns with tandem_frac >= 0.4 failing length / copies). Confirm with
+  TideCluster when it finishes.
+- **B, near-identical (median div < 5 %), not tandem: 9 families.** Long
+  (median 8 kb, up to 35 kb), few copies: segmental duplications,
+  haplotype duplication in the dual_hap assemblies, or a very recent
+  expansion. **To check:**
+  - `ind8_rnd-5_family-4578` (1,156 bp) and `ind8_rnd-5_family-2510`
+    (3,185 bp): ~240 copies at 0.0 % median divergence in ind8, 2-3 copies
+    in the other birds. List the contigs that hold their copies (shared-arm
+    `.out`). Spread genome-wide = a real, very young burst (then classify
+    it); clustered on a few contigs or duplicated haplotigs = an assembly
+    artifact (then flag it, don't classify it as a TE).
+  - The other 7 (`ind6_rnd-5_family-19787`, `ind8_rnd-5_family-18107`,
+    `ind8_rnd-5_family-37`, `ind8_rnd-5_family-805`,
+    `ind6_rnd-5_family-4128`, `ind6_rnd-5_family-3891`,
+    `ind6_rnd-5_family-2646`): the same question at lower copy number.
+- **C, old interspersed (div >= 15 %), not tandem: 48 families.** Median
+  ~1 kb, hundreds to ~4,000 copies, 20-31 % divergence. These are why
+  TEtrimmer finds 0 BLAST hits (it needs e <= 1e-40 over > 150 bp); no
+  alignment-based curation will extend them. Labels can only come from
+  homology / domains (RepeatClassifier, TEsorter: already tried).
+- **D, intermediate (div 5-15 %): 6 families.**
+
+TEtrimmer output for group A families is an array, not a TE: don't accept
+labels proposed from it (`tetrimmer_tesorter_proposals.tsv` rows with a
+"needs extension" evaluation).
+
+## 10. Other open threads
 
 - `family_profile.py` multi-family mode (several families profiled as one
   element), promised earlier.

@@ -170,10 +170,12 @@ Check before accepting:
   Unknowns are clean, well-supported elements with no Dfam similarity and
   no domain: non-autonomous or undescribed lineages. Structure is the
   remaining evidence.
-- **Accept:** the 4 high-confidence proposals, all LTR/Gypsy on LTR/Unknown
-  families (`Mlim_ltr-1_family-1100`, `-1104`, `-128`, `-51`; TEsorter +
-  RepeatClassifier agree, TEtrimmer Good; three extended from 282-534 bp to
-  ~4.6-4.9 kb).
+- **Accept:** the 5 high-confidence proposals, all LTR/Gypsy: four on
+  LTR/Unknown families (`Mlim_ltr-1_family-1100`, `-1104`, `-128`, `-51`;
+  TEsorter + RepeatClassifier agree, TEtrimmer Good; three extended from
+  282-534 bp to ~4.6-4.9 kb) and `Mlim_rnd-1_family-234` (Unknown, 534 ->
+  4,910 bp, Perfect). After the order-change fix (rerun 2026-10-14): 5
+  high, 11 medium, 13 low; exactly the 6 order changes moved medium -> low.
 - **Review (order changes, now "low" + "ORDER CHANGE"):** LTR-pipeline
   `LTR/Unknown` families proposed as another order: `Esto_ltr-1_family-15`
   -> LINE/CR1, `Esto_ltr-1_family-547` -> LINE (10.6 -> 3.7 kb),

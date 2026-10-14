@@ -728,6 +728,11 @@ unresolved, to classify them, not to replace the library:
      (e.g. LINE for an LTR-pipeline `LTR/Unknown` family) is always low and
      noted "ORDER CHANGE": the earlier label was wrong, or the extension
      drifted onto a nested or neighbouring element; check the PDF.
+   - `evaluation_regraded` (both tables) is what the proposals use:
+     TEtrimmer's `evaluation`, except `Reco_check` with >= 3 full-length
+     copies (`output_full_blast_n`) becomes `Good`. TEtrimmer 1.7.2 means to
+     make that promotion but tests for "Recon_check", so it never does; the
+     proposal notes say when a regrade applied.
    - TEtrimmer's own `output_terminal_repeat` ("LTR" / "TIR") is weak for
      short elements: "LTR" means a direct self-BLAST repeat >= 150 bp whose
      outer span is >= (length - 3,000 bp) of the pre-crop consensus, so under

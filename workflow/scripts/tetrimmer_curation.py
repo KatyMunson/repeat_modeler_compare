@@ -48,6 +48,22 @@ from family_groups import curated_classes
 
 EVAL_RANK = {"Perfect": 3, "Good": 2, "Reco_check": 1, "Need_check": 0, "Need_ext": 0}
 EVAL_CONF = {"Perfect": "high", "Good": "medium"}
+# TEtrimmer 1.7.2 means to promote Reco_check to Good at >= 3 full-length
+# genomic copies (boundarycrop.py), but tests for "Recon_check", so it never
+# does. The reports apply that rule as evaluation_regraded.
+PROMOTE_MIN_FULL = 3
+
+
+def regrade(evaluation, full_n):
+    """(evaluation used by the reports, note): Reco_check with >=
+    PROMOTE_MIN_FULL full-length copies -> Good."""
+    try:
+        n = int(float(full_n))
+    except (TypeError, ValueError):
+        n = 0
+    if evaluation == "Reco_check" and n >= PROMOTE_MIN_FULL:
+        return "Good", f"regraded Reco_check -> Good ({n} full-length copies; TEtrimmer promotion bug)"
+    return evaluation, ""
 
 
 def bare(name):
@@ -140,9 +156,11 @@ def cmd_report(args):
                 orig = names.get(r["input_name"], r["input_name"])
                 r["family"], r["input_label"] = bare(orig), orig.partition("#")[2] or "Unknown"
                 r["sample"] = sample
+                r["evaluation_regraded"] = regrade(r.get("evaluation"), r.get("output_full_blast_n"))[0]
                 rows.append(r)
 
-    cols = ["sample", "family", "input_label", "output_name", "status", "evaluation", "low_copy",
+    cols = ["sample", "family", "input_label", "output_name", "status", "evaluation", "evaluation_regraded",
+            "low_copy",
             "input_length", "output_length", "in_out_identify", "output_TE_type", "output_terminal_repeat",
             "TSD", "start_pattern", "end_pattern", "database_hit", "input_genome_cov_len",
             "output_genome_cov_len", "output_full_blast_n", "cluster"]
@@ -167,14 +185,17 @@ def cmd_report(args):
         out.write("group\tfamily\tclass_family\tpart\tevidence\tnote\tconfidence\n")
         for fam in sorted(by_fam):
             outs = by_fam[fam]
-            best = max(outs, key=lambda r: (EVAL_RANK.get(r["evaluation"], 0), num(r["output_genome_cov_len"])))
+            best = max(outs, key=lambda r: (EVAL_RANK.get(r["evaluation_regraded"], 0), num(r["output_genome_cov_len"])))
             new = best.get("output_TE_type", "")
             if not new or new.lower() in ("nan", "unknown") or new == best["input_label"]:
                 continue
-            conf = EVAL_CONF.get(best["evaluation"], "low")
+            conf = EVAL_CONF.get(best["evaluation_regraded"], "low")
             n_conf[conf] += 1
-            note = [f"TEtrimmer {best['evaluation']} {best['output_name']} "
+            note = [f"TEtrimmer {best['evaluation_regraded']} {best['output_name']} "
                     f"({best['input_length']} -> {best['output_length']} bp)"]
+            rn = regrade(best.get("evaluation"), best.get("output_full_blast_n"))[1]
+            if rn:
+                note.append(rn)
             if best.get("output_terminal_repeat") not in ("False", "FALSE", "NaN", "", None):
                 note.append(f"terminal repeat {best['output_terminal_repeat']}")
             if best.get("TSD") not in ("nan", "NaN", "", None, "False"):
@@ -292,6 +313,9 @@ def cmd_tesorter(args):
         rows.append({
             "sample": m["sample"], "family": m["family"], "input_label": s.get("input_label", "Unknown"),
             "output_name": m["output_name"], "evaluation": s.get("evaluation", "NA"),
+            "evaluation_regraded": s.get("evaluation_regraded")
+            or regrade(s.get("evaluation"), s.get("output_full_blast_n"))[0],
+            "regrade_note": regrade(s.get("evaluation"), s.get("output_full_blast_n"))[1],
             "input_length": s.get("input_length", "NA"), "output_length": m["length"],
             "genome_cov": s.get("output_genome_cov_len", "NA"), "tetrimmer_type": m["tetrimmer_type"],
             "classifier_type": tet,
@@ -300,7 +324,8 @@ def cmd_tesorter(args):
             "conflict": "; ".join(x for x in (b_conf and f"original: {b_conf}", a_conf and f"extended: {a_conf}") if x) or ".",
         })
 
-    cols = ["sample", "family", "input_label", "output_name", "evaluation", "input_length", "output_length",
+    cols = ["sample", "family", "input_label", "output_name", "evaluation", "evaluation_regraded",
+            "input_length", "output_length",
             "genome_cov", "tetrimmer_type", "classifier_type", "tesorter_original", "tesorter_extended",
             "domain_change", "vs_classifier", "conflict"]
     with open(args.out, "w") as out:
@@ -333,7 +358,7 @@ def cmd_tesorter(args):
         call = proposal(r)
         if call is None:
             continue
-        key = (r["tesorter_extended"] != ".", EVAL_RANK.get(r["evaluation"], 0), num(r["genome_cov"]))
+        key = (r["tesorter_extended"] != ".", EVAL_RANK.get(r["evaluation_regraded"], 0), num(r["genome_cov"]))
         if r["family"] not in best or key > best[r["family"]][0]:
             best[r["family"]] = (key, r, call)
     n_conf = {"high": 0, "medium": 0, "low": 0}
@@ -341,7 +366,7 @@ def cmd_tesorter(args):
         out.write("group\tfamily\tclass_family\tpart\tevidence\tnote\tconfidence\n")
         for fam in sorted(best):
             _k, r, call = best[fam]
-            good = r["evaluation"] in ("Perfect", "Good")
+            good = r["evaluation_regraded"] in ("Perfect", "Good")
             domain = r["tesorter_extended"] != "."
             if not domain:
                 conf = "medium" if good else "low"
@@ -366,7 +391,8 @@ def cmd_tesorter(args):
             n_conf[conf] += 1
             note = [f"ORDER CHANGE: contradicts the existing {lab}; check the PDF (earlier label wrong, "
                     f"or the extension drifted onto a nested / neighbouring element)" if order_change else "",
-                    f"TEtrimmer {r['evaluation']} {r['output_name']} ({r['input_length']} -> {r['output_length']} bp)",
+                    f"TEtrimmer {r['evaluation_regraded']} {r['output_name']} ({r['input_length']} -> {r['output_length']} bp)",
+                    r["regrade_note"],
                     f"TEsorter {r['tesorter_extended']}" if domain else "no TEsorter domain",
                     f"RepeatClassifier {r['classifier_type']} ({r['vs_classifier']})" if domain
                     else f"RepeatClassifier {r['classifier_type']}",

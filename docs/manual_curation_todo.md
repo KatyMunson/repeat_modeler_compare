@@ -189,6 +189,17 @@ Check before accepting:
   (6.5 kb). Check the self-dotplots. The 47 "LTR" calls under 3 kb are not
   evidence. `Mlim_rnd-1_family-234` (4.9 kb, "LTR") is confirmed LTR/Gypsy
   by TEsorter and RepeatClassifier.
+- **Reco_check regrade:** TEtrimmer 1.7.2 never promotes Reco_check to
+  Good at >= 3 full-length copies (it tests "Recon_check"). 80 / 97 hagfish
+  Reco_check rows (57 / 73 families whose best result is Reco_check)
+  qualify; the reports now apply the rule (`evaluation_regraded`). Effect
+  on the proposals: `Mlim_rnd-1_family-253` LTR/Gypsy medium -> high;
+  `Esto_rnd-1_family-132`, `Mlim_rnd-1_family-236`, `-278` (Helitron),
+  `Esto_rnd-5_family-2585` (Naiad), `Esto_rnd-5_family-350` (PiggyBac),
+  `Mlim_rnd-1_family-37` (hAT-Tip100) low -> medium.
+  `Esto_rnd-1_family-271` (Maverick) has 0 full-length copies: the 10 kb
+  consensus exists only as fragments, or the extension joined pieces; check
+  its PDF.
 - **Other proposals to look at:** `Esto_rnd-1_family-271` -> DNA/Maverick
   (1.2 -> 10.0 kb, TEsorter + RepeatClassifier agree, Reco_check); the rest
   are RepeatClassifier similarity (Academ, PiggyBac, Helitron, CR1,

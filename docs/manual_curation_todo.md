@@ -312,10 +312,10 @@ flagged, split by their `family_tandem.tsv` row in their home sample:
 Gap estimate (all Unknowns, shared arm): families with tandem_frac >= 0.4
 that `family_tandem` does not flag hold 1.5 / 5.3 / 2.0 / 0.5 Mb (ind6 /
 ind8 / bTaeGut7 / bAgePho1), of which 1.1 / 3.2 / 1.1 / 0.35 Mb in arrays,
-against 173.5 / 170.5 / 24.2 / 13.9 Mb already flagged. Small (1-8 %); the
-fix, when made: families passing the tandem test should not fail on
-`max_cons_len` or `min_copies` (a multi-kb unit cannot reach 100-200
-"copies"). Not urgent. The ~170 Mb of flagged Unknown_tandem per meadowlark
+against 173.5 / 170.5 / 24.2 / 13.9 Mb already flagged. Small (1-8 %).
+**Fixed:** `tandem_family` already ignored `max_cons_len`; it now also
+counts copies by mass (>= `min_copies` x `max_cons_len` bp passes), so a
+multi-kb unit no longer fails on 100-200 "copies". The ~170 Mb of flagged Unknown_tandem per meadowlark
 still needs names: TideCluster / satellite cross-check.
 
 **rDNA candidates** (very long, near-identical tandem units):
@@ -354,6 +354,49 @@ PDF instead:
 `bTaeGut7_rnd_1_family_148` (Perfect, two ~350 bp subfamilies, no terminal
 repeat / TSD) is the Unknown the DNA-TE pilot hit with 78 candidates across
 6 superfamilies: SINE-like? Check.
+
+**Second TEtrimmer run (birds, with the TEsorter check):** 108 families
+processed, 48 skipped (ind6 / ind8). 10 Perfect / Good outputs (8
+families), no Reco_check (the regrade changes nothing here). 3 proposals:
+- **accept after a PDF look:** `bAgePho1_ltr-1_family-236` -> LTR/ERV
+  (Good, 14.7 -> 8.8 kb, ERV domain before and after trimming,
+  RepeatClassifier LTR/ERVK). The only bird family with domain support.
+- leave: `bTaeGut7_rnd-5_family-4335` and `ind6_rnd-6_family-6966` ->
+  LTR/ERVL (Need_ext, RepeatClassifier only, no domain).
+  `ind6_rnd-6_family-6966` holds 10.7 Mb in ind6: worth a PDF look.
+New Perfect families, still Unknown:
+- `ind8_rnd-1_family-2_01` (412 bp, 3,266 full-length copies): SINE or
+  satellite monomer? Self-dotplot.
+- `bTaeGut7_rnd-4_family-3359_01` (3 kb, "LTR", 26 full-length copies):
+  small non-autonomous LTR element? Check the corners of the dotplot.
+- `ind8_ltr-1_family-27` (890 bp, LTR/Unknown): probably a solo-LTR. Is
+  it the LTR of `ind8_rnd-1_family-70`? blastn one against the other.
+- `bAgePho1_rnd-1_family-26` (524 bp, no terminal repeat): SINE?
+
+**Long-period arrays missed by `family_tandem`** (found here, fixed):
+
+| family | consensus -> TEtrimmer | genome cov | full-length |
+|---|---|---|---|
+| `ind8_rnd-4_family-826` | 2,134 -> 16-22 kb | 158 Mb | 0 (7 in one subfamily) |
+| `ind6_rnd-5_family-10636` | 4,260 -> 29.5 kb | 88 Mb | 0 |
+| `ind6_rnd-5_family-4019` | 4,275 -> 37.7 kb | 87 Mb | 0 |
+| `ind6_rnd-5_family-5392` | 3,509 -> 21-38 kb | 83-86 Mb | 0 |
+
+All Need_ext, and all reached TEtrimmer, so none was `tandem_family` in its
+home sample. They pass copies easily (20,000+), so they failed the tandem
+test: their hits don't chain into arrays >= 3 consensus lengths. Likely
+reading: each consensus is part of a longer unit (~16-38 kb, the extension
+length) holding other families too, so hits sit one per unit, too far apart
+to chain. `family_tandem` now also looks for runs of hits at a regular
+spacing (`max_period` 50 kb, README "Tandem check"). **To check after the
+rerun:** these four rows in `summary/family_tandem.tsv` should show
+`periodic_bp` > 0 and `long_period` near the extension length. If they
+don't, the spacing isn't regular and the "array" reading is wrong. Together
+~400 Mb, more than the Unknown_tandem total: TideCluster targets.
+
+TEtrimmer only exports extended consensi for families it finishes: for
+Need_ext rows `tetrimmer_consensi.fa` holds the unextended input, so the
+TEsorter check saw the original length (e.g. 4,260 bp, not 29,529 bp).
 
 ## 10. Other open threads
 

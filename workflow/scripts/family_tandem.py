@@ -14,12 +14,16 @@ two can be compared motif-for-family:
   tandem   >= --min-tandem-frac of the family's bp in tandem arrays: hits of
            the same family on the same contig and strand, chained when the
            gap is <= max(50 bp, 0.2 x consensus), whose span is >=
-           --min-array-copies consensus lengths
+           --min-array-copies consensus lengths, or in long-period runs:
+           >= --min-period-units of those chains on one contig and strand
+           at a regular start-to-start spacing (<= --max-period, within
+           --period-tol), for a consensus that is only part of a long unit
   simple   <= --max-short-period-frac of the consensus covered by an exact
            period-1..10 self-repeat
 
 `satellite_like` = all four pass (comparable with the satellite pipeline).
-`tandem_family` = copies, tandem and simple pass, at any consensus length:
+`tandem_family` = copies, tandem and simple pass, at any consensus length,
+with copies also passing at >= min_copies x max_len bp (a multi-kb unit):
 TRF's 2000 bp period cap is a tool limit, and a RepeatModeler consensus can
 be a multimer or a large-unit tandem repeat. summarize_rm.py relabels
 Unknown hits of tandem families as Unknown_tandem. `monomer_period` is the
@@ -152,13 +156,13 @@ def read_out(path):
 
 def arrays_for(family_hits, cons_len):
     """Chain one family's hits into arrays: same contig and strand, gap <=
-    max(50, 0.2 x consensus). Returns [(contig, start, end, n_hits)]."""
+    max(50, 0.2 x consensus). Returns [(contig, start, end, n_hits, strand)]."""
     gap_max = max(50, int(0.2 * cons_len))
     by_key = {}
     for contig, begin, end, strand in family_hits:
         by_key.setdefault((contig, strand), []).append((begin, end))
     arrays = []
-    for (contig, _strand), ivs in by_key.items():
+    for (contig, strand), ivs in by_key.items():
         ivs.sort()
         cs, ce, k = ivs[0][0], ivs[0][1], 1
         for b, e in ivs[1:]:
@@ -166,10 +170,45 @@ def arrays_for(family_hits, cons_len):
                 ce = max(ce, e)
                 k += 1
             else:
-                arrays.append((contig, cs, ce, k))
+                arrays.append((contig, cs, ce, k, strand))
                 cs, ce, k = b, e, 1
-        arrays.append((contig, cs, ce, k))
+        arrays.append((contig, cs, ce, k, strand))
     return arrays
+
+
+def periodic_runs(arrays, max_period, tol, min_units):
+    """Long-period arrays: chains (from arrays_for) of one family on one
+    contig and strand that recur at a regular spacing. A consensus that
+    covers only part of a long repeat unit (a multi-kb or HOR unit holding
+    other families too) gives one chain per unit, separated by roughly
+    unit - consensus bp, so arrays_for never joins them. Consecutive chains
+    whose start-to-start spacing is <= max_period and within tol (fraction)
+    of the run's first spacing form a run; runs of >= min_units chains are
+    kept. Returns [(contig, [(start, end), ...], period)] with the run's
+    chains and median spacing."""
+    by_contig = {}
+    for contig, b, e, _k, strand in arrays:
+        by_contig.setdefault((contig, strand), []).append((b, e))
+    runs = []
+    for (contig, _strand), chains in by_contig.items():
+        chains.sort()
+        i = 0
+        while i < len(chains) - 1:
+            period = chains[i + 1][0] - chains[i][0]
+            if period > max_period:
+                i += 1
+                continue
+            j = i + 1
+            while (j + 1 < len(chains)
+                   and abs((chains[j + 1][0] - chains[j][0]) - period) <= tol * period):
+                j += 1
+            if j - i + 1 >= min_units:
+                spacings = sorted(chains[k + 1][0] - chains[k][0] for k in range(i, j))
+                runs.append((contig, chains[i:j + 1], spacings[len(spacings) // 2]))
+                i = j
+            else:
+                i += 1
+    return runs
 
 
 def per_contig_bp(intervals):
@@ -204,6 +243,12 @@ def main():
     ap.add_argument("--min-array-copies", type=float, default=3)
     ap.add_argument("--min-tandem-frac", type=float, default=0.5)
     ap.add_argument("--max-short-period-frac", type=float, default=0.5)
+    ap.add_argument("--max-period", type=int, default=50000,
+                    help="long-period arrays: largest unit (start-to-start spacing) tested; 0 = off")
+    ap.add_argument("--period-tol", type=float, default=0.1,
+                    help="long-period arrays: spacing may differ from the run's first by this fraction")
+    ap.add_argument("--min-period-units", type=int, default=4,
+                    help="long-period arrays: chains (units) a regular run needs")
     ap.add_argument("--major-min-copies", type=float, default=1000)
     ap.add_argument("--major-min-bp", type=int, default=100000)
     ap.add_argument("--out", required=True)
@@ -241,7 +286,8 @@ def main():
                   "owned_pct_non_n\test_copies\tmedian_div\tn_arrays\tn_isolated_hits\tlargest_array_bp\t"
                   "largest_array_copies\ttandem_bp\ttandem_frac\tshort_period_frac\tmonomer_period\t"
                   "monomer_period_support\tpass_length\tpass_copies\tpass_tandem\tpass_not_simple\t"
-                  "satellite_like\ttandem_family\tcopy_tier\n")
+                  "satellite_like\ttandem_family\tcopy_tier\tshort_array_bp\tperiodic_bp\tn_periodic_runs\t"
+                  "long_period\n")
         for family in sorted(by_family, key=lambda f: -owned.get(f, 0)):
             fh_ = by_family[family]
             class_family = class_of[family]
@@ -250,19 +296,31 @@ def main():
             cons_len = len(seq) if seq else out_cons_len.get(family, 0)
             genome_bp = per_contig_bp([(c, b, e) for c, b, e, _st, _d in fh_])
             arrays = arrays_for([(c, b, e, st) for c, b, e, st, _d in fh_], cons_len) if cons_len else []
-            tandem = [(c, b, e) for c, b, e, _k in arrays
+            tandem = [(c, b, e) for c, b, e, _k, _st in arrays
                       if cons_len and (e - b + 1) / cons_len >= args.min_array_copies]
-            tandem_bp = min(per_contig_bp(tandem), genome_bp)
+            short_bp = min(per_contig_bp(tandem), genome_bp)
+            runs = (periodic_runs(arrays, args.max_period, args.period_tol, args.min_period_units)
+                    if args.max_period > 0 else [])
+            # only the family's own bp in a long-period run counts (the
+            # spacer between its chains belongs to other families)
+            periodic = [(c, b, e) for c, chains, _p in runs for b, e in chains]
+            periodic_bp = min(per_contig_bp(periodic), genome_bp)
+            tandem_bp = min(per_contig_bp(tandem + periodic), genome_bp)
+            long_period = max(runs, key=lambda r: len(r[1]))[2] if runs else None
             tandem_frac = tandem_bp / genome_bp if genome_bp else 0.0
             est_copies = genome_bp / cons_len if cons_len else 0.0
-            largest_bp = max((e - b + 1 for _c, b, e, _k in arrays), default=0)
+            largest_bp = max((e - b + 1 for _c, b, e, _k, _st in arrays), default=0)
             largest_copies = largest_bp / cons_len if cons_len else 0.0
-            n_isolated = sum(1 for *_x, k in arrays if k == 1)
-            n_arrays = sum(1 for *_x, k in arrays if k > 1)
+            n_isolated = sum(1 for a in arrays if a[3] == 1)
+            n_arrays = sum(1 for a in arrays if a[3] > 1)
             med_div = weighted_median([(d, e - b + 1) for _c, b, e, _st, d in fh_])
             spf = short_period_frac(seq) if seq else None
             p_len = args.min_len <= cons_len <= args.max_len
             p_copies = est_copies >= args.min_copies
+            # tandem_family counts copies in units of at most max_len bp:
+            # a multi-kb unit can't reach min_copies, but holding
+            # min_copies x max_len bp is the same mass as a satellite that does
+            p_copies_any = p_copies or genome_bp >= args.min_copies * args.max_len
             p_tandem = tandem_frac >= args.min_tandem_frac
             # RepeatMasker's built-in simple / low-complexity calls aren't
             # library families (no consensus to test, and the .out-implied
@@ -272,7 +330,7 @@ def main():
             else:
                 p_simple = spf is None or spf <= args.max_short_period_frac
             sat_like = p_len and p_copies and p_tandem and p_simple
-            tandem_fam = p_copies and p_tandem and p_simple
+            tandem_fam = p_copies_any and p_tandem and p_simple
             period, period_support = monomer_period(seq) if seq else (None, 0.0)
             if est_copies >= args.major_min_copies or genome_bp >= args.major_min_bp:
                 tier = "major"
@@ -287,7 +345,8 @@ def main():
                       f"{genome_bp}\t{own}\t{own_pct:.4f}\t{est_copies:.1f}\t{med_div:.1f}\t{n_arrays}\t"
                       f"{n_isolated}\t{largest_bp}\t{largest_copies:.1f}\t{tandem_bp}\t{tandem_frac:.3f}\t"
                       f"{spf_s}\t{period if period else 'NA'}\t{period_support:.2f}\t{p_len}\t{p_copies}\t"
-                      f"{p_tandem}\t{p_simple}\t{sat_like}\t{tandem_fam}\t{tier}\n")
+                      f"{p_tandem}\t{p_simple}\t{sat_like}\t{tandem_fam}\t{tier}\t{short_bp}\t{periodic_bp}\t"
+                      f"{len(runs)}\t{long_period if long_period else 'NA'}\n")
 
             row = class_rows.setdefault(cls, [0, 0, 0, 0, 0, 0, 0])
             row[0] += 1

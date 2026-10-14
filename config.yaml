@@ -95,6 +95,13 @@ family_tandem:
   min_array_copies: 3          # a chained run of hits this many consensus lengths long = tandem array
   min_tandem_frac: 0.5         # fraction of a family's bp that must sit in tandem arrays
   max_short_period_frac: 0.5   # consensus covered by period-1..10 exact self-repeat
+  # Long-period arrays: a consensus covering only part of a long unit (multi-kb
+  # or HOR unit that also holds other families) recurs once per unit, too far
+  # apart to chain. Runs of >= min_period_units such hits at a regular spacing
+  # (<= max_period bp, within period_tol of each other) count as tandem.
+  max_period: 50000            # 0 = off
+  period_tol: 0.1
+  min_period_units: 4
   major_min_copies: 1000       # copy_tier "major": >= this many copies ...
   major_min_bp: 100000         # ... or >= this many bp
 

@@ -301,13 +301,31 @@ family and a satellite-library motif are judged the same way:
 |---|---|
 | length | consensus 75–2000 bp |
 | copies | ≥ 100 genome-wide (merged hit bp / consensus length) |
-| tandem | ≥ 50% of the family's bp in arrays: same-family hits on one contig and strand, chained when the gap is ≤ max(50 bp, 0.2 × consensus), spanning ≥ 3 consensus lengths |
+| tandem | ≥ 50% of the family's bp in arrays: same-family hits on one contig and strand, chained when the gap is ≤ max(50 bp, 0.2 × consensus), spanning ≥ 3 consensus lengths; or in long-period runs (below) |
 | not simple | ≤ 50% of the consensus is a period-1..10 exact self-repeat |
 
 `satellite_like` = all four. Fragments of one interrupted TE chain too, but
 span about one consensus length, so they never reach 3 copies.
 
-`tandem_family` = copies + tandem + not simple at **any** consensus length.
+**Long-period runs.** A consensus that covers only part of a long unit
+(a multi-kb or HOR unit that also holds other families) hits once per unit,
+unit − consensus bp apart, so the chaining above never joins the hits. Its
+chains are also tested for a regular spacing: ≥ `min_period_units` (4)
+consecutive chains on one contig and strand whose start-to-start spacing is
+≤ `max_period` (50 kb) and within `period_tol` (10 %) of the run's first
+spacing. Only the family's own bp in such runs count as tandem (the spacer
+belongs to other families). Interspersed TEs land at irregular spacings and
+don't form runs. Columns `short_array_bp`, `periodic_bp`, `n_periodic_runs`
+and `long_period` (median spacing of the longest run) show which test
+fired. `max_period: 0` turns it off. Found on the meadowlarks: four Unknowns
+holding 80–158 Mb each (2.1–4.3 kb consensi) were not flagged, and
+TEtrimmer extended each to 16–38 kb with 0 full-length copies.
+
+`tandem_family` = copies + tandem + not simple at **any** consensus length,
+with copies counted in units of at most `max_cons_len` bp: a family passes
+copies when it holds ≥ `min_copies` × `max_cons_len` bp (200 kb, 400 kb for
+`dual_hap`), even if a multi-kb unit gives fewer than `min_copies` copies.
+`satellite_like` keeps the plain copy count.
 The 2000 bp cap is TRF's period limit, not biology: on *M. limosa* the
 largest satellite, `Mlim_rnd-1_family-3` (2.9 kb consensus, 542 Mb, 99% in
 arrays up to 1.85 Mb), fails only that test. With

@@ -2348,6 +2348,10 @@ rule family_tandem:
         min_copies=lambda wc: config["family_tandem"]["min_copies"] * COPIES_BY_SAMPLE[wc.sample],
         major_min_copies=lambda wc: config["family_tandem"]["major_min_copies"] * COPIES_BY_SAMPLE[wc.sample],
         major_min_bp=lambda wc: config["family_tandem"]["major_min_bp"] * COPIES_BY_SAMPLE[wc.sample],
+        # long-period arrays (README "Tandem check"); defaults if the config predates them
+        max_period=config["family_tandem"].get("max_period", 50000),
+        period_tol=config["family_tandem"].get("period_tol", 0.1),
+        min_period_units=config["family_tandem"].get("min_period_units", 4),
     shell:
         "python3 workflow/scripts/family_tandem.py "
         "--out-file {input.out_file} --library {input.library} "
@@ -2357,6 +2361,8 @@ rule family_tandem:
         "--min-copies {params.min_copies} --min-array-copies {params.t[min_array_copies]} "
         "--min-tandem-frac {params.t[min_tandem_frac]} "
         "--max-short-period-frac {params.t[max_short_period_frac]} "
+        "--max-period {params.max_period} --period-tol {params.period_tol} "
+        "--min-period-units {params.min_period_units} "
         "--major-min-copies {params.major_min_copies} --major-min-bp {params.major_min_bp} "
         "--out {output.family_chunk} --class-out {output.class_chunk} > {log} 2>&1"
 

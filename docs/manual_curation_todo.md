@@ -196,7 +196,10 @@ Check before accepting:
   on the proposals: `Mlim_rnd-1_family-253` LTR/Gypsy medium -> high;
   `Esto_rnd-1_family-132`, `Mlim_rnd-1_family-236`, `-278` (Helitron),
   `Esto_rnd-5_family-2585` (Naiad), `Esto_rnd-5_family-350` (PiggyBac),
-  `Mlim_rnd-1_family-37` (hAT-Tip100) low -> medium.
+  `Mlim_rnd-1_family-37` (hAT-Tip100) low -> medium. Confirmed by the
+  rerun (2026-10-14): 6 high, 16 medium, 7 low; the 6 high are all
+  LTR/Gypsy (`Mlim_ltr-1_family-1100`, `-1104`, `-128`, `-51`,
+  `Mlim_rnd-1_family-234`, `-253`).
   `Esto_rnd-1_family-271` (Maverick) has 0 full-length copies: the 10 kb
   consensus exists only as fragments, or the extension joined pieces; check
   its PDF.

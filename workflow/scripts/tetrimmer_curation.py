@@ -33,7 +33,10 @@ Subcommands:
            TEtrimmer Perfect/Good and the classifier gives the same
            superfamily, low = the classifier says another order, else
            medium. Without a domain, a resolved classifier label: medium
-           for Perfect/Good, else low.
+           for Perfect/Good, else low. A call of a different order than
+           the family's existing <Order>/Unknown label (e.g. LINE for an
+           LTR-pipeline LTR/Unknown family) is always low, noted
+           "ORDER CHANGE".
 Stdlib only."""
 
 import argparse
@@ -352,8 +355,18 @@ def cmd_tesorter(args):
             else:
                 conf = "medium"
                 evidence = "tetrimmer+tesorter"
+            # the family already had an order (LTR/Unknown from the LTR pipeline,
+            # DNA/Unknown, ...) and the call names another one: the earlier
+            # label was wrong, or the extension drifted onto a nested /
+            # neighbouring element. Review, never accept on the call alone.
+            lab = r["input_label"]
+            order_change = _order(lab) not in ("Unknown", "") and _order(call) != _order(lab)
+            if order_change:
+                conf = "low"
             n_conf[conf] += 1
-            note = [f"TEtrimmer {r['evaluation']} {r['output_name']} ({r['input_length']} -> {r['output_length']} bp)",
+            note = [f"ORDER CHANGE: contradicts the existing {lab}; check the PDF (earlier label wrong, "
+                    f"or the extension drifted onto a nested / neighbouring element)" if order_change else "",
+                    f"TEtrimmer {r['evaluation']} {r['output_name']} ({r['input_length']} -> {r['output_length']} bp)",
                     f"TEsorter {r['tesorter_extended']}" if domain else "no TEsorter domain",
                     f"RepeatClassifier {r['classifier_type']} ({r['vs_classifier']})" if domain
                     else f"RepeatClassifier {r['classifier_type']}",

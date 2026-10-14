@@ -140,7 +140,7 @@ Check before accepting:
 
 ## 6. TEtrimmer (target `tetrimmer_only`)
 
-- Not run yet. `tetrimmer_select` already skips:
+- First run done (hagfish and birds, below and §9). `tetrimmer_select` skips:
   - families resolved by curated / applied labels;
   - families with high-confidence neighbour calls;
   - tandem families.
@@ -154,6 +154,46 @@ Check before accepting:
   - set `tetrimmer.pfam_dir` if compute nodes have no internet.
 - Possible improvement: pass chain hubs only (TEtrimmer's extension reaches
   across neighbouring pieces), not every member.
+
+### First hagfish run (results_v3, top 200 per sample)
+
+- **Outcome:** best result Perfect / Good for 107 / 200 (Esto) and 109 / 199
+  (Mlim) families; 12 skipped (old families, divergence >= 15 %); only 4
+  tandem families (cf. the meadowlarks, §9).
+- **Groups** (`family_tandem` row in each family's home sample): 98
+  near-identical (median div < 5 %; median ~1,700 copies, 167-9,600; 245 Mb
+  owned) = young, high-copy families, not duplications; 214 intermediate
+  (5-15 %); 83 old (>= 15 %); 4 tandem.
+- **Classification is the bottleneck:** RepeatClassifier (TEtools) left
+  408 / 443 extended consensi Unknown; TEsorter found domains in 14, 11 of
+  them gained by extension (Gypsy, LINE, Maverick, Academ). Most hagfish
+  Unknowns are clean, well-supported elements with no Dfam similarity and
+  no domain: non-autonomous or undescribed lineages. Structure is the
+  remaining evidence.
+- **Accept:** the 4 high-confidence proposals, all LTR/Gypsy on LTR/Unknown
+  families (`Mlim_ltr-1_family-1100`, `-1104`, `-128`, `-51`; TEsorter +
+  RepeatClassifier agree, TEtrimmer Good; three extended from 282-534 bp to
+  ~4.6-4.9 kb).
+- **Review (order changes, now "low" + "ORDER CHANGE"):** LTR-pipeline
+  `LTR/Unknown` families proposed as another order: `Esto_ltr-1_family-15`
+  -> LINE/CR1, `Esto_ltr-1_family-547` -> LINE (10.6 -> 3.7 kb),
+  `Esto_ltr-1_family-78` -> DNA/hAT-Charlie, `Mlim_ltr-1_family-860` -> LINE,
+  `Mlim_ltr-1_family-1237` and `-384` -> RC/Helitron. LTR pipeline wrong, or
+  extension drifted onto a nested element? Check the PDFs.
+- **Long LTR candidates** (Unknown input, Perfect / Good, TEtrimmer "LTR",
+  output >= 5 kb, where the flag means more): `Esto_rnd-1_family-479`
+  (8.8 kb), `Mlim_rnd-1_family-289` (7.8 kb), `Mlim_rnd-5_family-250`
+  (7.2 kb), `Esto_rnd-5_family-5681` (6.7 kb), `Esto_rnd-4_family-652`
+  (6.5 kb). Check the self-dotplots. The 47 "LTR" calls under 3 kb are not
+  evidence. `Mlim_rnd-1_family-234` (4.9 kb, "LTR") is confirmed LTR/Gypsy
+  by TEsorter and RepeatClassifier.
+- **Other proposals to look at:** `Esto_rnd-1_family-271` -> DNA/Maverick
+  (1.2 -> 10.0 kb, TEsorter + RepeatClassifier agree, Reco_check); the rest
+  are RepeatClassifier similarity (Academ, PiggyBac, Helitron, CR1,
+  tRNA-Deu SINE, ...), medium for Perfect / Good, low for Reco_check.
+- **Largest remaining target:** the 98 young near-identical families
+  (245 Mb), now with clean TEtrimmer consensi: manual classification or a
+  structural pass (LTR / TIR / TSD from the dotplots).
 
 ## 7. Library release (deferred: `export_library`)
 

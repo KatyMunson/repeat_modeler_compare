@@ -723,7 +723,16 @@ unresolved, to classify them, not to replace the library:
      row per still-unresolved family. A domain call first: high = TEtrimmer
      Perfect/Good and RepeatClassifier gives the same superfamily, low =
      RepeatClassifier says another order, else medium. Without a domain, a
-     resolved RepeatClassifier label: medium for Perfect/Good, else low.
+     resolved RepeatClassifier label: medium for Perfect/Good, else low. A
+     call of a different order than the family's existing `<Order>/Unknown`
+     (e.g. LINE for an LTR-pipeline `LTR/Unknown` family) is always low and
+     noted "ORDER CHANGE": the earlier label was wrong, or the extension
+     drifted onto a nested or neighbouring element; check the PDF.
+   - TEtrimmer's own `output_terminal_repeat` ("LTR" / "TIR") is weak for
+     short elements: "LTR" means a direct self-BLAST repeat >= 150 bp whose
+     outer span is >= (length - 3,000 bp) of the pre-crop consensus, so under
+     ~3-5 kb any internal direct repeat qualifies. Judge from the PDF's
+     self-dotplot (LTRs = short segments in opposite corners).
 
 Review before accepting: the PDFs in
 `tetrimmer/{sample}/run/TEtrimmer_for_proof_curation/` (or TEtrimmerGUI, which

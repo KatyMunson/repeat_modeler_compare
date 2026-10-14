@@ -373,26 +373,52 @@ New Perfect families, still Unknown:
   it the LTR of `ind8_rnd-1_family-70`? blastn one against the other.
 - `bAgePho1_rnd-1_family-26` (524 bp, no terminal repeat): SINE?
 
-**Long-period arrays missed by `family_tandem`** (found here, fixed):
+**The four "huge" Need_ext families are not big arrays (checked after the
+`family_tandem` rerun).** TEtrimmer's genome coverage is BLAST coverage
+(e <= 1e-40, > 150 bp), and was already 82-88 Mb for the *input* consensi.
+RepeatMasker gives them almost nothing:
 
-| family | consensus -> TEtrimmer | genome cov | full-length |
+| family | consensus -> TEtrimmer | TEtrimmer cov | RM owned (home sample) |
 |---|---|---|---|
-| `ind8_rnd-4_family-826` | 2,134 -> 16-22 kb | 158 Mb | 0 (7 in one subfamily) |
-| `ind6_rnd-5_family-10636` | 4,260 -> 29.5 kb | 88 Mb | 0 |
-| `ind6_rnd-5_family-4019` | 4,275 -> 37.7 kb | 87 Mb | 0 |
-| `ind6_rnd-5_family-5392` | 3,509 -> 21-38 kb | 83-86 Mb | 0 |
+| `ind8_rnd-4_family-826` | 2,134 -> 16-22 kb | 70-158 Mb | 0.2 Mb |
+| `ind6_rnd-5_family-10636` | 4,260 -> 29.5 kb | 88 Mb | 1.8 Mb |
+| `ind6_rnd-5_family-4019` | 4,275 -> 37.7 kb | 87 Mb | 0.4 Mb (0.7 in ind8) |
+| `ind6_rnd-5_family-5392` | 3,509 -> 21-38 kb | 83-86 Mb | 0.2 Mb |
 
-All Need_ext, and all reached TEtrimmer, so none was `tandem_family` in its
-home sample. They pass copies easily (20,000+), so they failed the tandem
-test: their hits don't chain into arrays >= 3 consensus lengths. Likely
-reading: each consensus is part of a longer unit (~16-38 kb, the extension
-length) holding other families too, so hits sit one per unit, too far apart
-to chain. `family_tandem` now also looks for runs of hits at a regular
-spacing (`max_period` 50 kb, README "Tandem check"). **To check after the
-rerun:** these four rows in `summary/family_tandem.tsv` should show
-`periodic_bp` > 0 and `long_period` near the extension length. If they
-don't, the spacing isn't regular and the "array" reading is wrong. Together
-~400 Mb, more than the Unknown_tandem total: TideCluster targets.
+So most of each consensus's BLAST coverage is on bases RepeatMasker gives
+to other families: probably a piece of a major repeat (satellite?) inside
+the consensus, and the 16-38 kb "extension" with 0 full-length copies is
+TEtrimmer walking along that repeat's arrays. Their own hits mostly aren't
+arrays (no periodic runs, short-array fraction 0-0.5); only
+`ind6_rnd-5_family-4019` in ind8 is now tandem (by mass). Low value: little
+bp of their own, chimeric consensi. **Don't size families by TEtrimmer
+coverage**; use `owned_bp` from `family_tandem.tsv`.
+
+**What the `family_tandem` fix actually caught** (shared arm, rerun):
+- **Periodic runs (new):**
+  - bAgePho1 **868 bp-period array** split between `ind8_rnd-6_family-8560`
+    (Unknown, 496 bp, 19.5 Mb) and `bAgePho1_rnd-2_family-105` ("LTR/ERVK",
+    963 bp, 18.9 Mb), ~430-440 runs each. A ~38 Mb satellite with an ERVK
+    label on half of it: LTR-derived satellite? Check: dotplot / blastn the
+    two consensi against each other, and does `bAgePho1_rnd-2_family-105`
+    carry any ERV domain (it shouldn't at 963 bp)? Its ERVK label is
+    suspect either way.
+  - bAgePho1 **~9.1 kb-period array**: `bAgePho1_rnd-4_family-2225` (9.8
+    kb) and `-6602` (7.9 kb), 14-20 runs, 1.8 + 1.1 Mb. Both were TEtrimmer
+    Need_ext families: correctly tandem now.
+  - `bTaeGut7_rnd-4_family-42` (LINE/CR1, 16.9 kb): ~8 kb-period runs (43-49)
+    in ind6 / ind8. CR1 pieces in a tandem unit; label unchanged.
+  - Several 1-2-run hits on small families (`bAgePho1_rnd-4_family-543`,
+    `bTaeGut7_rnd-5_family-1654`, ...): one or two local tandem duplications
+    holding most of a small family. Weak evidence; watch, don't act.
+- **Copies by mass (new):** ~20 long families (7-19 kb) that already had
+  >= 50 % of their bp in arrays but fewer than 100 / 200 "copies". Mostly
+  LINE/CR1 and LTR/ERV, whose labels `summarize` doesn't change; the
+  Unknowns include the rDNA candidate `bTaeGut7_rnd-5_family-12144`, and
+  `ind8_rnd-5_family-12281` (rRNA, 18.4 kb) shows the rule works. Tandem
+  ERV / CR1 arrays of 10+ kb: W chromosome? Not checked.
+- Totals stay moderate (tandem families 2.7-7.8 % of non-N per sample), so
+  no broad over-calling of dispersed TEs.
 
 TEtrimmer only exports extended consensi for families it finishes: for
 Need_ext rows `tetrimmer_consensi.fa` holds the unextended input, so the

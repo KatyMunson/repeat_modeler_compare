@@ -317,9 +317,9 @@ spacing. Only the family's own bp in such runs count as tandem (the spacer
 belongs to other families). Interspersed TEs land at irregular spacings and
 don't form runs. Columns `short_array_bp`, `periodic_bp`, `n_periodic_runs`
 and `long_period` (median spacing of the longest run) show which test
-fired. `max_period: 0` turns it off. Found on the meadowlarks: four Unknowns
-holding 80–158 Mb each (2.1–4.3 kb consensi) were not flagged, and
-TEtrimmer extended each to 16–38 kb with 0 full-length copies.
+fired. `max_period: 0` turns it off. Example (bAgePho1): an 868 bp-period
+array that RepeatMasker splits between two consensi (496 bp and 963 bp,
+~19 Mb each), neither of which chains on its own.
 
 `tandem_family` = copies + tandem + not simple at **any** consensus length,
 with copies counted in units of at most `max_cons_len` bp: a family passes

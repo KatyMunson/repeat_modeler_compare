@@ -138,6 +138,57 @@ Check before accepting:
   - Mlim_rnd-3_family-866 (MLI_SAT187_a, 0.47 coverage);
   - Esto_rnd-5_family-3236 (EST_SAT51_c).
 
+## 5b. Stage 03 array overlay (`array_overlay.py`) follow-ups
+
+Of stage 03's tandem arrays, our labels call Satellite 15.7 of 133.7 Mb in
+Esto and 578 of 737 Mb in Mlim (before the 10 rows added from this
+overlay; see `curation/README.md`). The rest, by family type:
+- **Elements carrying an internal array** (short period over < 40% of the
+  consensus, barely tandem, mostly isolated hits): Esto_rnd-5_family-1435,
+  Esto_rnd-1_family-46, Esto_rnd-5_family-2946, Esto_rnd-1_family-187,
+  Esto_rnd-4_family-1363, Esto_rnd-3_family-365, Esto_rnd-5_family-1048
+  (L1-Tx1), Esto_rnd-5_family-3272 (CR1), Mlim_rnd-1_family-37,
+  Mlim_rnd-2_family-3, Mlim_rnd-1_family-33, and the demoted
+  Mlim_rnd-3_family-37. Run `family_profile.py` on the large ones (1435, 46;
+  Mlim 37, 2-3, 33): the self dot plot shows the internal array, and the
+  coverage shows whether copies are full-length or just the array part.
+  Stage 03 counts these as arrays because each copy holds a short motif run.
+- **Copies inside or next to arrays** (no period, not tandem, mostly
+  isolated, yet in stage 03 arrays): Mlim_rnd-4_family-1512 (Academ-1),
+  Esto_ltr-1_family-131 (PIF-Harbinger), Mlim_rnd-2_family-59,
+  Mlim_rnd-1_family-86, Mlim_rnd-1_family-47, Esto_rnd-1_family-59,
+  Mlim_rnd-3_family-88, Esto_rnd-4_family-589, Esto_rnd-1_family-487,
+  Mlim_rnd-1_family-541, Mlim_rnd-4_family-2271 (RTE-BovB),
+  Mlim_rnd-5_family-395 (SINE), Mlim_rnd-5_family-4110 (snRNA),
+  Mlim_ltr-1_family-959 (ERV1). Keep their labels: TE insertions into
+  satellite regions, or TEs interleaved with satellite units. They explain
+  much of the gap between stage 03's satellite bp and the family labels.
+- **Satellite in one species, dispersed TE in the other** (keep the TE
+  label; a lineage-specific TE-to-satellite transition, worth a sentence in
+  the paper):
+  - Mlim_rnd-5_family-3456 (DNA/hAT): 97% in arrays in Esto (4.2 Mb),
+    4.6 Mb dispersed in Mlim;
+  - Esto_rnd-3_family-410 (PiggyBac): 83% in arrays in Mlim (1 Mb),
+    31 Mb dispersed in Esto.
+- **Large Mlim Unknowns partly in arrays** (40-65%): Mlim_rnd-1_family-26
+  (MLI_SAT955_a arrays), Mlim_rnd-1_family-407. Fits the composite block as a
+  long-unit tandem array (section 3).
+- **Unmasked array bp**: 21.6 Mb (Esto), 57.5 Mb (Mlim) of stage 03 arrays
+  have no RepeatMasker hit at all. Only adding the harmonized motifs to the
+  masking library (and remasking) would label them.
+- **For the satellite pipeline:**
+  - SAT-1_Mlim (Mlim_rnd-5_family-3215): tandem_frac 0.82 and TideCluster
+    arrays, but 0% in stage 03 arrays. Its unit is missing from the
+    harmonized library.
+  - Naming: stage 03 assigns TRC_1's 498 Mb to MLI_SAT130_c; our table calls
+    it MLI_SAT32_a (Mlim_rnd-1_family-3). Agree on one name (likely a
+    ~130 bp higher-order unit of the 32 bp monomer).
+  - Harmonized IDs for the new provisional SAT-3/4/5_Esto and
+    SAT-8/9/10_Mlim.
+  - Stage 03 "arrays" of >= 3 motif copies include short runs inside TEs
+    (elements carrying an internal array, above). Consider a minimum array
+    length or a TE-overlap filter before reporting them as satellite.
+
 ## 6. TEtrimmer (target `tetrimmer_only`)
 
 - Not run yet. `tetrimmer_select` already skips:

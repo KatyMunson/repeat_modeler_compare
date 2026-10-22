@@ -65,3 +65,24 @@ Several large families are anchored by a few dozen copies of a Dfam
 consensus from another species (e.g. Mlim_rnd-1_family-48 by
 Gypsy-85_LTR_AstCal): more likely a partial match of that consensus to the
 hagfish family than a separate piece of one element.
+
+### Satellites from the stage 03 array overlay
+
+`workflow/scripts/array_overlay.py` labelled every base of the satellite
+pipeline's stage 03 tandem arrays (`satellite_tandem_arrays.bed`) the way
+`family_composition.tsv` does. Families were judged on their share inside
+arrays across both species (labels apply to both) and on the shape of their
+consensus (`family_tandem.tsv`: internal period and its support, tandem_frac,
+isolated hits). 10 rows, `evidence = array_overlay (stage 03 arrays) + family_tandem`:
+- Satellite, long-unit (the consensus is one unit; whole copies in tandem):
+  Esto_rnd-4_family-1839 (SAT-3_Esto), Esto_rnd-4_family-2463 (SAT-8_Mlim),
+  Esto_rnd-3_family-565 (SAT-4_Esto), Esto_rnd-5_family-90 (SAT-9_Mlim),
+  Esto_rnd-5_family-1977 (SAT-10_Mlim, borderline), Esto_rnd-1_family-646
+  (EST_SAT37_o).
+- Satellite, multimer consensus (high period support): Esto_rnd-2_family-345
+  (SAT-5_Esto, hAT-Tip100-derived), Mlim_rnd-4_family-2162 (MLI_SAT156_a).
+- Demoted to Unknown (overrides the applied cross-check): Mlim_rnd-3_family-37
+  (was MYX2_SAT25_a; 32% in arrays, likely an element with an internal array)
+  and Mlim_rnd-4_family-1979 (was MLI_SAT20_b; 1% in arrays).
+SAT-n names follow the existing convention: the sample whose arrays the
+family forms. Ask the satellite pipeline for harmonized IDs.

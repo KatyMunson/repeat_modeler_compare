@@ -420,6 +420,25 @@ coverage**; use `owned_bp` from `family_tandem.tsv`.
 - Totals stay moderate (tandem families 2.7-7.8 % of non-N per sample), so
   no broad over-calling of dispersed TEs.
 
+**The two meadowlark satellite humps in the Kimura landscape** (shared arm;
+`workflow/scripts/family_landscape.py`, Satellite + Unknown_tandem;
+ind6 / ind8 agree):
+- **~13 % spike:** `ind8_rnd-5_family-12460`, 68.5 / 64.8 Mb in the
+  12-14 % bins (~78 % of that window). One family.
+- **15-19 % shoulder:** `ind6_rnd-5_family-4793` (39.9 / 38.9 Mb, ~70 %;
+  broad, also ~8 Mb at 12-14 %) and `ind8_rnd-4_family-1219` (~10 Mb, ~18 %).
+- `ind8_rnd-6_family-3066` (~10 Mb) spreads over 0-19 %. The young 0-3 %
+  bump is only ~4 Mb across ~35 families (largest
+  `ind8_rnd-5_family-6035`, `ind6_rnd-5_family-24879`).
+- `ind6_rnd-5_family-4019` (one of the four chimeric Need_ext families
+  above) holds 1.9 Mb of the ind8 13 % peak: its consensus probably
+  carries a piece of this satellite.
+- **To check:** these families came out Unknown_tandem with
+  `satellite_applied.tsv` as the only curated table, but the landscape plot
+  draws the humps as Satellite: find the label table the plot used. Are
+  12460 and 4793 one satellite at two divergence levels? Check
+  `satellite_family_pairs.tsv` / `satellite_family_calls.tsv`, and name them.
+
 TEtrimmer only exports extended consensi for families it finishes: for
 Need_ext rows `tetrimmer_consensi.fa` holds the unextended input, so the
 TEsorter check saw the original length (e.g. 4,260 bp, not 29,529 bp).

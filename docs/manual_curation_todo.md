@@ -433,11 +433,25 @@ ind6 / ind8 agree):
 - `ind6_rnd-5_family-4019` (one of the four chimeric Need_ext families
   above) holds 1.9 Mb of the ind8 13 % peak: its consensus probably
   carries a piece of this satellite.
-- **To check:** these families came out Unknown_tandem with
-  `satellite_applied.tsv` as the only curated table, but the landscape plot
-  draws the humps as Satellite: find the label table the plot used. Are
-  12460 and 4793 one satellite at two divergence levels? Check
-  `satellite_family_pairs.tsv` / `satellite_family_calls.tsv`, and name them.
+- Cross-check (`satellite_family_calls.tsv` / `_pairs.tsv`): three distinct
+  satellites, not one at two divergence levels.
+  - 12460: Satellite **high**, **412 bp** monomer (ind6 TRC_1).
+    `same_satellite_diverged` with `bAgePho1_rnd-5_family-4221` (bAgePho1
+    TRC_3 ~ ind6 TRC_1, cov 1.00, 81 % id, same 412 bp founder): an icterid
+    satellite shared with the blackbird. (The `ind6_rnd-5_family-172`
+    "HOR-like" pair is a 4 bp monomer x 103: ignore.)
+  - 4793: Satellite medium, **645 bp** monomer (ind6 TRC_2).
+    `related_not_co_located` with 12460 (98 % of 4793's consensus aligns
+    to 12460's at 78 % id; different arrays and monomer): an older
+    satellite related to 12460, with its own unit.
+  - 1219: Satellite medium, **362 bp** monomer (also bAgePho1 TRC_4);
+    `independent` of both.
+- **To check:** the families came out Unknown_tandem with
+  `satellite_applied.tsv` as the curated table, though 12460 is a high
+  call (applied by default) and the plot draws the humps as Satellite.
+  Stale `satellite_applied.tsv`? Rerun `satellite_apply` + `summarize`;
+  add `medium` to `apply_confidence` to label 4793 / 1219. Then name them
+  (`SAT-<n>_<sample>`, README "Naming").
 
 TEtrimmer only exports extended consensi for families it finishes: for
 Need_ext rows `tetrimmer_consensi.fa` holds the unextended input, so the

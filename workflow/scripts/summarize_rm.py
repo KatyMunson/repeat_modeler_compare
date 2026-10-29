@@ -254,9 +254,10 @@ def _well_characterized(query_seq, subject_seq):
     return len(query_seq) - (len(query_seq) - _acgt_count(query_seq)) - (len(subject_seq) - _acgt_count(subject_seq))
 
 
-def parse_align_file(path, tandem=frozenset(), reclass=None, curated=None):
+def parse_align_file(path, tandem=frozenset(), reclass=None, curated=None, with_family=False):
     """Yield (contig, begin, end, score, class_family, kimura_pct_or_None)
-    for every alignment in a RepeatMasker .align file (-a output)."""
+    for every alignment in a RepeatMasker .align file (-a output).
+    with_family: class_family is (family, class_family) instead."""
     try:
         fh = open(path)
     except FileNotFoundError:
@@ -279,7 +280,7 @@ def parse_align_file(path, tandem=frozenset(), reclass=None, curated=None):
             if _is_align_header(fields):
                 if header is not None:
                     yield finish()
-                class_family = None
+                family = class_family = None
                 for tok in fields[8:]:
                     if "#" in tok:
                         family, class_family = tok.split("#", 1)
@@ -297,6 +298,8 @@ def parse_align_file(path, tandem=frozenset(), reclass=None, curated=None):
                 begin, end = int(fields[5]), int(fields[6])
                 if begin > end:
                     begin, end = end, begin
+                if with_family:
+                    class_family = (family, class_family)
                 header = (fields[4], begin, end, int(fields[0]), class_family)
                 pending_query = None
                 ts = tv = length = 0

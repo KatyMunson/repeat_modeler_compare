@@ -445,7 +445,11 @@ ind6 / ind8 agree):
     to 12460's at 78 % id; different arrays and monomer): an older
     satellite related to 12460, with its own unit.
   - 1219: Satellite medium, **362 bp** monomer (also bAgePho1 TRC_4);
-    `independent` of both.
+    `independent` of both. The user's satellite of interest: their
+    "short" (354 bp) and "long" (363 bp) monomers each align to 5 of the
+    ~7 units of the 2,507 bp consensus at 81-84 % id (+ strand), and to
+    neither 12460 nor 4793. Short vs long differ only in a variable
+    A-rich tract, as do the consensus units.
 - Labels: the plot's Satellite colour comes from the user's
   `curated_families.tsv` (`satellite_apply` left 12 high proposals to it),
   not `satellite_applied.tsv`. Run `family_landscape.py` with both

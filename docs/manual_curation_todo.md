@@ -446,11 +446,12 @@ ind6 / ind8 agree):
     satellite related to 12460, with its own unit.
   - 1219: Satellite medium, **362 bp** monomer (also bAgePho1 TRC_4);
     `independent` of both.
-- **To check:** the families came out Unknown_tandem with
-  `satellite_applied.tsv` as the curated table, though 12460 is a high
-  call (applied by default) and the plot draws the humps as Satellite.
-  Stale `satellite_applied.tsv`? Rerun `satellite_apply` + `summarize`;
-  add `medium` to `apply_confidence` to label 4793 / 1219. Then name them
+- Labels: the plot's Satellite colour comes from the user's
+  `curated_families.tsv` (`satellite_apply` left 12 high proposals to it),
+  not `satellite_applied.tsv`. Run `family_landscape.py` with both
+  (`--curated-table curated_families.tsv $OUTDIR/summary/satellite_applied.tsv`)
+  or these families read Unknown_tandem. **To check:** do 12460 / 4793 /
+  1219 have names in `curated_families.tsv`? If not, name them
   (`SAT-<n>_<sample>`, README "Naming").
 
 TEtrimmer only exports extended consensi for families it finishes: for
